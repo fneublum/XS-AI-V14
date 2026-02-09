@@ -1,0 +1,21 @@
+runtime: nodejs20
+service: default
+
+handlers:
+  # Serve all static files (images, css, js) directly
+  - url: /(.*\..+)$
+    static_files: dist/\1
+    upload: dist/(.*)
+    http_headers:
+      Content-Security-Policy: "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://qfskvevighylzzmyiwre.supabase.co https://*.supabase.co https://esm.sh https://login.microsoftonline.com https://graph.microsoft.com https://*.googleapis.com https://generativelanguage.googleapis.com https://api.allorigins.win https://corsproxy.io https://corsproxy.org https://gen-lang-client-0755290444.ue.r.appspot.com https://shipsgo.com; frame-src 'self' blob: data:; child-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://aistudiocdn.com https://esm.sh; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.supabase.co https://placehold.co;"
+
+  # Catch-all handler for SPA routing - serves index.html for any other route
+  - url: /.*
+    static_files: dist/index.html
+    upload: dist/index.html
+    http_headers:
+      Cache-Control: "no-cache, no-store, must-revalidate"
+      Expires: "0"
+      Pragma: "no-cache"
+      Content-Security-Policy: "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://qfskvevighylzzmyiwre.supabase.co https://*.supabase.co https://esm.sh https://login.microsoftonline.com https://graph.microsoft.com https://*.googleapis.com https://generativelanguage.googleapis.com https://api.allorigins.win https://corsproxy.io https://corsproxy.org https://gen-lang-client-0755290444.ue.r.appspot.com https://shipsgo.com; frame-src 'self' blob: data:; child-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://aistudiocdn.com https://esm.sh; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.supabase.co https://placehold.co;"
+

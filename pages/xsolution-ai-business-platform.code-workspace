@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../HALL avatar"
+		}
+	],
+	"settings": {
+		"git.ignoreLimitWarning": true
+	}
+}

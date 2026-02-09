@@ -1,0 +1,200 @@
+{
+    "metadata": {
+        "version": "2026.1",
+        "last_update": "2026-01-01",
+        "currency": "BRL",
+        "notes": "ICMS + FCP rates and state import incentive programs. Values apply to imports of goods such as plastic resins (HS Chapter 39)."
+    },
+    "federal_defaults": {
+        "pis_import_rate": 0.021,
+        "cofins_import_rate": 0.0965,
+        "cofins_additional_1pct": 0.01,
+        "afrmm_rate": 0.25
+    },
+    "states": {
+        "AC": {
+            "icms": 0.17,
+            "fcp": 0.02
+        },
+        "AL": {
+            "icms": 0.19,
+            "fcp": 0.01
+        },
+        "AP": {
+            "icms": 0.18,
+            "fcp": 0.00
+        },
+        "AM": {
+            "icms": 0.18,
+            "fcp": 0.02
+        },
+        "BA": {
+            "icms": 0.19,
+            "fcp": 0.015
+        },
+        "CE": {
+            "icms": 0.18,
+            "fcp": 0.02
+        },
+        "DF": {
+            "icms": 0.18,
+            "fcp": 0.02
+        },
+        "ES": {
+            "icms": 0.17,
+            "fcp": 0.00
+        },
+        "GO": {
+            "icms": 0.17,
+            "fcp": 0.02
+        },
+        "MA": {
+            "icms": 0.21,
+            "fcp": 0.02
+        },
+        "MT": {
+            "icms": 0.17,
+            "fcp": 0.00
+        },
+        "MS": {
+            "icms": 0.17,
+            "fcp": 0.00
+        },
+        "MG": {
+            "icms": 0.18,
+            "fcp": 0.00
+        },
+        "PA": {
+            "icms": 0.17,
+            "fcp": 0.02
+        },
+        "PB": {
+            "icms": 0.18,
+            "fcp": 0.02
+        },
+        "PR": {
+            "icms": 0.18,
+            "fcp": 0.015
+        },
+        "PE": {
+            "icms": 0.18,
+            "fcp": 0.025
+        },
+        "PI": {
+            "icms": 0.20,
+            "fcp": 0.025
+        },
+        "RJ": {
+            "icms": 0.20,
+            "fcp": 0.02
+        },
+        "RN": {
+            "icms": 0.18,
+            "fcp": 0.02
+        },
+        "RS": {
+            "icms": 0.17,
+            "fcp": 0.00
+        },
+        "RO": {
+            "icms": 0.175,
+            "fcp": 0.02
+        },
+        "RR": {
+            "icms": 0.18,
+            "fcp": 0.02
+        },
+        "SC": {
+            "icms": 0.17,
+            "fcp": 0.00
+        },
+        "SP": {
+            "icms": 0.18,
+            "fcp": 0.00
+        },
+        "SE": {
+            "icms": 0.19,
+            "fcp": 0.01
+        },
+        "TO": {
+            "icms": 0.18,
+            "fcp": 0.02
+        }
+    },
+    "state_programs": {
+        "SC_TTD": {
+            "state": "SC",
+            "type": "ICMS_DEFERMENT_WITH_ANTICIPATION",
+            "effective_icms_rate": 0.026,
+            "description": "Santa Catarina TTD – ICMS deferred at import with upfront anticipation.",
+            "requires_local_registration": true,
+            "notes": "After 36 months, anticipation rate may reduce to 1%."
+        },
+        "PE_PEAP": {
+            "state": "PE",
+            "type": "REDUCED_ICMS_BASE",
+            "effective_icms_rate": 0.014,
+            "description": "Pernambuco PEAP (Suape) – effective ICMS reduction for importers.",
+            "requires_local_registration": true
+        },
+        "ES_FUNDAP": {
+            "state": "ES",
+            "type": "ICMS_FINANCING",
+            "statutory_icms_rate": 0.17,
+            "effective_cash_icms_rate": 0.05,
+            "description": "Espírito Santo Fundap – ICMS paid but largely financed/refunded.",
+            "requires_local_registration": true,
+            "output_mode": "DUAL"
+        },
+        "ZFM_MANAUS": {
+            "state": "AM",
+            "type": "FULL_SUSPENSION",
+            "suspend_taxes": [
+                "II",
+                "IPI",
+                "PIS",
+                "COFINS",
+                "ICMS",
+                "AFRMM",
+                "ANTIDUMPING",
+                "CVD",
+                "SAFEGUARD"
+            ],
+            "description": "Manaus Free Trade Zone – tax suspension subject to approval."
+        },
+        "DRAWBACK_ZPE": {
+            "type": "FULL_SUSPENSION",
+            "suspend_taxes": [
+                "II",
+                "IPI",
+                "PIS",
+                "COFINS",
+                "ICMS",
+                "AFRMM",
+                "ANTIDUMPING",
+                "CVD",
+                "SAFEGUARD"
+            ],
+            "description": "Drawback or ZPE – suspension regime for export-oriented operations."
+        }
+    },
+    "icms_base_rules": {
+        "include_in_icms_base": [
+            "CIF",
+            "II",
+            "IPI",
+            "PIS",
+            "COFINS",
+            "AFRMM",
+            "ANTIDUMPING",
+            "CVD",
+            "SAFEGUARD",
+            "PORT_FEES",
+            "STORAGE",
+            "CUSTOMS_BROKER",
+            "SISCOMEX",
+            "INLAND_FREIGHT"
+        ],
+        "calculation_method": "POR_DENTRO"
+    }
+}

@@ -1,0 +1,22 @@
+# Defaults
+.git
+.gitignore
+
+# Ignore all dependencies and source code
+node_modules/
+src/
+public/
+
+# Ignore build configs
+vite.config.ts
+tsconfig.json
+.env
+.env.local
+
+# CRITICAL: Ignore package files to prevent App Engine from running npm install
+package.json
+package-lock.json
+
+# Keep the build output and config
+!dist/
+!app.yaml

@@ -1,0 +1,7 @@
+{
+  "name": "XSOLUTION AI business platform",
+  "description": "A specialized B2B CRM for the plastic resins and textile fibers distribution industry. Features include grade-specific product catalogs, container-based logistics tracking, precise margin quoting engines, and Gemini AI-powered market insights.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

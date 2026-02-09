@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Auth Redirect</title>
+    <script type="module">
+        import { PublicClientApplication } from "https://esm.sh/@azure/msal-browser@3.10.0";
+
+        const CLIENT_ID = "d7d38e4c-574a-4700-ada3-879725830da1";
+        const TENANT_ID = "5c1e7501-8d2d-49ba-9598-b6faa9249265";
+
+        const msalConfig = {
+            auth: {
+                clientId: CLIENT_ID,
+                authority: `https://login.microsoftonline.com/${TENANT_ID}`,
+                redirectUri: window.location.href, // This page is the target
+                navigateToLoginRequestUrl: false,
+            },
+            cache: {
+                cacheLocation: "localStorage",
+            }
+        };
+
+        const msal = new PublicClientApplication(msalConfig);
+
+        msal.initialize().then(() => {
+            msal.handleRedirectPromise().then(() => {
+                // If opened in a popup, this will process the hash and update localStorage
+                // The main window (opener) listens to storage changes or polls
+                if (window.opener) {
+                    document.body.innerText = "Authentication successful! Closing window in a moment...";
+                    setTimeout(() => {
+                        window.close();
+                    }, 1500);
+                } else {
+                    // Fallback if not a popup
+                    window.location.href = "/";
+                }
+            }).catch(err => {
+                console.error(err);
+                document.body.innerText = "Authentication failed: " + err.message;
+            });
+        });
+    </script>
+</head>
+
+<body>
+    <p>Authentication complete. Closing...</p>
+</body>
+
+</html>
