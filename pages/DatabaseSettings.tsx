@@ -81,11 +81,14 @@ const DatabaseSettings: React.FC = () => {
 
     return (
         <div className="max-w-5xl mx-auto pb-24">
-            <div className="flex flex-col gap-2 border-b border-slate-200 pb-4 mb-8">
-                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                    <Database className="text-purple-600" /> Database Configuration
-                </h2>
-                <p className="text-slate-500 text-sm">Manage data connections, schema definitions, and backup policies.</p>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl text-white"><Database size={24} /></div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Database Configuration</h1>
+                        <p className="text-slate-500 text-sm mt-1">Manage data connections, schema definitions, and backup policies.</p>
+                    </div>
+                </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

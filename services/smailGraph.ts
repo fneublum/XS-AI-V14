@@ -23,14 +23,14 @@ export async function getEmails(key: ProcessorKey, limit: number = 20, sortOrder
     const headers = new Headers();
     const bearer = `Bearer ${accessToken}`;
     headers.append("Authorization", bearer);
-    headers.append("Prefer", 'outlook.body-content-type="text"'); 
+    headers.append("Prefer", 'outlook.body-content-type="html"');
 
     const options = {
         method: "GET",
         headers: headers
     };
 
-    const endpoint = `https://graph.microsoft.com/v1.0/me/mailFolders/${folderId}/messages?$select=sender,from,subject,receivedDateTime,bodyPreview,body&$top=${limit}&$orderby=receivedDateTime ${sortOrder}`;
+    const endpoint = `https://graph.microsoft.com/v1.0/me/mailFolders/${folderId}/messages?$select=sender,from,subject,receivedDateTime,bodyPreview,body,conversationId,toRecipients,isRead&$top=${limit}&$orderby=receivedDateTime ${sortOrder}`;
 
     return fetch(endpoint, options)
         .then(response => response.json())
@@ -53,16 +53,55 @@ export async function sendReply(key: ProcessorKey, messageId: string, replyConte
         headers: headers,
         body: JSON.stringify(body)
     };
-    
+
     return fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/reply`, options)
         .then(response => {
-            if(response.ok) return true;
+            if (response.ok) return true;
             throw new Error("Failed to send reply");
         })
         .catch(error => {
             console.error(error);
             throw error;
         });
+}
+
+export async function getConversationThread(key: ProcessorKey, conversationId: string, limit: number = 20) {
+    const accessToken = await getTokenFor(key, ["Mail.Read"]);
+    const headers = new Headers();
+    headers.append("Authorization", `Bearer ${accessToken}`);
+    headers.append("Prefer", 'outlook.body-content-type="html"');
+
+    const filter = encodeURIComponent(`conversationId eq '${conversationId}'`);
+    const endpoint = `https://graph.microsoft.com/v1.0/me/messages?$filter=${filter}&$select=sender,from,toRecipients,subject,receivedDateTime,sentDateTime,bodyPreview,body,conversationId&$top=${limit}`;
+
+    return fetch(endpoint, { method: "GET", headers })
+        .then(response => response.json())
+        .catch(error => { console.error(error); return { value: [] }; });
+}
+
+export async function getSentEmails(key: ProcessorKey, limit: number = 30) {
+    const accessToken = await getTokenFor(key, ["Mail.Read"]);
+    const headers = new Headers();
+    headers.append("Authorization", `Bearer ${accessToken}`);
+    headers.append("Prefer", 'outlook.body-content-type="html"');
+
+    const endpoint = `https://graph.microsoft.com/v1.0/me/mailFolders/sentitems/messages?$select=sender,from,toRecipients,subject,sentDateTime,bodyPreview,body,conversationId&$top=${limit}&$orderby=sentDateTime DESC`;
+
+    return fetch(endpoint, { method: "GET", headers })
+        .then(response => response.json())
+        .catch(error => { console.error(error); return { value: [] }; });
+}
+
+export async function getEmailAttachments(key: ProcessorKey, messageId: string) {
+    const accessToken = await getTokenFor(key, ["Mail.Read"]);
+    const headers = new Headers();
+    headers.append("Authorization", `Bearer ${accessToken}`);
+
+    const endpoint = `https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments`;
+
+    return fetch(endpoint, { method: "GET", headers })
+        .then(response => response.json())
+        .catch(error => { console.error(error); return { value: [] }; });
 }
 
 export async function markEmailAsRead(key: ProcessorKey, messageId: string) {
@@ -81,10 +120,10 @@ export async function markEmailAsRead(key: ProcessorKey, messageId: string) {
         headers: headers,
         body: JSON.stringify(body)
     };
-    
+
     return fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}`, options)
         .then(response => {
-            if(response.ok) return true;
+            if (response.ok) return true;
             throw new Error("Failed to mark email as read");
         })
         .catch(error => {

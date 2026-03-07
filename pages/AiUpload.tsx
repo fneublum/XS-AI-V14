@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { UploadCloud, FileText, X, Send, Sparkles, Loader2, AlertCircle, Image as ImageIcon, Trash2, Maximize2, CheckCircle2, AlertTriangle, Table, ScanEye, Tag, Anchor, ShieldCheck, MapPin, Ship, Package, Calendar, Save, FileCheck, ClipboardList, Receipt, ScrollText, Calculator, Clock, CreditCard, PenTool, ShoppingBag, FileCode, DollarSign, Bot, LogIn, Mail } from 'lucide-react';
+import { UploadCloud, FileText, X, Send, Sparkles, Loader2, AlertCircle, Image as ImageIcon, Trash2, Maximize2, CheckCircle2, AlertTriangle, Table, ScanEye, Tag, Anchor, ShieldCheck, MapPin, Ship, Package, Calendar, Save, FileCheck, ClipboardList, Receipt, ScrollText, Calculator, Clock, CreditCard, PenTool, ShoppingBag, FileCode, DollarSign, Bot, LogIn, Mail, Layers, Link2, RefreshCw, Eye, ChevronDown, ChevronUp } from 'lucide-react';
 import { analyzeDocument } from '../services/geminiService';
 import { BillOfLading, Booking, Estimate, ProformaInvoice, PurchaseOrderExtract, Invoice, PackingList, SupplierInvoice, Port } from '../types';
 import { getSupabaseClient } from '../services/supabase';
 import { loginFor, getAccountFor, loginRequest, initializeMsal } from "../services/smailAuth";
+import { documentPipelineService, BatchFile, PipelineStats } from '../services/documentPipelineService';
 
 const IDENTIFICATION_PROMPT = `Analyze the uploaded document image and classify it into exactly one of these categories:
 - BILL OF LADING
@@ -212,7 +213,14 @@ const AiUpload: React.FC<AiUploadProps> = ({
     const [isEmailConnected, setIsEmailConnected] = useState(true);
     const [showConnectModal, setShowConnectModal] = useState(false);
 
+    // Batch Mode
+    const [batchMode, setBatchMode] = useState(false);
+    const [batchFiles, setBatchFiles] = useState<BatchFile[]>([]);
+    const [batchStats, setBatchStats] = useState<PipelineStats>({ total: 0, completed: 0, failed: 0, duplicates: 0, needsReview: 0, processing: 0 });
+    const [showBatchPanel, setShowBatchPanel] = useState(true);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const batchInputRef = useRef<HTMLInputElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const quickActions = [
@@ -335,17 +343,50 @@ const AiUpload: React.FC<AiUploadProps> = ({
         }
     }, [extractionResult, isProcessing]);
 
+    // Subscribe to batch pipeline updates
+    useEffect(() => {
+        const unsubscribe = documentPipelineService.subscribe((files, stats) => {
+            setBatchFiles(files);
+            setBatchStats(stats);
+        });
+        return unsubscribe;
+    }, []);
+
+    const handleBatchFiles = useCallback(async (files: FileList | File[]) => {
+        const fileArray = Array.from(files);
+        if (fileArray.length > 1 || batchMode) {
+            setBatchMode(true);
+            setShowBatchPanel(true);
+            await documentPipelineService.addFiles(fileArray);
+        } else if (fileArray.length === 1) {
+            handleFile(fileArray[0]);
+        }
+    }, [batchMode]);
+
+    const handleBatchSave = useCallback(async (type: string, data: any, previewUrl: string) => {
+        const companyId = currentCompanyId || 'ALL';
+        const created = new Date().toISOString();
+        // Reuse existing save callbacks
+        if (type === 'BILL OF LADING' && onSaveBL) {
+            await onSaveBL({ id: `BL${Date.now()}`, companyId, createdAt: created, blNumber: String(data.DOC_NUMBER || ''), shipper: String(data.SHIPPER || ''), consignee: String(data.CONSIGNEE || ''), notifyParty: String(data.NOTIFY || ''), vesselVoyage: String(data.VESSEL_VOYAGE || ''), portLoading: String(data.PORT_LOADING || ''), portDischarge: String(data.PORT_DISCHARGE || ''), placeReceipt: String(data.PLACE_OF_RECEIPT || ''), placeDelivery: String(data.PLACE_OF_DELIVERY || ''), shippedDate: String(data.SHIPPED_DATE || ''), originals: String(data.NUMBER_OF_ORIGINALS || ''), container: String(data.CONTAINER || ''), seal: String(data.SEAL || ''), description: String(data.PRODUCT_DESCRIPTION || ''), grossWeight: String(data.GROSS_WEIGHT || ''), measurement: String(data.MEASUREMENT || ''), packages: String(data.PACKAGES || ''), freightPayable: String(data.FREIGHT_PAYABLE || ''), remarks: String(data.TERMS || ''), originalDocument: previewUrl, status: 'AVAILABLE' });
+        } else if (type === 'BOOKING' && onSaveBooking) {
+            await onSaveBooking({ id: `BK${Date.now()}`, companyId, createdAt: created, bookingNumber: String(data.DOC_NUMBER || ''), customer: String(data.CUSTOMER || ''), agentName: String(data.CARGO_AGENT || ''), vesselVoyage: String(data.VESSEL_VOYAGE || ''), pol: String(data.POL || ''), pod: String(data.POD || ''), equipment: String(data.EQUIPMENT || ''), etd: String(data.ETD || ''), eta: String(data.ETA || ''), cargoCutOff: String(data.CARGO_CUT_OFF || ''), vgmCutOff: String(data.VGM_CUT_OFF || ''), draftCutOff: String(data.DRAFT_CUT_OFF || ''), freeTime: String(data.FREE_TIME || ''), terminal: String(data.TERMINAL || ''), originalDocument: previewUrl, status: 'AVAILABLE' });
+        } else if ((type === 'ESTIMATE') && onSaveEstimate) {
+            await onSaveEstimate({ id: `EST${Date.now()}`, companyId, createdAt: created, estimateNumber: String(data.DOC_NUMBER || ''), supplier: String(data.SELLER_NAME || ''), buyer: String(data.BUYER_NAME || ''), shipTo: String(data.SHIP_TO || ''), payTo: String(data.PAY_TO || ''), date: String(data.DATE || ''), terms: String(data.PAYMENT_TERMS || ''), incoterm: String(data.INCOTERM || ''), subtotal: Number(data.SUBTOTAL || 0), tax: Number(data.TAX || 0), totalAmount: Number(data.TOTAL_AMOUNT || 0), currency: String(data.CURRENCY || 'USD'), items: JSON.stringify(data.ITEMS || []), acceptedBy: String(data.ACCEPTED_BY || ''), acceptedDate: String(data.ACCEPTED_DATE || ''), originalDocument: previewUrl });
+        } else if (type === 'PROFORMA INVOICE' && onSaveProforma) {
+            await onSaveProforma({ id: `PI${Date.now()}`, companyId, createdAt: created, piNumber: String(data.DOC_NUMBER || ''), supplier: String(data.SELLER_NAME || ''), buyer: String(data.BUYER_NAME || ''), shipTo: String(data.SHIP_TO || ''), payTo: String(data.PAY_TO || ''), date: String(data.DATE || ''), terms: String(data.PAYMENT_TERMS || ''), incoterm: String(data.INCOTERM || ''), subtotal: Number(data.SUBTOTAL || 0), tax: Number(data.TAX || 0), totalAmount: Number(data.TOTAL_AMOUNT || 0), currency: String(data.CURRENCY || 'USD'), items: JSON.stringify(data.ITEMS || []), acceptedBy: String(data.ACCEPTED_BY || ''), acceptedDate: String(data.ACCEPTED_DATE || ''), originalDocument: previewUrl });
+        } else if (type === 'PURCHASE ORDER' && onSavePO) {
+            await onSavePO({ id: `PO${Date.now()}`, companyId, createdAt: created, poNumber: String(data.DOC_NUMBER || ''), vendor: String(data.SELLER_NAME || data.VENDOR_NAME || ''), date: String(data.DATE || ''), totalAmount: String(data.TOTAL_AMOUNT || ''), currency: String(data.CURRENCY || ''), items: JSON.stringify(data.ITEMS || []), originalDocument: previewUrl });
+        } else if (type === 'INVOICE' && onSaveSupplierInvoice) {
+            await onSaveSupplierInvoice({ id: `INV${Date.now()}`, companyId, createdAt: created, invoiceNumber: String(data.INVOICE_NUMBER || ''), invoiceDate: String(data.INVOICE_DATE || ''), shipperName: String(data.SELLER_NAME || ''), shipperAddress: String(data.SELLER_ADDRESS || ''), soldTo: String(data.BUYER_NAME_ADDRESS || ''), shipTo: String(data.SHIP_TO_ADDRESS || ''), paymentTerms: String(data.PAYMENT_TERMS || ''), incoterm: String(data.INCOTERMS || ''), dateOrder: String(data.DATE_SHIPPED || ''), customerPo: String(data.PO_NUMBER || ''), carrier: String(data.CARRIER || ''), transportRef: String(data.TRANSPORT_ID || ''), freightTerms: String(data.FREIGHT_TERMS || ''), items: JSON.stringify(data.ITEMS || []), grossWeight: String(data.WEIGHT_GROSS || ''), netWeight: String(data.WEIGHT_NET || ''), tareWeight: String(data.WEIGHT_TARE || ''), totalQuantity: String(data.TOTAL_QUANTITY || ''), subtotal: Number(data.SUBTOTAL || 0), totalAmount: Number(data.TOTAL_AMOUNT || 0), currency: String(data.CURRENCY || 'USD'), remitTo: String(data.REMIT_TO_NAME || ''), bankName: String(data.BANK_NAME || ''), swiftCode: String(data.SWIFT_CODE || ''), routingNumber: String(data.ROUTING_NUMBER || ''), accountNumber: String(data.ACCOUNT_NUMBER || ''), originalDocument: previewUrl });
+        } else if (type === 'PACKING LIST' && onSavePackingList) {
+            await onSavePackingList({ id: `PL${Date.now()}`, companyId, createdAt: created, plNumber: String(data.PL_NUMBER || ''), blNumber: String(data.BL_NUMBER || ''), shipper: String(data.SHIPPER || ''), consignee: String(data.CONSIGNEE || ''), shippingPoint: String(data.SHIPPING_POINT || ''), destination: String(data.DESTINATION || ''), date: String(data.DATE || ''), carrier: String(data.CARRIER || ''), containerNumber: String(data.CONTAINER_NUMBER || ''), sealNumber: String(data.SEAL_NUMBER || ''), vesselVoyage: String(data.VESSEL_VOYAGE || ''), productDescription: String(data.PRODUCT_DESCRIPTION || ''), unitCount: String(data.UNIT_COUNT || ''), unitNumbers: String(data.UNIT_NUMBERS || ''), grossWeight: String(data.GROSS_WEIGHT || ''), netWeight: String(data.NET_WEIGHT || ''), freightTerms: String(data.FREIGHT_TERMS || ''), poNumber: String(data.PO_NUMBER || ''), notes: String(data.NOTES || ''), scheduledShipDate: String(data.SCH_SHIP_DATE || ''), items: JSON.stringify(data.ITEMS || []), originalDocument: previewUrl });
+        }
+    }, [currentCompanyId, onSaveBL, onSaveBooking, onSaveEstimate, onSaveProforma, onSavePO, onSaveSupplierInvoice, onSavePackingList]);
+
     const checkEmailConnection = () => {
         const msalAccount = getAccountFor('automation');
-        const stored = localStorage.getItem('ai_email_accounts');
-        const localAccounts = stored ? JSON.parse(stored) : [];
-        const hasLegacy = localAccounts.some((a: any) => a.provider === 'OUTLOOK' || a.provider === 'GMAIL');
-
-        const connected = !!msalAccount || hasLegacy;
-        setIsEmailConnected(connected);
-        if (!connected) {
-            setShowConnectModal(true);
-        }
+        setIsEmailConnected(!!msalAccount);
     };
 
     const handleConnectOutlook = async () => {
@@ -398,11 +439,25 @@ const AiUpload: React.FC<AiUploadProps> = ({
     };
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault(); e.stopPropagation(); setDragActive(false);
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 1) {
+            handleBatchFiles(e.dataTransfer.files);
+        } else if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            if (batchMode) {
+                handleBatchFiles(e.dataTransfer.files);
+            } else {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        }
     };
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files.length > 0) {
-            handleFile(e.target.files[0]);
+        if (e.target.files && e.target.files.length > 1) {
+            handleBatchFiles(e.target.files);
+        } else if (e.target.files && e.target.files.length > 0) {
+            if (batchMode) {
+                handleBatchFiles(e.target.files);
+            } else {
+                handleFile(e.target.files[0]);
+            }
         }
     };
     const handleRemoveFile = () => {
@@ -420,7 +475,7 @@ const AiUpload: React.FC<AiUploadProps> = ({
         const exactCodeMatch = ports.find(p => p.code && p.code.toUpperCase() === cleanRaw);
         if (exactCodeMatch) return exactCodeMatch.code;
 
-        const inputTokens = new Set(cleanRaw.split(/[^A-Z0-9]+/).filter(t => t.length >= 3));
+        const inputTokens = new Set<string>(cleanRaw.split(/[^A-Z0-9]+/).filter(t => t.length >= 3));
         if (inputTokens.size === 0) return raw;
 
         let bestMatch: Port | null = null;
@@ -440,7 +495,7 @@ const AiUpload: React.FC<AiUploadProps> = ({
             }
 
             // 2. Name Match (token-based)
-            const nameTokens = new Set(pName.split(/[^A-Z0-9]+/).filter(t => t.length >= 3));
+            const nameTokens = new Set<string>(pName.split(/[^A-Z0-9]+/).filter(t => t.length >= 3));
             let commonCount = 0;
             for (const token of nameTokens) {
                 if (inputTokens.has(token)) {
@@ -738,6 +793,16 @@ const AiUpload: React.FC<AiUploadProps> = ({
                     {commonFields.terms && <InfoField icon={Clock} label="Terms" value={commonFields.terms} />}
                 </div>
                 {(data.ITEMS || data.items) && Array.isArray(data.ITEMS || data.items) && <ItemsTable items={data.ITEMS || data.items} />}
+                {/* Confidence Score */}
+                {data.EXTRACTION_CONFIDENCE && (
+                    <div className="mt-3 flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase">Confidence</span>
+                        <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden max-w-[120px]">
+                            <div className={`h-full rounded-full ${Number(data.EXTRACTION_CONFIDENCE) >= 0.85 ? 'bg-emerald-500' : Number(data.EXTRACTION_CONFIDENCE) >= 0.5 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${Number(data.EXTRACTION_CONFIDENCE) * 100}%` }} />
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-600">{Math.round(Number(data.EXTRACTION_CONFIDENCE) * 100)}%</span>
+                    </div>
+                )}
                 {savedSuccess ? (
                     <div className="mt-4 flex items-center gap-2 text-emerald-600 font-bold text-xs bg-emerald-50 px-3 py-2 rounded-full border border-emerald-100 animate-in fade-in">
                         <CheckCircle2 size={14} /> Saved to {type} Documents
@@ -792,17 +857,140 @@ const AiUpload: React.FC<AiUploadProps> = ({
             )}
 
             {/* Header */}
-            <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
-                <div>
-                    <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                        <Sparkles size={20} className="text-purple-600" /> AI Document Processor
-                    </h2>
-                    <p className="text-xs text-slate-500">Powered by Gemini Pro (Latest)</p>
+            <div className="p-4 border-b border-slate-200 bg-slate-50 shrink-0">
+                <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="p-2 bg-gradient-to-r from-rose-500 to-pink-500 rounded-xl text-white"><Sparkles size={24} /></div>
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-800">AI Document Processor</h1>
+                            <p className="text-slate-500 text-sm mt-1">Powered by Gemini Pro (Latest)</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => { setBatchMode(!batchMode); if (!batchMode) setShowBatchPanel(true); }}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${batchMode ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}
+                        >
+                            <Layers size={16} /> Batch Mode {batchMode ? 'ON' : 'OFF'}
+                        </button>
+                        {file && !batchMode && (
+                            <button onClick={handleRemoveFile} className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all shadow-md font-medium text-sm">
+                                <Trash2 size={16} /> Clear
+                            </button>
+                        )}
+                    </div>
                 </div>
-                {file && (
-                    <button onClick={handleRemoveFile} className="text-xs flex items-center gap-1 text-red-600 hover:bg-red-50 px-2 py-1 rounded transition-colors">
-                        <Trash2 size={14} /> Clear File
-                    </button>
+
+                {/* Batch Panel */}
+                {batchMode && (
+                    <div className="mt-4">
+                        <div className="flex items-center justify-between mb-2">
+                            <button onClick={() => setShowBatchPanel(!showBatchPanel)} className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                                {showBatchPanel ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                Batch Queue ({batchStats.total} files)
+                            </button>
+                            <div className="flex items-center gap-2">
+                                {batchStats.total > 0 && (
+                                    <div className="flex items-center gap-3 text-[11px] font-semibold">
+                                        {batchStats.completed > 0 && <span className="text-emerald-600">{batchStats.completed} saved</span>}
+                                        {batchStats.processing > 0 && <span className="text-blue-600">{batchStats.processing} processing</span>}
+                                        {batchStats.needsReview > 0 && <span className="text-amber-600">{batchStats.needsReview} review</span>}
+                                        {batchStats.duplicates > 0 && <span className="text-slate-500">{batchStats.duplicates} duplicates</span>}
+                                        {batchStats.failed > 0 && <span className="text-red-600">{batchStats.failed} failed</span>}
+                                    </div>
+                                )}
+                                <input type="file" ref={batchInputRef} onChange={(e) => { if (e.target.files) handleBatchFiles(e.target.files); }} className="hidden" accept="application/pdf,image/jpeg,image/png" multiple />
+                                <button onClick={() => batchInputRef.current?.click()} className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors">
+                                    + Add Files
+                                </button>
+                                {batchStats.completed > 0 && (
+                                    <button onClick={() => documentPipelineService.clearCompleted()} className="px-3 py-1.5 bg-slate-200 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-300 transition-colors">
+                                        Clear Done
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {showBatchPanel && batchFiles.length > 0 && (
+                            <div className="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100 max-h-[200px] overflow-y-auto">
+                                {batchFiles.map(bf => (
+                                    <div key={bf.id} className="px-3 py-2 flex items-center gap-3 text-xs hover:bg-slate-50">
+                                        {/* Status indicator */}
+                                        <div className="shrink-0">
+                                            {bf.status === 'completed' && <CheckCircle2 size={14} className="text-emerald-500" />}
+                                            {bf.status === 'failed' && <AlertCircle size={14} className="text-red-500" />}
+                                            {bf.status === 'duplicate' && <Link2 size={14} className="text-slate-400" />}
+                                            {bf.status === 'review' && <Eye size={14} className="text-amber-500" />}
+                                            {['identifying', 'extracting', 'saving'].includes(bf.status) && <Loader2 size={14} className="text-blue-500 animate-spin" />}
+                                            {bf.status === 'queued' && <Clock size={14} className="text-slate-300" />}
+                                        </div>
+
+                                        {/* File name */}
+                                        <span className="font-medium text-slate-700 truncate flex-1 min-w-0">{bf.file.name}</span>
+
+                                        {/* Doc type badge */}
+                                        {bf.docType && bf.docType !== 'UNKNOWN' && (
+                                            <span className="shrink-0 px-1.5 py-0.5 bg-indigo-50 text-indigo-600 font-bold rounded text-[9px]">{bf.docType}</span>
+                                        )}
+
+                                        {/* Confidence bar */}
+                                        {bf.confidence > 0 && (
+                                            <div className="shrink-0 w-16 flex items-center gap-1">
+                                                <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                    <div className={`h-full rounded-full ${bf.confidence >= 0.85 ? 'bg-emerald-500' : bf.confidence >= 0.5 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${bf.confidence * 100}%` }} />
+                                                </div>
+                                                <span className="text-[9px] text-slate-400">{Math.round(bf.confidence * 100)}%</span>
+                                            </div>
+                                        )}
+
+                                        {/* Status text */}
+                                        <span className={`shrink-0 text-[10px] font-semibold ${
+                                            bf.status === 'completed' ? 'text-emerald-600' :
+                                            bf.status === 'failed' ? 'text-red-600' :
+                                            bf.status === 'duplicate' ? 'text-slate-500' :
+                                            bf.status === 'review' ? 'text-amber-600' :
+                                            'text-blue-600'
+                                        }`}>
+                                            {bf.status === 'identifying' ? 'Classifying...' :
+                                             bf.status === 'extracting' ? 'Extracting...' :
+                                             bf.status === 'saving' ? 'Saving...' :
+                                             bf.status === 'completed' ? 'Saved' :
+                                             bf.status === 'duplicate' ? 'Duplicate' :
+                                             bf.status === 'review' ? 'Review' :
+                                             bf.status === 'failed' ? 'Failed' : 'Queued'}
+                                        </span>
+
+                                        {/* Actions */}
+                                        <div className="shrink-0 flex gap-1">
+                                            {bf.status === 'review' && (
+                                                <button onClick={() => documentPipelineService.approveFile(bf.id, currentCompanyId || 'ALL', handleBatchSave)} className="p-1 text-emerald-500 hover:bg-emerald-50 rounded" title="Approve & Save">
+                                                    <CheckCircle2 size={12} />
+                                                </button>
+                                            )}
+                                            {bf.status === 'failed' && (
+                                                <button onClick={() => documentPipelineService.retryFile(bf.id)} className="p-1 text-blue-500 hover:bg-blue-50 rounded" title="Retry">
+                                                    <RefreshCw size={12} />
+                                                </button>
+                                            )}
+                                            <button onClick={() => documentPipelineService.removeFile(bf.id)} className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded" title="Remove">
+                                                <X size={12} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {showBatchPanel && batchFiles.length === 0 && (
+                            <div className="bg-white rounded-lg border border-dashed border-slate-300 p-6 text-center"
+                                onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}
+                            >
+                                <Layers size={24} className="text-slate-300 mx-auto mb-2" />
+                                <p className="text-sm text-slate-500 font-medium">Drop multiple files here for batch processing</p>
+                                <p className="text-xs text-slate-400 mt-1">PDF, JPEG, PNG — up to 10MB each — processed in parallel</p>
+                            </div>
+                        )}
+                    </div>
                 )}
             </div>
 
@@ -842,11 +1030,11 @@ const AiUpload: React.FC<AiUploadProps> = ({
                                     <UploadCloud size={32} className="text-blue-600" />
                                 </div>
                                 <p className="font-bold text-slate-700 mb-2">Drag & drop your documents here</p>
-                                <p className="text-sm text-slate-500">PDF, JPEG, PNG up to 10MB</p>
+                                <p className="text-sm text-slate-500">PDF, JPEG, PNG up to 10MB — drop multiple files for batch mode</p>
                                 <div className="my-4 text-xs text-slate-400 w-full flex items-center gap-2">
                                     <hr className="flex-1" /> OR <hr className="flex-1" />
                                 </div>
-                                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="application/pdf,image/jpeg,image/png" />
+                                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="application/pdf,image/jpeg,image/png" multiple />
                                 <button onClick={() => fileInputRef.current?.click()} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">
                                     Browse Files
                                 </button>

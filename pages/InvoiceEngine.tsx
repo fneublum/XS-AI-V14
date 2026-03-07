@@ -9,6 +9,7 @@ import { PAYMENT_TERM_OPTIONS } from '../constants';
 import { FormattedInput, PriceInput, QuantityInput } from '../components/UnitInputs';
 import { getSupabaseClient } from '../services/supabase';
 import PDFPreviewModal from '../components/PDFPreviewModal';
+import { workflowEngine } from '../services/workflowEngine';
 
 interface InvoiceEngineProps {
     packingLists: PackingList[];
@@ -1292,6 +1293,15 @@ const InvoiceEngine: React.FC<InvoiceEngineProps> = ({
                 createdAt: new Date().toISOString()
             };
             onSave(newInvoice);
+            // Fire workflow event for new invoice
+            workflowEngine.emit({
+                type: 'INVOICE_CREATED',
+                entityType: 'invoice',
+                entityId: newInvoice.id,
+                data: newInvoice as any,
+                companyId: newInvoice.companyId,
+                timestamp: new Date().toISOString(),
+            });
         }
 
         // Update Booking Status to SHIPPED if applicable
@@ -2838,7 +2848,14 @@ const InvoiceEngine: React.FC<InvoiceEngineProps> = ({
         <div className="h-full flex flex-col bg-slate-50 overflow-hidden">
 
             {/* New Submenu Navigation */}
-            <div className="bg-white border-b border-slate-200 px-6 py-3 shrink-0 z-20 shadow-sm">
+            <div className="bg-white border-b border-slate-200 px-6 py-3 shrink-0 z-20 shadow-sm flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-rose-500 to-pink-500 rounded-xl text-white"><FileText size={24} /></div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Invoice Engine</h1>
+                        <p className="text-slate-500 text-sm mt-1">Create and manage commercial invoices</p>
+                    </div>
+                </div>
                 <div className="flex gap-2">
                     <button
                         onClick={handleLoadBlank}

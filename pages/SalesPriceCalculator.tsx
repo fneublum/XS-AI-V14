@@ -348,33 +348,37 @@ const SalesPriceCalculator: React.FC<SalesPriceCalculatorProps> = ({
     return (
         <div className="h-[calc(100vh-6rem)] overflow-hidden flex flex-col relative">
             {/* Header */}
-            <div className="flex justify-between items-center border-b border-slate-200 pb-4 mb-4 px-1">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        {isHistoryMode ? <Grid className="text-blue-600"/> : <Tag className="text-emerald-600" />}
-                        {isHistoryMode ? 'Price List Builder' : 'Sales Price Calculator'}
-                    </h2>
-                    <p className="text-slate-500 text-sm">
-                        {isHistoryMode ? 'Master price list worksheet with dynamic margin scenarios.' : 'Calculate margin and profit for specific items.'}
-                    </p>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-violet-500 to-purple-500 rounded-xl text-white">
+                        {isHistoryMode ? <Grid size={24} /> : <Tag size={24} />}
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">
+                            {isHistoryMode ? 'Price List Builder' : 'Sales Price Calculator'}
+                        </h1>
+                        <p className="text-slate-500 text-sm mt-1">
+                            {isHistoryMode ? 'Master price list worksheet with dynamic margin scenarios.' : 'Calculate margin and profit for specific items.'}
+                        </p>
+                    </div>
                 </div>
                 {isHistoryMode ? (
-                    <div className="flex gap-3">
+                    <div className="flex gap-3 items-center">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                            <input 
-                                type="text" 
-                                placeholder="Global Search..." 
-                                className="pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-64"
+                            <input
+                                type="text"
+                                placeholder="Global Search..."
+                                className="pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-500 outline-none w-64"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
-                        <button 
-                            onClick={() => { 
-                                setIsHistoryMode(false); 
-                                setSelectedCalcId(''); 
-                                setMargin(0); 
+                        <button
+                            onClick={() => {
+                                setIsHistoryMode(false);
+                                setSelectedCalcId('');
+                                setMargin(0);
                                 setCustomerDelivery(0);
                                 setDeliveryMethod('PICKUP');
                                 setCustomerName('');
@@ -385,13 +389,13 @@ const SalesPriceCalculator: React.FC<SalesPriceCalculatorProps> = ({
                                 setSalesFreightUnitCost(0);
                                 setSelectedCarrierId('');
                             }}
-                            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 shadow-sm transition-colors text-sm font-bold"
+                            className="flex items-center gap-2 px-5 py-2.5 bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-all shadow-md font-medium"
                         >
                             <Plus size={18} /> New Item Price
                         </button>
                     </div>
                 ) : (
-                    <button onClick={() => setIsHistoryMode(true)} className="text-slate-500 hover:text-blue-600 flex items-center gap-1 text-sm font-medium">
+                    <button onClick={() => setIsHistoryMode(true)} className="flex items-center gap-2 px-5 py-2.5 bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-all shadow-md font-medium">
                         <List size={16} /> View Price List
                     </button>
                 )}

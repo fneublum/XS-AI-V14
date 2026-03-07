@@ -75,6 +75,8 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
     // Image Upload State
     const [uploadingImage, setUploadingImage] = useState(false);
     const [isSavingFile, setIsSavingFile] = useState(false);
+    const [isDraggingImage, setIsDraggingImage] = useState(false);
+    const [showCustomSystemName, setShowCustomSystemName] = useState(false);
 
     // Filtering State
     const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
@@ -84,7 +86,8 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
 
     // Column Widths
     const [colWidths, setColWidths] = useState({
-        name: 250,
+        name: 220,
+        supplierProductName: 200,
         sku: 150,
         grade: 300,
         supplier: 150,
@@ -308,47 +311,59 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
     };
 
     // --- Image Upload Logic ---
+    const processImageFile = async (file: File) => {
+        if ((formData.imageIds?.length || 0) >= 3) {
+            alert("Maximum 3 images per product.");
+            return;
+        }
+
+        if (!file.type.startsWith('image/')) {
+            alert("Only image files are accepted.");
+            return;
+        }
+
+        setUploadingImage(true);
+        try {
+            const compressedBase64 = await compressImage(file, 600, 0.7);
+
+            if (onAddImage) {
+                const newImageId = `IMG${Date.now()}`;
+                const newImage: CompanyImage = {
+                    id: newImageId,
+                    companyId: formData.companyId || 'ALL',
+                    url: compressedBase64,
+                    name: file.name,
+                    createdAt: new Date().toISOString(),
+                    type: 'PRODUCT'
+                };
+
+                setFormData(prev => ({
+                    ...prev,
+                    imageIds: [...(prev.imageIds || []), newImageId]
+                }));
+
+                await onAddImage(newImage);
+            }
+        } catch (err) {
+            console.error("Image upload failed:", err);
+            alert("Failed to process image.");
+        } finally {
+            setUploadingImage(false);
+        }
+    };
+
     const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
-            const file = e.target.files[0];
+            await processImageFile(e.target.files[0]);
+        }
+    };
 
-            if ((formData.imageIds?.length || 0) >= 3) {
-                alert("Maximum 3 images per product.");
-                return;
-            }
-
-            setUploadingImage(true);
-            try {
-                // COMPRESS IMAGE before upload (max 600px width is plenty for product thumbnails)
-                const compressedBase64 = await compressImage(file, 600, 0.7);
-
-                if (onAddImage) {
-                    const newImageId = `IMG${Date.now()}`;
-                    // Create image record
-                    const newImage: CompanyImage = {
-                        id: newImageId,
-                        companyId: formData.companyId || 'ALL',
-                        url: compressedBase64,
-                        name: file.name,
-                        createdAt: new Date().toISOString(),
-                        type: 'PRODUCT' // EXPLICITLY SET TYPE TO PRODUCT
-                    };
-
-                    // Optimistic update local form state
-                    setFormData(prev => ({
-                        ...prev,
-                        imageIds: [...(prev.imageIds || []), newImageId]
-                    }));
-
-                    // Save to DB
-                    await onAddImage(newImage);
-                }
-            } catch (err) {
-                console.error("Image upload failed:", err);
-                alert("Failed to process image.");
-            } finally {
-                setUploadingImage(false);
-            }
+    const handleImageDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingImage(false);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            await processImageFile(e.dataTransfer.files[0]);
         }
     };
 
@@ -430,7 +445,7 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
 
         return (
             <th
-                className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase relative group"
+                className="px-2 py-1.5 text-[11px] font-semibold text-slate-500 uppercase relative group"
                 style={{ width: colWidths[widthKey] }}
             >
                 <div className="flex items-center justify-between">
@@ -492,45 +507,53 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800">Products</h2>
-                    <p className="text-slate-500 text-sm">Manage resin grades and fiber specifications</p>
+            {/* Header Row */}
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-2 bg-gradient-to-r from-cyan-500 to-teal-500 rounded-xl text-white">
+                        <Package size={24} />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Products</h1>
+                        <p className="text-sm text-slate-500">Manage resin grades and fiber specifications</p>
+                    </div>
                 </div>
+                {(!isSystemView || isAdmin) && (
+                    <button type="button" onClick={handleAddNew} className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-all shadow-md font-medium">
+                        <Plus size={18} />
+                        Add Product
+                    </button>
+                )}
+            </div>
 
-                <div className="flex gap-2 w-full md:w-auto">
-                    <div className="relative flex-1 md:w-64">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input type="text" placeholder="Search SKU, grade, name..." className="w-full pl-10 pr-4 py-2 border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-slate-900 text-white placeholder-slate-400" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-                    </div>
-                    <select className="px-4 py-2 border border-slate-600 rounded-lg bg-slate-900 text-white focus:ring-2 focus:ring-blue-500 outline-none" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
-                        <option value="All">All Categories</option>
-                        <option value="Resin">Resins</option>
-                        <option value="Fiber Textile">Fiber Textile</option>
-                        <option value="Cotton Waste">Cotton Waste</option>
-                        <option value="Plastic Scrap">Plastic Scrap</option>
-                    </select>
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
-                        <button
-                            onClick={() => setViewMode('grid')}
-                            className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Grid View"
-                        >
-                            <LayoutGrid size={18} />
-                        </button>
-                        <button
-                            onClick={() => setViewMode('table')}
-                            className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Table View"
-                        >
-                            <List size={18} />
-                        </button>
-                    </div>
-                    {(!isSystemView || isAdmin) && (
-                        <button type="button" onClick={handleAddNew} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" title="Add Product">
-                            <FilePlus size={20} />
-                        </button>
-                    )}
+            {/* Filter Bar */}
+            <div className="flex gap-2 w-full items-center flex-wrap">
+                <div className="relative flex-1 min-w-[200px] md:max-w-xs">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input type="text" placeholder="Search SKU, grade, name..." className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none bg-white text-slate-800 placeholder-slate-400" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                </div>
+                <select className="px-4 py-2 border border-slate-200 rounded-lg bg-white text-slate-700 focus:ring-2 focus:ring-cyan-500 outline-none" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                    <option value="All">All Categories</option>
+                    <option value="Resin">Resins</option>
+                    <option value="Fiber Textile">Fiber Textile</option>
+                    <option value="Cotton Waste">Cotton Waste</option>
+                    <option value="Plastic Scrap">Plastic Scrap</option>
+                </select>
+                <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
+                    <button
+                        onClick={() => setViewMode('grid')}
+                        className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Grid View"
+                    >
+                        <LayoutGrid size={18} />
+                    </button>
+                    <button
+                        onClick={() => setViewMode('table')}
+                        className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Table View"
+                    >
+                        <List size={18} />
+                    </button>
                 </div>
             </div>
 
@@ -609,6 +632,7 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
                                 <thead>
                                     <tr className="bg-slate-50 border-b border-slate-200">
                                         {renderColumnHeader('name', 'Product', 'name')}
+                                        {renderColumnHeader('supplierProductName', 'Supplier Product', 'supplierProductName')}
                                         {renderColumnHeader('sku', 'SKU / HS Code', 'sku')}
                                         {renderColumnHeader('grade', 'Grade & Specs', 'grade')}
                                         {renderColumnHeader('stockStatus', 'Status', 'stockStatus')}
@@ -619,50 +643,47 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
                                     {displayProducts.map((product) => {
                                         const firstImage = product.imageIds && product.imageIds.length > 0 ? getImageUrl(product.imageIds[0]) : null;
                                         return (
-                                            <tr key={product.id} className="hover:bg-slate-50 transition-colors group">
-                                                <td className="px-2 py-1 truncate">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="w-6 h-6 rounded bg-slate-100 shrink-0 overflow-hidden flex items-center justify-center border border-slate-200">
+                                            <tr key={product.id} className="hover:bg-slate-50/70 transition-colors group h-8">
+                                                <td className="px-2 py-0.5 truncate">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-5 h-5 rounded bg-slate-100 shrink-0 overflow-hidden flex items-center justify-center border border-slate-200">
                                                             {firstImage ? (
                                                                 <img src={firstImage} alt="Thumb" className="w-full h-full object-cover" />
                                                             ) : (
-                                                                <Package size={10} className="text-slate-400" />
+                                                                <Package size={8} className="text-slate-400" />
                                                             )}
                                                         </div>
-                                                        <div className="min-w-0">
-                                                            <div className="flex items-center gap-1">
-                                                                <p className="font-medium text-slate-800 text-xs truncate" title={product.name}>{product.name}</p>
-                                                                {product.sharedWith && product.sharedWith.length > 0 && (
-                                                                    <span title={`Shared with ${product.sharedWith.length} companies`}>
-                                                                        <Share2 size={10} className="text-indigo-400 shrink-0" />
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <span className="text-[10px] text-slate-400 truncate">{product.category}</span>
-                                                        </div>
+                                                        <p className="font-medium text-slate-800 text-[11px] truncate" title={product.name}>{product.name}</p>
+                                                        <span className="text-[9px] text-slate-400 shrink-0">({product.category})</span>
+                                                        {product.sharedWith && product.sharedWith.length > 0 && (
+                                                            <span title={`Shared with ${product.sharedWith.length} companies`}><Share2 size={9} className="text-indigo-400 shrink-0" /></span>
+                                                        )}
                                                     </div>
                                                 </td>
-                                                <td className="px-2 py-1 text-xs font-mono text-slate-600">
-                                                    <div className="truncate" title={product.sku}>{product.sku || <span className="text-slate-300 italic">-</span>}</div>
-                                                    <div className="text-[10px] text-blue-600 truncate">{product.hsCode || ''}</div>
+                                                <td className="px-2 py-0.5 text-[11px] text-slate-600 truncate" title={product.supplierProductName || ''}>
+                                                    {product.supplierProductName || <span className="text-slate-300 italic">-</span>}
                                                 </td>
-                                                <td className="px-2 py-1">
-                                                    <div className="flex flex-wrap items-center gap-1">
-                                                        <span className="inline-block bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.5 rounded font-medium">{product.grade}</span>
+                                                <td className="px-2 py-0.5 text-[11px] font-mono text-slate-600 truncate">
+                                                    <span title={product.sku}>{product.sku || <span className="text-slate-300 italic">-</span>}</span>
+                                                    {product.hsCode && <span className="text-[10px] text-blue-600 ml-1.5">{product.hsCode}</span>}
+                                                </td>
+                                                <td className="px-2 py-0.5">
+                                                    <div className="flex items-center gap-1">
+                                                        <span className="inline-block bg-slate-100 text-slate-700 text-[10px] px-1 py-0 rounded font-medium leading-tight">{product.grade}</span>
                                                         {product.specs?.type && <span className="text-[10px] text-slate-500">{product.specs.type}</span>}
                                                         {product.specs?.color && <span className="text-[10px] text-slate-500">{product.specs.color}</span>}
                                                         {product.specs?.reinforced && product.specs.reinforced !== 'Unfilled' && <span className="text-[10px] font-medium text-slate-600">{product.specs.reinforced}</span>}
                                                     </div>
                                                 </td>
-                                                <td className="px-2 py-1">
-                                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${product.stockStatus === 'Available' ? 'bg-emerald-100 text-emerald-800' : product.stockStatus === 'Low Stock' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'}`}>{product.stockStatus}</span>
+                                                <td className="px-2 py-0.5">
+                                                    <span className={`inline-flex items-center px-1.5 py-0 rounded text-[10px] font-medium leading-tight ${product.stockStatus === 'Available' ? 'bg-emerald-100 text-emerald-800' : product.stockStatus === 'Low Stock' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'}`}>{product.stockStatus}</span>
                                                 </td>
-                                                <td className="px-2 py-1 text-xs text-right">
-                                                    <div className="flex items-center justify-end gap-2">
-                                                        <button type="button" onClick={(e) => handleView(product, e)} title="View Details" className="text-slate-400 hover:text-blue-600 transition-colors"><FileText size={16} /></button>
-                                                        {isAdmin && <button type="button" onClick={(e) => handleEdit(product, e)} title="Edit" className="text-slate-400 hover:text-amber-600 transition-colors"><Pencil size={16} /></button>}
+                                                <td className="px-2 py-0.5 text-xs text-right">
+                                                    <div className="flex items-center justify-end gap-1.5">
+                                                        <button type="button" onClick={(e) => handleView(product, e)} title="View Details" className="text-slate-400 hover:text-blue-600 transition-colors"><FileText size={14} /></button>
+                                                        {isAdmin && <button type="button" onClick={(e) => handleEdit(product, e)} title="Edit" className="text-slate-400 hover:text-amber-600 transition-colors"><Pencil size={14} /></button>}
                                                         {(!isSystemView || isAdmin) && currentUser?.role !== Role.USER && (
-                                                            <button type="button" onClick={(e) => handleDelete(product.id, e)} title="Delete" className="text-slate-400 hover:text-red-600 transition-colors"><Trash2 size={16} /></button>
+                                                            <button type="button" onClick={(e) => handleDelete(product.id, e)} title="Delete" className="text-slate-400 hover:text-red-600 transition-colors"><Trash2 size={14} /></button>
                                                         )}
                                                     </div>
                                                 </td>
@@ -716,7 +737,7 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
                                 <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
                                     <label className="block text-xs font-bold text-blue-800 uppercase mb-1">Assign to Company</label>
                                     <select required name="companyId" value={formData.companyId} onChange={handleInputChange} className="w-full border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
-                                        {availableCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        {[...availableCompanies].sort((a, b) => a.name.localeCompare(b.name)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                     </select>
                                 </div>
                             )}
@@ -745,7 +766,13 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
                             )}
 
                             {/* Image Upload Section */}
-                            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                            <div
+                                className={`p-4 rounded-xl space-y-3 transition-colors ${isDraggingImage ? 'bg-blue-50 border-2 border-dashed border-blue-400' : 'bg-slate-50 border border-slate-200'}`}
+                                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingImage(true); }}
+                                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingImage(true); }}
+                                onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingImage(false); }}
+                                onDrop={handleImageDrop}
+                            >
                                 <div className="flex justify-between items-center">
                                     <h4 className="text-xs font-bold text-slate-600 uppercase flex items-center gap-2"><ImageIcon size={14} /> Product Images</h4>
                                     <span className="text-xs text-slate-400">{(formData.imageIds?.length || 0)} / 3</span>
@@ -770,22 +797,55 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
                                         );
                                     })}
 
-                                    {/* Upload Button */}
+                                    {/* Upload Button / Drop Zone */}
                                     {(formData.imageIds?.length || 0) < 3 && (
-                                        <label className={`w-20 h-20 rounded-lg border-2 border-dashed border-slate-300 bg-slate-100 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-200 transition-colors shrink-0 ${uploadingImage ? 'opacity-50 pointer-events-none' : ''}`}>
-                                            {uploadingImage ? <Loader2 size={20} className="animate-spin text-slate-400" /> : <Plus size={20} className="text-slate-400" />}
-                                            <span className="text-[10px] text-slate-500 mt-1">{uploadingImage ? 'Saving...' : 'Add'}</span>
+                                        <label className={`w-20 h-20 rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-colors shrink-0 ${isDraggingImage ? 'border-blue-400 bg-blue-100' : 'border-slate-300 bg-slate-100 hover:bg-slate-200'} ${uploadingImage ? 'opacity-50 pointer-events-none' : ''}`}>
+                                            {uploadingImage ? <Loader2 size={20} className="animate-spin text-slate-400" /> : <Plus size={20} className={isDraggingImage ? 'text-blue-500' : 'text-slate-400'} />}
+                                            <span className={`text-[10px] mt-1 ${isDraggingImage ? 'text-blue-600' : 'text-slate-500'}`}>{uploadingImage ? 'Saving...' : isDraggingImage ? 'Drop' : 'Add'}</span>
                                             <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={uploadingImage} />
                                         </label>
                                     )}
                                 </div>
+
+                                {isDraggingImage && (
+                                    <p className="text-xs text-blue-600 text-center font-medium">Drop your image here</p>
+                                )}
                             </div>
 
                             {/* Core Info */}
                             <div className="grid grid-cols-1 gap-4">
                                 <div className="col-span-1">
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">Product Name *</label>
-                                    <input required name="name" value={formData.name || ''} onChange={handleInputChange} className="w-full border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="e.g. PP Homopolymer" />
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">System Product Name *</label>
+                                    {showCustomSystemName ? (
+                                        <div className="flex gap-2">
+                                            <input required name="name" value={formData.name || ''} onChange={handleInputChange} className="flex-1 border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Type new system product name" autoFocus />
+                                            <button type="button" onClick={() => { setShowCustomSystemName(false); }} className="px-2 py-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Back to list"><X size={16} /></button>
+                                        </div>
+                                    ) : (
+                                        <select
+                                            name="name"
+                                            value={formData.name || ''}
+                                            onChange={(e) => {
+                                                if (e.target.value === '_ADD_NEW_') {
+                                                    setShowCustomSystemName(true);
+                                                    setFormData(prev => ({ ...prev, name: '' }));
+                                                } else {
+                                                    handleInputChange(e);
+                                                }
+                                            }}
+                                            className="w-full border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm appearance-none"
+                                        >
+                                            <option value="">Select system product name...</option>
+                                            <option value="_ADD_NEW_" className="font-bold text-blue-400 bg-slate-800">+ Add New</option>
+                                            {Array.from(new Set(products.map(p => p.name).filter(Boolean))).sort().map(name => (
+                                                <option key={name} value={name}>{name}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+                                <div className="col-span-1">
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Supplier Product Name</label>
+                                    <input name="supplierProductName" value={formData.supplierProductName || ''} onChange={handleInputChange} className="w-full border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Supplier's product name" />
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
@@ -816,7 +876,7 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
                                         >
                                             <option value="">Select Supplier...</option>
                                             <option value="_ADD_NEW_" className="font-bold text-blue-400 bg-slate-800">+ Add New Supplier</option>
-                                            {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                                            {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                                         </select>
                                     </div>
                                     {supplierAddedMessage && <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1"><CheckCircle2 size={10} /> {supplierAddedMessage}</p>}
@@ -951,13 +1011,7 @@ const Products: React.FC<ProductsProps> = ({ products, suppliers = [], onAdd, on
                                     <span>Visible to {viewingProduct.sharedWith.length} other companies</span>
                                 </div>
                             )}
-                            <div className="grid grid-cols-3 gap-4">
-                                {isAdmin && (
-                                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Supplier</p>
-                                        <p className="font-semibold text-slate-800 flex items-center gap-2"><Building size={14} className="text-slate-400" /> {viewingProduct.supplier}</p>
-                                    </div>
-                                )}
+                            <div className="grid grid-cols-2 gap-4">
                                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
                                     <p className="text-xs font-bold text-slate-400 uppercase mb-1">Origin</p>
                                     <p className="font-semibold text-slate-800">{viewingProduct.specs?.origin}</p>

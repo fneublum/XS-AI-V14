@@ -4,6 +4,7 @@ import { RefreshCw, Loader2, CheckCircle2, Inbox, FileText, AlertCircle, ShieldC
 import { analyzeDocument, getEmailAgentResponse } from '../services/geminiService';
 import { loginFor, getAccountFor, loginRequest, ProcessorKey, initializeMsal, logoutFor, getTokenFor } from "../services/smailAuth";
 import { BillOfLading, Booking, Estimate, ProformaInvoice, PurchaseOrderExtract, Invoice, PackingList, SupplierInvoice } from '../types';
+import { notificationService } from '../services/notificationService';
 
 interface AiEmailProcessorProps {
     onSaveBL?: (data: BillOfLading) => void;
@@ -18,6 +19,12 @@ interface AiEmailProcessorProps {
     processorKey?: ProcessorKey;
 }
 
+interface EmailAttachment {
+    id: string;
+    name: string;
+    contentType: string;
+}
+
 interface EmailMessage {
     id: string;
     from: string;
@@ -29,6 +36,7 @@ interface EmailMessage {
     attachmentName?: string;
     attachmentType?: string;
     attachmentData?: string;
+    attachments?: EmailAttachment[];
     status: 'UNREAD' | 'PROCESSED' | 'ERROR';
 }
 
@@ -224,6 +232,7 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
     const [identifiedDocType, setIdentifiedDocType] = useState<string | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [savedSuccess, setSavedSuccess] = useState(false);
+    const [allProcessedResults, setAllProcessedResults] = useState<{ docType: string; data: ExtractedData; previewUrl: string; attachmentName: string; saved: boolean }[]>([]);
 
     const [autoRun, setAutoRun] = useState(false);
     const [sortOrder, setSortOrder] = useState<'DESC' | 'ASC'>('DESC');
@@ -278,7 +287,7 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
                 if (!isScanningRef.current && !isProcessingRef.current) {
                     handleScanInbox();
                 }
-            }, 15 * 60 * 1000);
+            }, 5 * 60 * 1000); // Scan every 5 minutes
         }
         return () => clearInterval(interval);
     }, [autoRun]);
@@ -296,41 +305,13 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
     }, [autoRun, isProcessing, isScanning, emails, isConnected]);
 
     useEffect(() => {
-        if (docExtractionResult && !savedSuccess && !isProcessing) {
+        if (docExtractionResult && !savedSuccess && !isProcessing && allProcessedResults.length === 0) {
             handleAutoSave();
         }
     }, [docExtractionResult, isProcessing]);
 
     const checkConnection = () => {
-        // 1. Prioritize "ACTIVE" Account from Settings (Service Principal / Backend)
-        const storedAccounts = localStorage.getItem('ai_email_accounts');
-        let activeAccount = null;
-        if (storedAccounts) {
-            try {
-                const accounts = JSON.parse(storedAccounts);
-                // STRICT RULE: Use the one marked 'ACTIVE'
-                activeAccount = accounts.find((a: any) => a.status === 'ACTIVE');
-            } catch (e) { console.error(e); }
-        }
-
-        if (activeAccount) {
-            setTargetEmail(activeAccount.email);
-            setIsConnected(true);
-            setUseMsal(false); // Force creating token from secret/password
-            setScanError(null);
-            return;
-        }
-
-        // 2. STRICT RULE: Automation (Inbox Scanner) must not prompt for login
-        if (processorKey === 'automation') {
-            setTargetEmail('No Configuration Found');
-            setScanError('Please configure email credentials in Settings > Integrations.');
-            setIsConnected(false);
-            setUseMsal(false);
-            return;
-        }
-
-        // 3. Fallback to MSAL (Interactive) if no active settings
+        // Check MSAL interactive accounts only
         const automationAccount = getAccountFor('automation');
         const myAccount = getAccountFor('my');
         const msalAccount = automationAccount || myAccount;
@@ -395,22 +376,14 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
         setScanError(null);
 
         let token = '';
-        if (useMsal) {
-            try {
-                token = await getTokenFor(activeKey, loginRequest.scopes);
-            } catch (e: any) {
-                if (e.message?.includes("Redirecting")) return "REDIRECTING";
-                setScanError("Auth Expired");
-                setIsConnected(false);
-                setIsScanning(false);
-                return "AUTH_ERROR";
-            }
-        } else {
-            const storedAccounts = localStorage.getItem('ai_email_accounts');
-            if (storedAccounts) {
-                const account = JSON.parse(storedAccounts).find((a: any) => a.email === targetEmail);
-                if (account) token = account.password;
-            }
+        try {
+            token = await getTokenFor(activeKey, loginRequest.scopes);
+        } catch (e: any) {
+            if (e.message?.includes("Redirecting")) return "REDIRECTING";
+            setScanError("Auth Expired");
+            setIsConnected(false);
+            setIsScanning(false);
+            return "AUTH_ERROR";
         }
 
         try {
@@ -432,8 +405,8 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
 
                     if (attachResp.ok) {
                         const attachData = await attachResp.json();
-                        const validAttachment = attachData.value?.find((a: any) => !a.isInline);
-                        if (validAttachment) {
+                        const validAttachments = (attachData.value || []).filter((a: any) => !a.isInline);
+                        if (validAttachments.length > 0) {
                             newEmails.push({
                                 id: msg.id,
                                 from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || 'Unknown',
@@ -442,9 +415,10 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
                                 receivedDateTime: msg.receivedDateTime,
                                 snippet: msg.bodyPreview || '',
                                 hasAttachment: true,
-                                attachmentName: validAttachment.name,
-                                attachmentType: validAttachment.contentType,
-                                attachmentData: validAttachment.id,
+                                attachmentName: validAttachments[0].name,
+                                attachmentType: validAttachments[0].contentType,
+                                attachmentData: validAttachments[0].id,
+                                attachments: validAttachments.map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType })),
                                 status: 'UNREAD'
                             });
                         }
@@ -496,31 +470,63 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
         }
     };
 
+    const saveDocumentInline = async (docType: string, data: any, docUrl: string) => {
+        const companyId = currentCompanyId || 'ALL';
+        const created = new Date().toISOString();
+        try {
+            if (docType === 'BOOKING' && onSaveBooking) {
+                await onSaveBooking({ id: `BK${Date.now()}`, companyId, createdAt: created, bookingNumber: String(data.DOC_NUMBER || ''), customer: String(data.CUSTOMER || ''), vesselVoyage: String(data.VESSEL_VOYAGE || ''), pol: String(data.POL || ''), pod: String(data.POD || ''), equipment: String(data.EQUIPMENT || ''), etd: String(data.ETD || ''), eta: String(data.ETA || ''), cargoCutOff: String(data.CARGO_CUT_OFF || ''), vgmCutOff: String(data.VGM_CUT_OFF || ''), draftCutOff: String(data.DRAFT_CUT_OFF || ''), freeTime: String(data.FREE_TIME || ''), terminal: String(data.TERMINAL || ''), originalDocument: docUrl });
+                return true;
+            } else if (docType === 'BILL OF LADING' && onSaveBL) {
+                await onSaveBL({ id: `BL${Date.now()}`, companyId, createdAt: created, blNumber: String(data.DOC_NUMBER || ''), shipper: String(data.SHIPPER || ''), consignee: String(data.CONSIGNEE || ''), notifyParty: String(data.NOTIFY || ''), vesselVoyage: String(data.VESSEL_VOYAGE || ''), portLoading: String(data.PORT_LOADING || ''), portDischarge: String(data.PORT_DISCHARGE || ''), placeReceipt: String(data.PLACE_OF_RECEIPT || ''), placeDelivery: String(data.PLACE_OF_DELIVERY || ''), shippedDate: String(data.SHIPPED_DATE || ''), originals: String(data.NUMBER_OF_ORIGINALS || ''), container: String(data.CONTAINER || ''), seal: String(data.SEAL || ''), description: String(data.PRODUCT_DESCRIPTION || ''), grossWeight: String(data.GROSS_WEIGHT || ''), measurement: String(data.MEASUREMENT || ''), packages: String(data.PACKAGES || ''), freightPayable: String(data.FREIGHT_PAYABLE || ''), remarks: String(data.TERMS || ''), originalDocument: docUrl });
+                return true;
+            } else if (docType === 'ESTIMATE' && onSaveEstimate) {
+                await onSaveEstimate({ id: `EST${Date.now()}`, companyId, createdAt: created, estimateNumber: String(data.DOC_NUMBER || ''), supplier: String(data.SELLER_NAME || ''), buyer: String(data.BUYER_NAME || ''), shipTo: String(data.SHIP_TO || ''), payTo: String(data.PAY_TO || ''), date: String(data.DATE || ''), terms: String(data.PAYMENT_TERMS || ''), incoterm: String(data.INCOTERM || ''), subtotal: Number(data.SUBTOTAL || 0), tax: Number(data.TAX || 0), totalAmount: Number(data.TOTAL_AMOUNT || 0), currency: String(data.CURRENCY || 'USD'), items: JSON.stringify(data.ITEMS || []), acceptedBy: String(data.ACCEPTED_BY || ''), acceptedDate: String(data.ACCEPTED_DATE || ''), originalDocument: docUrl });
+                return true;
+            } else if (docType === 'PROFORMA INVOICE' && onSaveProforma) {
+                await onSaveProforma({ id: `PI${Date.now()}`, companyId, createdAt: created, piNumber: String(data.DOC_NUMBER || ''), supplier: String(data.SELLER_NAME || ''), buyer: String(data.BUYER_NAME || ''), shipTo: String(data.SHIP_TO || ''), payTo: String(data.PAY_TO || ''), date: String(data.DATE || ''), terms: String(data.PAYMENT_TERMS || ''), incoterm: String(data.INCOTERM || ''), subtotal: Number(data.SUBTOTAL || 0), tax: Number(data.TAX || 0), totalAmount: Number(data.TOTAL_AMOUNT || 0), currency: String(data.CURRENCY || 'USD'), items: JSON.stringify(data.ITEMS || []), acceptedBy: String(data.ACCEPTED_BY || ''), acceptedDate: String(data.ACCEPTED_DATE || ''), originalDocument: docUrl });
+                return true;
+            } else if (docType === 'PURCHASE ORDER' && onSavePO) {
+                await onSavePO({ id: `PO${Date.now()}`, companyId, createdAt: created, poNumber: String(data.DOC_NUMBER || ''), vendor: String(data.SELLER_NAME || data.VENDOR_NAME || ''), date: String(data.DATE || ''), totalAmount: String(data.TOTAL_AMOUNT || ''), currency: String(data.CURRENCY || ''), items: JSON.stringify(data.ITEMS || []), originalDocument: docUrl });
+                return true;
+            } else if (docType === 'INVOICE' && onSaveSupplierInvoice) {
+                await onSaveSupplierInvoice({ id: `INV${Date.now()}`, companyId, createdAt: created, invoiceNumber: String(data.INVOICE_NUMBER || ''), invoiceDate: String(data.INVOICE_DATE || ''), shipperName: String(data.SELLER_NAME || ''), shipperAddress: String(data.SELLER_ADDRESS || ''), soldTo: String(data.BUYER_NAME_ADDRESS || ''), shipTo: String(data.SHIP_TO_ADDRESS || ''), paymentTerms: String(data.PAYMENT_TERMS || ''), incoterm: String(data.INCOTERMS || ''), dateOrder: String(data.DATE_SHIPPED || ''), customerPo: String(data.PO_NUMBER || ''), carrier: String(data.CARRIER || ''), transportRef: String(data.TRANSPORT_ID || ''), freightTerms: String(data.FREIGHT_TERMS || ''), items: JSON.stringify(data.ITEMS || []), grossWeight: String(data.WEIGHT_GROSS || ''), netWeight: String(data.WEIGHT_NET || ''), tareWeight: String(data.WEIGHT_TARE || ''), totalQuantity: String(data.TOTAL_QUANTITY || ''), subtotal: Number(data.SUBTOTAL || 0), totalAmount: Number(data.TOTAL_AMOUNT || 0), currency: String(data.CURRENCY || 'USD'), remitTo: String(data.REMIT_TO_NAME || ''), bankName: String(data.BANK_NAME || ''), swiftCode: String(data.SWIFT_CODE || ''), routingNumber: String(data.ROUTING_NUMBER || ''), accountNumber: String(data.ACCOUNT_NUMBER || ''), originalDocument: docUrl });
+                return true;
+            } else if (docType === 'PACKING LIST' && onSavePackingList) {
+                await onSavePackingList({ id: `PL${Date.now()}`, companyId, createdAt: created, plNumber: String(data.PL_NUMBER || ''), blNumber: String(data.BL_NUMBER || ''), shipper: String(data.SHIPPER || ''), consignee: String(data.CONSIGNEE || ''), shippingPoint: String(data.SHIPPING_POINT || ''), destination: String(data.DESTINATION || ''), date: String(data.DATE || ''), carrier: String(data.CARRIER || ''), containerNumber: String(data.CONTAINER_NUMBER || ''), sealNumber: String(data.SEAL_NUMBER || ''), vesselVoyage: String(data.VESSEL_VOYAGE || ''), productDescription: String(data.PRODUCT_DESCRIPTION || ''), unitCount: String(data.UNIT_COUNT || ''), unitNumbers: String(data.UNIT_NUMBERS || ''), grossWeight: String(data.GROSS_WEIGHT || ''), netWeight: String(data.NET_WEIGHT || ''), freightTerms: String(data.FREIGHT_TERMS || ''), poNumber: String(data.PO_NUMBER || ''), notes: String(data.NOTES || ''), scheduledShipDate: String(data.SCH_SHIP_DATE || ''), items: JSON.stringify(data.ITEMS || []), originalDocument: docUrl });
+                return true;
+            }
+            return false;
+        } catch (err) {
+            console.error('Inline save failed:', err);
+            return false;
+        }
+    };
+
     const handleProcessEmail = async (email: EmailMessage) => {
-        if (!email.attachmentData) return;
+        if (!email.attachmentData && (!email.attachments || email.attachments.length === 0)) return;
 
         setSelectedEmail(email);
         setIsProcessing(true);
-        setProcessStatus('Downloading attachment...');
+        setProcessStatus('Starting...');
         setDocExtractionResult(null);
         setIdentifiedDocType(null);
         setPreviewUrl(null);
         setSavedSuccess(false);
+        setAllProcessedResults([]);
 
         let token = '';
-        if (useMsal) {
-            try { token = await getTokenFor(activeKey, loginRequest.scopes); } catch (e: any) {
-                if (e.message?.includes("Redirecting")) return;
-                setIsProcessing(false);
-                return;
-            }
-        } else {
-            const storedAccounts = localStorage.getItem('ai_email_accounts');
-            if (storedAccounts) {
-                const account = JSON.parse(storedAccounts).find((a: any) => a.email === targetEmail);
-                if (account) token = account.password;
-            }
+        try {
+            token = await getTokenFor(activeKey, loginRequest.scopes);
+        } catch (e: any) {
+            if (e.message?.includes("Redirecting")) return;
+            setIsProcessing(false);
+            return;
         }
+
+        const attachmentsToProcess = email.attachments && email.attachments.length > 0
+            ? email.attachments
+            : [{ id: email.attachmentData!, name: email.attachmentName!, contentType: email.attachmentType! }];
 
         try {
             // Only mark as read if in Inbox
@@ -529,44 +535,80 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
                 await fetch(readUrl, { method: 'PATCH', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ isRead: true }) });
             }
 
-            const attachUrl = `https://graph.microsoft.com/v1.0/me/messages/${email.id}/attachments/${email.attachmentData}`;
-            const attachResp = await fetch(attachUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-            if (!attachResp.ok) throw new Error("Download failed");
-            const attachJson = await attachResp.json();
-            const base64Data = attachJson.contentBytes;
+            const results: typeof allProcessedResults = [];
 
-            const dataUrl = `data:${email.attachmentType};base64,${base64Data}`;
-            setPreviewUrl(dataUrl);
+            for (let idx = 0; idx < attachmentsToProcess.length; idx++) {
+                const att = attachmentsToProcess[idx];
+                setProcessStatus(`Downloading ${att.name} (${idx + 1}/${attachmentsToProcess.length})...`);
 
-            setProcessStatus('AI identifying document...');
-            const typeResult = await analyzeDocument(base64Data, email.attachmentType || 'application/pdf', IDENTIFICATION_PROMPT);
-            const docType = String(typeResult ?? '').replace(/[\*\"]/g, '').trim().toUpperCase();
-            setIdentifiedDocType(docType);
+                const attachUrl = `https://graph.microsoft.com/v1.0/me/messages/${email.id}/attachments/${att.id}`;
+                const attachResp = await fetch(attachUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+                if (!attachResp.ok) { console.error(`Download failed for ${att.name}`); continue; }
+                const attachJson = await attachResp.json();
+                const base64Data = attachJson.contentBytes;
 
-            setProcessStatus(`Extracting ${docType} data...`);
-            const prompt = EXTRACTION_PROMPTS[docType as keyof typeof EXTRACTION_PROMPTS];
-            if (!prompt) {
-                setProcessStatus(`No specific extraction rules for '${docType}'.`);
-                setIsProcessing(false);
-                return;
+                const dataUrl = `data:${att.contentType};base64,${base64Data}`;
+                setPreviewUrl(dataUrl);
+
+                setProcessStatus(`AI identifying ${att.name}...`);
+                const typeResult = await analyzeDocument(base64Data, att.contentType || 'application/pdf', IDENTIFICATION_PROMPT);
+                const docType = String(typeResult ?? '').replace(/[\*\"]/g, '').trim().toUpperCase();
+                setIdentifiedDocType(docType);
+
+                setProcessStatus(`Extracting ${docType} from ${att.name}...`);
+                const prompt = EXTRACTION_PROMPTS[docType as keyof typeof EXTRACTION_PROMPTS];
+                if (!prompt) {
+                    console.warn(`No extraction rules for '${docType}' in ${att.name}`);
+                    continue;
+                }
+
+                const resultRaw: any = await analyzeDocument(base64Data, att.contentType || 'application/pdf', prompt);
+                const extractionResultStr = typeof resultRaw === 'string' ? resultRaw : String(resultRaw);
+                const processed = processExtractionLogic(extractionResultStr);
+
+                if (processed) {
+                    setDocExtractionResult(processed);
+                    setPreviewUrl(dataUrl);
+                    setIdentifiedDocType(docType);
+
+                    // Save inline using direct dataUrl (not stale state)
+                    const saved = await saveDocumentInline(docType, processed.mergedData, dataUrl);
+                    setSavedSuccess(saved);
+
+                    results.push({ docType, data: processed, previewUrl: dataUrl, attachmentName: att.name, saved });
+                }
             }
 
-            const resultRaw: any = await analyzeDocument(base64Data, email.attachmentType || 'application/pdf', prompt);
-            const extractionResultStr = typeof resultRaw === 'string' ? resultRaw : String(resultRaw);
-            const processed = processExtractionLogic(extractionResultStr);
+            setAllProcessedResults(results);
+            if (results.length > 0) {
+                // Set the last result as current for display
+                const last = results[results.length - 1];
+                setDocExtractionResult(last.data);
+                setIdentifiedDocType(last.docType);
+                setPreviewUrl(last.previewUrl);
+                setSavedSuccess(true);
 
-            if (processed) {
-                setDocExtractionResult(processed);
-
-                // Move to Deleted Items if successfully processed and currently in Inbox
-                if (activeFolder === 'inbox') {
-                    const moveUrl = `https://graph.microsoft.com/v1.0/me/messages/${email.id}/move`;
-                    await fetch(moveUrl, {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ destinationId: "deleteditems" })
+                // Send notification for auto-processed documents
+                const savedCount = results.filter(r => r.saved).length;
+                if (savedCount > 0) {
+                    notificationService.add({
+                        type: 'success',
+                        title: 'Email Documents Processed',
+                        message: `${savedCount} document${savedCount > 1 ? 's' : ''} extracted from "${email.subject}" (${email.from}): ${results.map(r => r.docType).join(', ')}`,
+                        category: 'ai',
+                        companyId: currentCompanyId || 'ALL',
                     });
                 }
+            }
+
+            // Move to Deleted Items if successfully processed
+            if (results.length > 0 && activeFolder === 'inbox') {
+                const moveUrl = `https://graph.microsoft.com/v1.0/me/messages/${email.id}/move`;
+                await fetch(moveUrl, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ destinationId: "deleteditems" })
+                });
             }
 
             setEmails(prev => prev.map(e => e.id === email.id ? { ...e, status: 'PROCESSED' } : e));
@@ -744,6 +786,7 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
         setDocExtractionResult(null);
         setIdentifiedDocType(null);
         setPreviewUrl(null);
+        setAllProcessedResults([]);
     };
 
     const handleSendChat = async (overrideText?: string) => {
@@ -951,7 +994,15 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
                         {emails.map(email => (
                             <div
                                 key={email.id}
-                                onClick={() => !isProcessing && handleProcessEmail(email)}
+                                onClick={() => {
+                                    if (!isProcessing) {
+                                        setSelectedEmail(email);
+                                        setDocExtractionResult(null);
+                                        setAllProcessedResults([]);
+                                        setPreviewUrl(null);
+                                        setIdentifiedDocType(null);
+                                    }
+                                }}
                                 className={`p-4 cursor-pointer transition-all hover:bg-slate-50 group relative ${selectedEmail?.id === email.id ? 'bg-blue-50/50 border-l-4 border-blue-500' : 'border-l-4 border-transparent'} ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
                             >
                                 <div className="flex justify-between items-start mb-1">
@@ -960,9 +1011,13 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
                                 </div>
                                 <h4 className="text-xs font-medium text-slate-700 mb-1 line-clamp-1">{email.subject}</h4>
                                 {email.hasAttachment && (
-                                    <div className="flex items-center gap-1 text-[10px] text-blue-600 bg-blue-50/50 w-fit px-1.5 py-0.5 rounded mt-2">
-                                        <FileText size={10} />
-                                        <span className="truncate max-w-[120px]">{email.attachmentName}</span>
+                                    <div className="flex flex-wrap gap-1 mt-2">
+                                        {(email.attachments || [{ id: email.attachmentData!, name: email.attachmentName!, contentType: email.attachmentType! }]).map((att, i) => (
+                                            <div key={i} className="flex items-center gap-1 text-[10px] text-blue-600 bg-blue-50/50 w-fit px-1.5 py-0.5 rounded">
+                                                <FileText size={10} />
+                                                <span className="truncate max-w-[120px]">{att.name}</span>
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
                                 {email.status === 'PROCESSED' && <div className="absolute top-2 right-2 text-emerald-500"><CheckCircle2 size={16} /></div>}
@@ -981,20 +1036,32 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
 
             {/* RIGHT PANEL: Copilot & Analysis Pane */}
             <div className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden">
-                <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between shadow-sm shrink-0">
+                <div className="p-3 bg-white border-b border-slate-200 flex items-center justify-between shadow-sm shrink-0">
                     <div className="flex items-center gap-3">
-                        <div className="p-1.5 bg-indigo-600 rounded text-white shadow-sm">
-                            <Bot size={18} />
-                        </div>
-                        <div>
-                            <h3 className="font-bold text-slate-800 text-sm">{docExtractionResult ? 'Extracted Data' : 'Assistant Copilot'}</h3>
-                            <p className="text-[10px] text-slate-500 uppercase tracking-widest flex items-center gap-1">
-                                <span className={`w-1.5 h-1.5 rounded-full ${isThinking || isProcessing ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500'}`}></span>
-                                {isProcessing ? processStatus : isThinking ? 'Thinking...' : 'Active'}
-                            </p>
-                        </div>
+                        {selectedEmail && !docExtractionResult ? (
+                            <>
+                                <button
+                                    onClick={() => handleProcessEmail(selectedEmail)}
+                                    disabled={isProcessing}
+                                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors text-sm font-bold shadow-sm"
+                                >
+                                    <ScanEye size={16} /> Process
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <div className="p-1.5 bg-indigo-600 rounded text-white shadow-sm"><Bot size={18} /></div>
+                                <div>
+                                    <h3 className="font-bold text-slate-800 text-sm">{docExtractionResult ? 'Extracted Data' : 'Assistant Copilot'}</h3>
+                                    <p className="text-[10px] text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                                        <span className={`w-1.5 h-1.5 rounded-full ${isThinking || isProcessing ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500'}`}></span>
+                                        {isProcessing ? processStatus : isThinking ? 'Thinking...' : 'Active'}
+                                    </p>
+                                </div>
+                            </>
+                        )}
                     </div>
-                    {docExtractionResult && (
+                    {(docExtractionResult || selectedEmail) && (
                         <button onClick={clearSelection} className="text-xs bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-200 font-bold border border-slate-200">Back to Chat</button>
                     )}
                 </div>
@@ -1007,23 +1074,90 @@ const AiEmailProcessor: React.FC<AiEmailProcessorProps> = ({
                         </div>
                     ) : docExtractionResult && selectedEmail && previewUrl ? (
                         <div className="flex h-full">
-                            <div className="w-1/2 h-full bg-slate-100 p-4 border-r border-slate-200 overflow-auto flex flex-col items-center">
+                            <div className="flex-1 h-full bg-slate-100 p-4 border-r border-slate-200 overflow-auto flex flex-col items-center">
                                 <object data={previewUrl} type={selectedEmail.attachmentType} className="w-full h-full rounded shadow-sm border border-slate-300 bg-white">
                                     <div className="p-8 text-center text-slate-500">Preview not available for this file type.</div>
                                 </object>
                             </div>
-                            <div className="w-1/2 h-full overflow-y-auto p-6 custom-scrollbar bg-white">
-                                <div className="mb-6 p-4 rounded-xl border border-indigo-100 bg-indigo-50/50 flex items-center gap-3">
-                                    <div className="p-2 rounded-lg bg-indigo-600 text-white"><ScanEye size={20} /></div>
+                            {/* OCR Data Sidebar */}
+                            <div className="w-[320px] h-full overflow-y-auto bg-white border-l border-slate-200 custom-scrollbar shrink-0">
+                                <div className="p-4 border-b border-slate-200 bg-slate-50">
+                                    <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                                        <ScanEye size={16} className="text-indigo-600" /> OCR Extracted Data
+                                    </h3>
+                                    <p className="text-[10px] text-slate-500 mt-1">{allProcessedResults.length} document{allProcessedResults.length !== 1 ? 's' : ''} processed</p>
+                                </div>
+                                {allProcessedResults.length > 0 ? (
+                                    <div className="p-4 space-y-4">
+                                        {allProcessedResults.map((result, idx) => (
+                                            <div key={idx} className="border border-slate-200 rounded-xl overflow-hidden">
+                                                <div className="px-3 py-2 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between cursor-pointer"
+                                                    onClick={() => { setPreviewUrl(result.previewUrl); setDocExtractionResult(result.data); setIdentifiedDocType(result.docType); }}>
+                                                    <div>
+                                                        <p className="text-[10px] font-bold text-indigo-500 uppercase">{result.docType}</p>
+                                                        <p className="text-xs font-medium text-slate-700 truncate max-w-[200px]">{result.attachmentName}</p>
+                                                    </div>
+                                                    {result.saved && <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />}
+                                                </div>
+                                                <div className="p-3 space-y-2">
+                                                    {Object.entries(result.data.mergedData)
+                                                        .filter(([_, v]) => v && v !== 'null' && v !== 'N/A' && !Array.isArray(v))
+                                                        .slice(0, 10)
+                                                        .map(([key, value]) => (
+                                                            <div key={key} className="flex justify-between text-[10px] gap-2">
+                                                                <span className="text-slate-400 font-medium uppercase truncate shrink-0">{key.replace(/_/g, ' ')}</span>
+                                                                <span className="text-slate-700 font-medium text-right truncate">{String(value)}</span>
+                                                            </div>
+                                                        ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="p-6">
+                                        <div className="mb-4 p-4 rounded-xl border border-indigo-100 bg-indigo-50/50 flex items-center gap-3">
+                                            <div className="p-2 rounded-lg bg-indigo-600 text-white"><ScanEye size={20} /></div>
+                                            <div>
+                                                <p className="text-xs font-bold text-indigo-400 uppercase tracking-wider">DOCUMENT TYPE</p>
+                                                <h3 className="text-lg font-bold text-slate-800">{identifiedDocType}</h3>
+                                            </div>
+                                        </div>
+                                        {renderExtractedView()}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ) : selectedEmail && !docExtractionResult ? (
+                        /* Email Content View — before processing */
+                        <div className="h-full flex flex-col bg-white overflow-y-auto">
+                            <div className="p-6">
+                                <h2 className="text-lg font-bold text-slate-800 mb-2">{selectedEmail.subject}</h2>
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center text-white font-bold text-sm">
+                                        {selectedEmail.from.charAt(0).toUpperCase()}
+                                    </div>
                                     <div>
-                                        <p className="text-xs font-bold text-indigo-400 uppercase tracking-wider">DOCUMENT TYPE</p>
-                                        <h3 className="text-lg font-bold text-slate-800">{identifiedDocType}</h3>
+                                        <p className="font-bold text-sm text-slate-700">{selectedEmail.from}</p>
+                                        <p className="text-xs text-slate-400">{selectedEmail.date}</p>
                                     </div>
                                 </div>
-                                {renderExtractedView()}
+                                {/* Attachments */}
+                                {selectedEmail.hasAttachment && (
+                                    <div className="flex flex-wrap gap-2 mb-4">
+                                        {(selectedEmail.attachments || [{ id: selectedEmail.attachmentData!, name: selectedEmail.attachmentName!, contentType: selectedEmail.attachmentType! }]).map((att, i) => (
+                                            <div key={i} className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+                                                <FileText size={14} /> {att.name}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="bg-slate-50 rounded-xl p-4 text-sm text-slate-600 leading-relaxed whitespace-pre-wrap border border-slate-200">
+                                    {selectedEmail.snippet}
+                                </div>
                             </div>
                         </div>
                     ) : (
+                        /* Default: Chat */
                         <div className="h-full flex flex-col bg-white">
                             <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar relative">
                                 {chatMessages.map((msg, idx) => (

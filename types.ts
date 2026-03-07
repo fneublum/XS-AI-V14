@@ -5,7 +5,8 @@ export enum Role {
   MANAGER = 'Manager',
   USER = 'User',
   CARGO_AGENT = 'Cargo Agent',
-  CUSTOMER = 'Customer'
+  CUSTOMER = 'Customer',
+  SALES = 'Sales'
 }
 
 export enum DealStage {
@@ -72,6 +73,7 @@ export interface User {
   canManageInventory?: boolean;
   linked_entity_id?: string;
   dock_config?: string[];
+  allowed_product_categories?: string[];
 }
 
 export interface Company {
@@ -83,6 +85,9 @@ export interface Company {
   state?: string;
   zip?: string;
   country?: string;
+  ein?: string;
+  phone?: string;
+  email?: string;
 }
 
 export interface CompanyImage {
@@ -102,6 +107,7 @@ export interface Customer {
   taxId?: string;
   contactPerson: string;
   email: string;
+  email2?: string;
   phone?: string;
   location?: string;
   city?: string;
@@ -115,12 +121,21 @@ export interface Customer {
   lastOrderDate: string;
   sharedWith?: string[];
   pod?: string; // Port of Destination
+  brokerName?: string;
+  brokerEmail?: string;
+  sales_person_id?: string;
+  sales_person_name?: string;
+  address?: string;
+  poa?: string;
+  pickupLocation?: string;
 }
 
 export interface Supplier {
   id: string;
   companyId: string;
   name: string;
+  description?: string;
+  nickname?: string;
   taxId?: string;
   contactPerson: string;
   email: string;
@@ -130,6 +145,8 @@ export interface Supplier {
   state?: string;
   zip?: string;
   country: string;
+  poa?: string;
+  pickupLocation?: string;
   categories: string[];
   rating: number;
   paymentTerms: string;
@@ -140,6 +157,8 @@ export interface Product {
   id: string;
   companyId: string;
   name: string;
+  supplierProductName?: string;
+  description?: string;
   sku?: string;
   category: string;
   grade: string;
@@ -169,6 +188,7 @@ export interface Port {
   id: string;
   companyId: string;
   code: string;
+  portCode?: string;
   name: string;
   country: string;
 }
@@ -283,6 +303,7 @@ export interface InventoryLog {
 
 export interface SupplierQuoteItem {
   productName: string;
+  systemProductName?: string;
   quantity: number;
   unitPrice: number;
   moq?: number;
@@ -307,6 +328,7 @@ export interface SupplierQuote {
   paymentTerms: string;
   status: 'Pending' | 'Received' | 'Expired';
   notes?: string;
+  originalDocument?: string;
 }
 
 export interface SupplierOffer {
@@ -317,7 +339,7 @@ export interface SupplierOffer {
   supplierName: string;
   items: SupplierQuoteItem[];
   totalAmount: number;
-  currency: 'USD' | 'EUR' | 'CNY';
+  currency: 'USD' | 'EUR' | 'CNY' | 'BRL' | 'GTQ';
   incoterm: 'EXW' | 'FAS' | 'FOB' | 'CFR' | 'CIF' | 'DDP';
   loadingLocation?: string;
   originPort?: string;
@@ -379,6 +401,8 @@ export interface FreightQuote {
   trs?: number;
   securityFee?: number;
   observation?: string;
+  originalDocument?: string;
+  containerType?: string;
   status: 'PENDING' | 'ACTIVE' | 'EXPIRED';
 }
 
@@ -416,7 +440,18 @@ export interface CostCalculation {
   poa?: string;
   pod?: string;
   customerName?: string;
+  loadingLocation?: string;
 }
+
+export interface PriceList {
+  id: string;
+  companyId?: string;
+  name?: string;
+  date?: string;
+  items?: any;
+  marginPercent?: number;
+}
+
 
 export interface Document {
   id: string;
@@ -437,6 +472,7 @@ export interface CargoAgent {
   name: string;
   contact?: string;
   email?: string;
+  email2?: string;
   phone?: string;
   country?: string;
 }
@@ -638,6 +674,7 @@ export interface Invoice {
   consignee?: string; // Consignee for PL-Invoice chain
   bookingNumber?: string; // Booking reference for PL-Invoice chain
   memo?: string; // User memo/notes for additional information
+  qb_status?: string; // QuickBooks sync status ('Sent' or null)
 }
 
 export interface SupplierInvoice extends Invoice { }
@@ -671,6 +708,8 @@ export interface PackingList {
   containers?: string; // Container data as JSON string
   originalDocument?: string;
   soNumber?: string; // New Sales Order Number field
+  status?: 'AVAILABLE' | 'INVOICED';
+  invoiceNumber?: string;
 }
 
 export interface SalesOrderItem {
@@ -691,7 +730,7 @@ export interface SalesOrder {
   orderNumber: string;
   orderDate: string;
   orderType: 'SPOT' | 'CONTRACT';
-  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'FULFILLED';
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'FULFILLED' | 'BOOKED';
   items: SalesOrderItem[];
   totalAmount: number;
   currency: string;
@@ -711,6 +750,9 @@ export interface SalesOrder {
   poa?: string; // Port of Origin / Acceptance (For Port-To-X stats)
   pickupLocation?: string; // Full Address (For Door-To-X stats)
   bankId?: string; // Selected bank for payment
+  supplierName?: string; // Supplier from Source step
+  supplierLoadingLocation?: string; // Supplier loading/pickup location
+  soNumber?: string;
 }
 
 export interface FormLayout {
@@ -813,4 +855,21 @@ export interface BrazilSimulation {
   totalLandedCostBrl: number;
   costPerKgBrl: number;
   effectiveIcmsRate: number;
+}
+
+// ── QuickBooks Integration Types ──────────────────────────────
+
+export interface QBSyncStatus {
+  synced: boolean;
+  qbEntityId?: string;
+  qbEntityType?: 'Bill' | 'Invoice';
+  syncedAt?: string;
+  error?: string;
+}
+
+export interface QBConnectionStatus {
+  connected: boolean;
+  realmId?: string;
+  companyName?: string;
+  lastRefreshed?: string;
 }

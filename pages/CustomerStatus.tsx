@@ -37,7 +37,15 @@ const CustomerStatus: React.FC<CustomerStatusProps> = ({ customers, opportunitie
     
     return (
         <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-slate-800">Customer 360° Status</h2>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl text-white"><Building2 size={24} /></div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Customer 360° Status</h1>
+                        <p className="text-slate-500 text-sm mt-1">View comprehensive customer analytics</p>
+                    </div>
+                </div>
+            </div>
             
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                 <label className="block text-sm font-medium text-slate-700 mb-2">Select Customer to View</label>

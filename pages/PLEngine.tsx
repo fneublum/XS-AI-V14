@@ -23,6 +23,7 @@ interface PLItem {
     blNumber: string;
     originalDoc?: string;
     productId?: string;
+    productName?: string;
 }
 
 type ContainerSummary = {
@@ -172,15 +173,15 @@ const PLEngine: React.FC<PLEngineProps> = ({ onMakeInvoice }) => {
 
                     const { data: soData, error: soError } = await client.from('sales_orders').select('id, orderNumber, customerName, companyId, customerId, status');
                     if (soError) throw soError;
-                    if (soData) setSalesOrders(soData);
+                    if (soData) setSalesOrders(soData as any);
 
                     const { data: bkData, error: bkError } = await client.from('bookings').select('id, bookingNumber, salesOrderId, customer, status');
                     if (bkError) throw bkError;
-                    if (bkData) setBookings(bkData);
+                    if (bkData) setBookings(bkData as any);
 
                     const { data: prodData, error: prodError } = await client.from('products').select('id, name, category, grade');
                     if (prodError) throw prodError;
-                    if (prodData) setProducts(prodData);
+                    if (prodData) setProducts(prodData as any);
                 } catch (err: any) {
                     console.error("Fetch Error:", err);
                     alert(`Data Fetch Error: ${err.message || JSON.stringify(err)}`);
@@ -669,7 +670,7 @@ const PLEngine: React.FC<PLEngineProps> = ({ onMakeInvoice }) => {
             const client = getSupabaseClient();
             if (client) {
                 const { data: soData } = await client.from('sales_orders').select('id, orderNumber, customerName, companyId, customerId, status');
-                if (soData) setSalesOrders(soData);
+                if (soData) setSalesOrders(soData as any);
             }
             return;
         }
@@ -1379,7 +1380,14 @@ const PLEngine: React.FC<PLEngineProps> = ({ onMakeInvoice }) => {
     return (
         <div className="h-full flex flex-col p-6 space-y-6 overflow-y-auto custom-scrollbar bg-slate-50 relative">
             {/* Header Navigation */}
-            <div className="bg-white border-b border-slate-200 px-6 py-3 shrink-0 z-20 flex justify-end items-center shadow-sm">
+            <div className="bg-white border-b border-slate-200 px-6 py-3 shrink-0 z-20 flex justify-between items-center shadow-sm">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-rose-500 to-pink-500 rounded-xl text-white"><ClipboardList size={24} /></div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">PL Processor</h1>
+                        <p className="text-slate-500 text-sm mt-1">Process and manage packing lists</p>
+                    </div>
+                </div>
 
                 <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
                     <button

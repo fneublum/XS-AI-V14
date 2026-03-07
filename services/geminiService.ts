@@ -1,10 +1,14 @@
 
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
-import { Product, Customer, Opportunity, DealStage, QuoteItem, SupplierQuote, Supplier, PurchaseOrder, SupplierOffer, Port, Shipment } from "../types";
+import { Product, Customer, Opportunity, DealStage, QuoteItem, SupplierQuote, Supplier, PurchaseOrder, SupplierOffer, Port, Shipment, FreightQuote, CostCalculation } from "../types";
 import { getSupabaseClient } from "./supabase";
+import { normalizeEntities } from "./aiAssistantService";
+import { activityLogger } from './activityLogService';
+import { getPersona, buildSystemPrompt } from './personaService';
+import { buildMemoryContext, storeConversationExchange, runMemoryMaintenance } from './memoryService';
 
 // --- Helper for System Instructions ---
-const MODEL_ID = 'gemini-pro-latest';
+const MODEL_ID = 'gemini-3-pro-preview';
 
 const SALES_COPILOT_PROMPT = `
 SYSTEM / DEVELOPER PROMPT — “Sales Rep Copilot UI” AGENT
@@ -214,7 +218,7 @@ export const generateEmailSummary = async (subject: string, sender: string, body
     try {
         // FIX: Removed API_KEY constant to use process.env.API_KEY directly as per guidelines.
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const prompt = `Summarize email. Sender: ${sender}, Subject: ${subject}, Body: ${body.substring(0, 2000)}.`;
+        const prompt = `Summarize this email as a concise bullet-point list. Focus on what the sender is asking for, key requests, action items, or important information. Each bullet should be one short line. Sender: ${sender}, Subject: ${subject}, Body: ${body.substring(0, 2000)}.`;
         const response = await ai.models.generateContent({ model: MODEL_ID, contents: prompt });
         return response.text || "";
     } catch (e) { return "Error"; }
@@ -222,12 +226,310 @@ export const generateEmailSummary = async (subject: string, sender: string, body
 
 export const generateEmailReply = async (sender: string, originalBody: string, tone: string): Promise<string> => {
     try {
-        // FIX: Removed API_KEY constant to use process.env.API_KEY directly as per guidelines.
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const prompt = `Draft reply to ${sender}. Original: ${originalBody.substring(0, 1500)}. Tone: ${tone}. Output body only.`;
+        const prompt = `You are drafting an email reply. IMPORTANT RULES:
+- Use ONLY the information provided below (email + reference documents + user instructions).
+- NEVER use placeholders like [Insert Date] or **[value]**. If the data is in the reference documents, use the actual values. If a value is truly not available, omit that point or say "to be confirmed".
+- Address each point/question in the original email using data from the reference documents.
+- Tone: ${tone}.
+- Output the email body only (no subject line, no "Subject:" prefix).
+
+ORIGINAL EMAIL FROM ${sender}:
+${originalBody.substring(0, 6000)}
+
+Draft the reply now:`;
         const response = await ai.models.generateContent({ model: MODEL_ID, contents: prompt });
         return response.text || "";
     } catch (e) { return "Error"; }
+};
+
+/**
+ * AI Email Agent — analyzes an email thread + ERP context and reasons a reply.
+ * Returns structured JSON with the draft reply, reasoning, priority, and whether it expects a reply.
+ */
+export const reasonEmailReply = async (
+    thread: { from: string; to: string; subject: string; body: string; date: string }[],
+    erpContext: string,
+    userEmail: string
+): Promise<{
+    shouldReply: boolean;
+    draftReply: string;
+    reasoning: string;
+    priority: 'high' | 'medium' | 'low';
+    expectsReply: boolean;
+    category: string;
+}> => {
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+        const threadText = thread.map((m, i) =>
+            `--- Message ${i + 1} (${m.date}) ---\nFrom: ${m.from}\nTo: ${m.to}\nSubject: ${m.subject}\n\n${m.body.substring(0, 3000)}`
+        ).join('\n\n');
+
+        const prompt = `You are an AI email agent for a B2B commodity trading company (textile fibers, plastic resins, recycled materials).
+The user's email is: ${userEmail}
+
+TASK: Analyze this email thread and decide if/how to reply, using the ERP context provided.
+
+EMAIL THREAD (oldest to newest):
+${threadText}
+
+ERP CONTEXT (matching records from the company database):
+${erpContext.substring(0, 8000)}
+
+RULES:
+1. Decide if this email NEEDS a reply from us. Newsletters, automated notifications, marketing emails, and internal system alerts do NOT need replies.
+2. If a reply is needed, draft a professional reply using ONLY real data from the ERP context. NEVER fabricate numbers, dates, or facts.
+3. If data is missing, say "I will confirm and get back to you" instead of making up values.
+4. Match the tone and language of the thread (if they write in Portuguese, reply in Portuguese; if formal English, reply formally).
+5. Reference specific order numbers, shipment details, prices, and dates from the ERP context when relevant.
+6. Keep replies concise and action-oriented.
+7. Determine priority: HIGH = money/urgent/overdue, MEDIUM = business operations, LOW = informational.
+8. Determine if the LAST message in the thread expects a reply from us (the sender is waiting for our response).
+
+Return ONLY valid JSON:
+{
+  "shouldReply": true/false,
+  "draftReply": "the full email reply body (empty string if shouldReply=false)",
+  "reasoning": "1-2 sentence explanation of why this reply is appropriate and what ERP data was used",
+  "priority": "high|medium|low",
+  "expectsReply": true/false (does the sender expect us to reply?),
+  "category": "order|shipment|pricing|payment|documentation|general|no-reply"
+}`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        shouldReply: { type: Type.BOOLEAN },
+                        draftReply: { type: Type.STRING },
+                        reasoning: { type: Type.STRING },
+                        priority: { type: Type.STRING },
+                        expectsReply: { type: Type.BOOLEAN },
+                        category: { type: Type.STRING }
+                    }
+                }
+            }
+        });
+
+        if (response.text) {
+            return JSON.parse(response.text);
+        }
+        return { shouldReply: false, draftReply: '', reasoning: 'No response from AI', priority: 'low', expectsReply: false, category: 'no-reply' };
+    } catch (e) {
+        console.error('reasonEmailReply error:', e);
+        return { shouldReply: false, draftReply: '', reasoning: 'AI error', priority: 'low', expectsReply: false, category: 'no-reply' };
+    }
+};
+
+// ─── PO Extraction Types ─────────────────────────────────────────────────────
+
+export interface ExtractedPOLineItem {
+    productName: string;
+    productDescription?: string;
+    sku?: string;
+    hsCode?: string;
+    quantity: number;
+    unit: string;
+    unitPrice: number;
+    total: number;
+}
+
+export interface ExtractedPOData {
+    isPurchaseOrder: boolean;
+    confidence: number;
+    poNumber?: string;
+    customerName: string;
+    customerEmail: string;
+    customerCompany?: string;
+    customerContactPerson?: string;
+    customerPhone?: string;
+    customerAddress?: string;
+    customerCity?: string;
+    customerCountry?: string;
+    items: ExtractedPOLineItem[];
+    totalAmount: number;
+    currency: string;
+    paymentTerms?: string;
+    incoterm?: string;
+    deliveryDate?: string;
+    shippingRequired: boolean;
+    portOfLoading?: string;
+    portOfDestination?: string;
+    equipment?: string;
+    notes?: string;
+}
+
+/**
+ * AI Email Agent — extracts structured Purchase Order data from an email thread.
+ * Identifies customer info, line items, shipping requirements, and payment terms.
+ */
+export const extractPOFromEmail = async (
+    thread: { from: string; to: string; subject: string; body: string; date: string }[],
+    erpContext: string,
+    attachmentTexts?: string[]
+): Promise<ExtractedPOData> => {
+    const defaultResult: ExtractedPOData = {
+        isPurchaseOrder: false, confidence: 0, customerName: '', customerEmail: '',
+        items: [], totalAmount: 0, currency: 'USD', shippingRequired: false,
+    };
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+        const threadText = thread.map((m, i) =>
+            `--- Message ${i + 1} (${m.date}) ---\nFrom: ${m.from}\nTo: ${m.to}\nSubject: ${m.subject}\n\n${m.body.substring(0, 4000)}`
+        ).join('\n\n');
+
+        const attachmentSection = attachmentTexts?.length
+            ? `\n\nATTACHMENT CONTENT (extracted from PDF/image):\n${attachmentTexts.join('\n---\n').substring(0, 6000)}`
+            : '';
+
+        const prompt = `You are an AI agent for a B2B commodity trading company (textile fibers, plastic resins, recycled materials).
+
+TASK: Extract structured Purchase Order (PO) data from this email thread. A PO is when a CUSTOMER is placing an order to BUY products from us.
+
+EMAIL THREAD:
+${threadText}
+${attachmentSection}
+
+ERP CONTEXT (existing records):
+${erpContext.substring(0, 6000)}
+
+EXTRACTION RULES:
+1. Determine if this email actually contains a Purchase Order or order request. Look for: product names with quantities/prices, "PO", "order", "purchase order", item lists, delivery terms.
+2. Extract the CUSTOMER info from the sender and email content. The customer is the one BUYING from us.
+3. Extract ALL line items with product names, quantities, units, prices.
+4. Identify shipping requirements: if international trade terms (incoterms like FOB, CIF, CFR) or port names are mentioned, set shippingRequired=true.
+5. Use ERP context to fill gaps — if the sender matches a known customer, use their stored details.
+6. Currency: look for $, USD, EUR, BRL, etc. Default to USD if unclear.
+7. Calculate totalAmount as sum of all item totals.
+8. Set confidence 0.0-1.0 based on how clearly this is a PO.
+
+Return structured JSON with all extracted fields.`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        isPurchaseOrder: { type: Type.BOOLEAN },
+                        confidence: { type: Type.NUMBER },
+                        poNumber: { type: Type.STRING },
+                        customerName: { type: Type.STRING },
+                        customerEmail: { type: Type.STRING },
+                        customerCompany: { type: Type.STRING },
+                        customerContactPerson: { type: Type.STRING },
+                        customerPhone: { type: Type.STRING },
+                        customerAddress: { type: Type.STRING },
+                        customerCity: { type: Type.STRING },
+                        customerCountry: { type: Type.STRING },
+                        items: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    productName: { type: Type.STRING },
+                                    productDescription: { type: Type.STRING },
+                                    sku: { type: Type.STRING },
+                                    hsCode: { type: Type.STRING },
+                                    quantity: { type: Type.NUMBER },
+                                    unit: { type: Type.STRING },
+                                    unitPrice: { type: Type.NUMBER },
+                                    total: { type: Type.NUMBER },
+                                }
+                            }
+                        },
+                        totalAmount: { type: Type.NUMBER },
+                        currency: { type: Type.STRING },
+                        paymentTerms: { type: Type.STRING },
+                        incoterm: { type: Type.STRING },
+                        deliveryDate: { type: Type.STRING },
+                        shippingRequired: { type: Type.BOOLEAN },
+                        portOfLoading: { type: Type.STRING },
+                        portOfDestination: { type: Type.STRING },
+                        equipment: { type: Type.STRING },
+                        notes: { type: Type.STRING },
+                    }
+                }
+            }
+        });
+
+        if (response.text) {
+            return JSON.parse(response.text);
+        }
+        return defaultResult;
+    } catch (e) {
+        console.error('extractPOFromEmail error:', e);
+        return defaultResult;
+    }
+};
+
+/**
+ * AI Email Agent — generates a follow-up email when no reply was received.
+ */
+export const reasonFollowUp = async (
+    originalThread: { from: string; to: string; subject: string; body: string; date: string }[],
+    daysSinceSent: number,
+    erpContext: string
+): Promise<{ draftFollowUp: string; reasoning: string }> => {
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+        const threadText = originalThread.map((m, i) =>
+            `--- Message ${i + 1} (${m.date}) ---\nFrom: ${m.from}\nTo: ${m.to}\nSubject: ${m.subject}\n\n${m.body.substring(0, 2000)}`
+        ).join('\n\n');
+
+        const prompt = `You are an AI email agent for a B2B commodity trading company.
+
+TASK: Write a follow-up email. We sent the last message ${daysSinceSent} days ago and haven't received a reply.
+
+ORIGINAL THREAD:
+${threadText}
+
+ERP CONTEXT:
+${erpContext.substring(0, 4000)}
+
+RULES:
+1. Be polite but clear — reference the original topic.
+2. If ${daysSinceSent} <= 3: gentle check-in. If 4-7: firmer follow-up. If > 7: urgent/final follow-up.
+3. Use ONLY real data from ERP context. Never fabricate.
+4. Match the language of the thread.
+5. Keep it short (3-5 sentences max).
+
+Return ONLY valid JSON:
+{
+  "draftFollowUp": "the follow-up email body",
+  "reasoning": "why this follow-up is appropriate"
+}`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        draftFollowUp: { type: Type.STRING },
+                        reasoning: { type: Type.STRING }
+                    }
+                }
+            }
+        });
+
+        if (response.text) return JSON.parse(response.text);
+        return { draftFollowUp: '', reasoning: 'No AI response' };
+    } catch (e) {
+        console.error('reasonFollowUp error:', e);
+        return { draftFollowUp: '', reasoning: 'AI error' };
+    }
 };
 
 export const lookupLocation = async (query: string, type: 'city' | 'zip'): Promise<{ city: string, state: string, zip: string } | null> => {
@@ -296,6 +598,7 @@ export const getSalesAgentResponse = async (
         selectedId?: string
     }
 ): Promise<string> => {
+    const _t0 = Date.now();
     try {
         // FIX: Removed API_KEY constant to use process.env.API_KEY directly as per guidelines.
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -368,6 +671,7 @@ export const getSalesAgentResponse = async (
         }
 
     } catch (error) {
+        activityLogger.logAiInteraction({ aiService: 'gemini', agentType: 'sales_agent', userPrompt: userMessage, responseTimeMs: Date.now() - _t0, error: String(error) });
         console.error("Sales Agent Error:", error);
         return "I'm having trouble connecting to Hall right now. Please check your connection or API key.";
     }
@@ -395,33 +699,16 @@ User: ${userMessage}`;
 
 export const analyzeDocument = async (fileBase64: string, mimeType: string, prompt: string): Promise<string> => {
     try {
-        // FIX: Removed API_KEY constant to use process.env.API_KEY directly as per guidelines.
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-        // DEBUG: List available models to verify access and correct names
-        // (Keeping this for one more deploy to confirm)
-        try {
-            const modelsResponse = await ai.models.list();
-            const modelNames = [];
-            for await (const model of modelsResponse) {
-                modelNames.push(model.name || model.displayName);
-            }
-            // console.log("GeminiService: Available Models:", JSON.stringify(modelNames)); 
-            // Commenting out detailed list to reduce noise, unless needed.
-        } catch (listError) {
-            console.error("GeminiService: Failed to list models:", listError);
-        }
-
-        const validModel = 'gemini-pro-latest';
-        console.log(`GeminiService: Switching to available model: ${validModel}`);
+        console.log(`GeminiService analyzeDocument: Using model ${MODEL_ID}`);
 
         const response = await ai.models.generateContent({
-            model: validModel,
+            model: MODEL_ID,
             contents: { parts: [{ inlineData: { mimeType: mimeType, data: fileBase64 } }, { text: prompt }] }
         });
         return response.text || "";
     } catch (e: any) {
-        // Log key status for debugging (showing only first 8 chars)
         const keyStatus = process.env.API_KEY ? `Key present (${process.env.API_KEY.substring(0, 8)}...)` : 'Key undefined or empty';
         console.error("Gemini Document Analysis Error:", e);
         console.error(`API Key Status: ${keyStatus}`);
@@ -447,6 +734,7 @@ export const generateCustomerDescription = async (name: string, customer: string
 
 // --- PROCUREMENT AGENT (NEW) ---
 export const getProcurementAgentResponse = async (msg: string, hist: any[], ctx: any) => {
+    const _t0 = Date.now();
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const modelId = MODEL_ID; // gemini-pro-latest
@@ -470,8 +758,11 @@ export const getProcurementAgentResponse = async (msg: string, hist: any[], ctx:
         `;
 
         const response = await ai.models.generateContent({ model: modelId, contents: prompt });
-        return response.text || "I couldn't generate a procurement response.";
+        const responseText = response.text || "I couldn't generate a procurement response.";
+        activityLogger.logAiInteraction({ aiService: 'gemini', agentType: 'procurement_agent', userPrompt: msg, responseLength: responseText.length, responseTimeMs: Date.now() - _t0 });
+        return responseText;
     } catch (e) {
+        activityLogger.logAiInteraction({ aiService: 'gemini', agentType: 'procurement_agent', userPrompt: msg, responseTimeMs: Date.now() - _t0, error: String(e) });
         console.error("Procurement Agent Error:", e);
         return "I'm having trouble accessing procurement data.";
     }
@@ -482,6 +773,7 @@ export const getLogisticsAgentResponse = async (
     hist: { role: 'user' | 'model'; text: string }[],
     ctx: any
 ): Promise<{ text: string, toolCalls?: any[] }> => {
+    const _t0 = Date.now();
     try {
         // FIX: Removed API_KEY constant to use process.env.API_KEY directly as per guidelines.
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -547,11 +839,14 @@ export const getLogisticsAgentResponse = async (
             }
         });
 
-        return {
+        const result = {
             text: response.text || (response.functionCalls ? "Processing request..." : "No response generated."),
             toolCalls: response.functionCalls
         };
+        activityLogger.logAiInteraction({ aiService: 'gemini', agentType: 'logistics_agent', userPrompt: msg, responseLength: result.text.length, responseTimeMs: Date.now() - _t0, toolsUsed: result.toolCalls?.map((tc: any) => tc.name) });
+        return result;
     } catch (e) {
+        activityLogger.logAiInteraction({ aiService: 'gemini', agentType: 'logistics_agent', userPrompt: msg, responseTimeMs: Date.now() - _t0, error: String(e) });
         console.error("Logistics Agent Error", e);
         return { text: "I'm having trouble analyzing the logistics data right now." };
     }
@@ -628,7 +923,7 @@ export const getSettingsAgentResponse = async (msg: string, hist: any[], ctx: an
 
 // --- SUPER COPILOT: ACTIVE MODE ---
 
-export type AgentActionType = 'CREATE_PO' | 'CREATE_SO' | 'CREATE_SUPPLIER' | 'CREATE_CUSTOMER' | 'CREATE_CARGO_AGENT' | 'CREATE_FREIGHT_QUOTE' | 'UPDATE_CUSTOMER' | 'UPDATE_SUPPLIER' | 'SHOW_FREIGHT_QUOTES' | 'SHOW_BOOKINGS' | 'REQUEST_BOOKING' | 'SHOW_BOLS' | 'CONFIRM' | 'CANCEL' | 'CHAT';
+export type AgentActionType = 'CREATE_PO' | 'CREATE_SO' | 'CREATE_SUPPLIER' | 'CREATE_CUSTOMER' | 'CREATE_CARGO_AGENT' | 'CREATE_FREIGHT_QUOTE' | 'CREATE_PRODUCT' | 'UPDATE_CUSTOMER' | 'UPDATE_SUPPLIER' | 'DELETE_CUSTOMER' | 'DELETE_SUPPLIER' | 'DELETE_PRODUCT' | 'DELETE_FREIGHT_QUOTE' | 'SHOW_FREIGHT_QUOTES' | 'SHOW_BOOKINGS' | 'REQUEST_BOOKING' | 'SHOW_BOLS' | 'CONFIRM' | 'CANCEL' | 'CHAT';
 
 export interface AgentAction {
     type: AgentActionType;
@@ -668,6 +963,14 @@ export interface AgentAction {
         filterCarrier?: string;
         filterCustomer?: string;
         filterStatus?: string;
+        // Product fields
+        code?: string;
+        category?: string;
+        hsCode?: string;
+        goodsDescription?: string;
+        notes?: string;
+        unitPrice?: number;
+        weightUnit?: string;
     };
     missingFields: string[];
     confirmed?: boolean;
@@ -848,10 +1151,22 @@ export const getDashboardAgentResponse = async (
     hist: { role: 'user' | 'model', text: string }[],
     ctx: {
         stats: { customers: number, suppliers: number, activeDeals: number, activeShipments: number },
-        recentActivity: { sales: string[], pos: string[], shipments: string[] }
+        recentActivity: { sales: string[], pos: string[], shipments: string[] },
+        salesOrders?: any[],
+        purchaseOrders?: any[],
+        bookings?: any[],
+        billOfLadings?: any[],
+        freightQuotes?: any[],
+        invoices?: any[],
+        estimates?: any[],
+        proformas?: any[],
+        packingLists?: any[],
+        supplierInvoices?: any[],
+        commissions?: any[],
     },
     pendingAction?: AgentAction,
-    awaitingConfirmation?: boolean
+    awaitingConfirmation?: boolean,
+    userId?: string
 ): Promise<ActiveAgentResponse> => {
     try {
         // IMPORTANT: If awaiting confirmation, do NOT call LLM - let frontend handle Yes/No
@@ -867,8 +1182,15 @@ export const getDashboardAgentResponse = async (
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const modelId = MODEL_ID; // gemini-pro-latest
 
+        // Load dynamic persona from Supabase (cached 5 min)
+        const persona = await getPersona();
+        const personaHeader = buildSystemPrompt(persona);
+
+        // Load memory context from Supabase (topic-aware smart recall)
+        const memoryContext = userId ? await buildMemoryContext(userId, msg, 8) : '';
+
         const systemInstruction = `
-            You are HALL, an AI Executive Assistant for a business management and logistics platform. 
+            ${personaHeader}${memoryContext}
             You can help users with ANY task in the application.
 
             ## YOUR CAPABILITIES
@@ -1020,6 +1342,13 @@ export const getDashboardAgentResponse = async (
                 "validFrom": string | null,
                 "validUntil": string | null,
                 "freightTerms": "prepaid" | "collect" | null,
+                "contactPerson": string | null,
+                "agentName": string | null,
+                "rate": number | null,
+                "price": number | null,
+                "pol": string | null,
+                "pod": string | null,
+                "equipment": string | null,
                 "code": string | null,
                 "name": string | null,
                 "email": string | null,
@@ -1041,6 +1370,15 @@ export const getDashboardAgentResponse = async (
               "response": "Your conversational response to the user",
               "confidence": 0.0 to 1.0
             }
+
+            ## DATA QUERY RULES
+            When the user asks about Sales Orders (SO), Purchase Orders (PO), Bookings, Bills of Lading (BL), Freight Quotes, Invoices, Estimates, Proforma Invoices, Packing Lists (PL), Supplier Invoices, or Commissions:
+            1. Search ALL provided DATA sections (SALES ORDERS, PURCHASE ORDERS, BOOKINGS, BILLS OF LADING, FREIGHT QUOTES, INVOICES, ESTIMATES, PROFORMAS, PACKING LISTS, SUPPLIER INVOICES, COMMISSIONS).
+            2. Match by number, customer name, supplier name, carrier, port, or any relevant field. Use fuzzy/partial matching.
+            3. Provide specific data-backed answers with actual values from the records.
+            4. If multiple matches, list them concisely.
+            5. If no match, say so clearly.
+            6. For questions like "how much", "what price", "what status" — look up the specific record and answer directly.
 
             ## BEHAVIOR RULES
             1. Do NOT ask for more details. Answer based on what you know.
@@ -1067,6 +1405,39 @@ export const getDashboardAgentResponse = async (
             - Purchases: ${JSON.stringify(ctx.recentActivity.pos)}
             - Logistics: ${JSON.stringify(ctx.recentActivity.shipments)}
 
+            SALES ORDERS DATA:
+            ${JSON.stringify(ctx.salesOrders || [])}
+
+            PURCHASE ORDERS DATA:
+            ${JSON.stringify(ctx.purchaseOrders || [])}
+
+            BOOKINGS DATA:
+            ${JSON.stringify(ctx.bookings || [])}
+
+            BILLS OF LADING DATA:
+            ${JSON.stringify(ctx.billOfLadings || [])}
+
+            FREIGHT QUOTES DATA:
+            ${JSON.stringify(ctx.freightQuotes || [])}
+
+            INVOICES DATA:
+            ${JSON.stringify(ctx.invoices || [])}
+
+            ESTIMATES DATA:
+            ${JSON.stringify(ctx.estimates || [])}
+
+            PROFORMA INVOICES DATA:
+            ${JSON.stringify(ctx.proformas || [])}
+
+            PACKING LISTS DATA:
+            ${JSON.stringify(ctx.packingLists || [])}
+
+            SUPPLIER INVOICES DATA:
+            ${JSON.stringify(ctx.supplierInvoices || [])}
+
+            COMMISSIONS DATA:
+            ${JSON.stringify(ctx.commissions || [])}
+
             HISTORY:
             ${hist.map(h => `${h.role}: ${h.text}`).join('\n')}
         `;
@@ -1085,9 +1456,12 @@ export const getDashboardAgentResponse = async (
             const cleanJson = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
             parsedResponse = JSON.parse(cleanJson);
         } catch (e) {
-            console.error("Failed to parse HALL response:", text);
+            console.error("Failed to parse XS AI response:", text);
             return { text: text }; // Fallback to raw text
         }
+
+        // DEBUG: Log Gemini's raw parsed response for testing
+        console.log('[XS-AI-DEBUG] Gemini parsed:', JSON.stringify(parsedResponse));
 
         // Map the new HALL JSON format to the ActiveAgentResponse expected by the UI
         // We'll map the 'intent' to an 'action' structure if it's actionable
@@ -1098,36 +1472,48 @@ export const getDashboardAgentResponse = async (
                 'create_sales_order': 'CREATE_SO',
                 'create_supplier': 'CREATE_SUPPLIER',
                 'create_customer': 'CREATE_CUSTOMER',
+                'create_product': 'CREATE_PRODUCT',
                 'create_freight_quote': 'CREATE_FREIGHT_QUOTE',
-                // Add more mappings as feasible with current UI support
-                // For unsupported intents, we'll return null and handle via text
+                'create_booking': 'REQUEST_BOOKING',
+                'create_carrier': 'CREATE_CARGO_AGENT',
+                'edit_customer': 'UPDATE_CUSTOMER',
+                'edit_supplier': 'UPDATE_SUPPLIER',
+                'delete_customer': 'DELETE_CUSTOMER',
+                'delete_supplier': 'DELETE_SUPPLIER',
+                'delete_product': 'DELETE_PRODUCT',
+                'delete_freight_quote': 'DELETE_FREIGHT_QUOTE',
+                'view_freight_quotes': 'SHOW_FREIGHT_QUOTES',
+                'view_bookings': 'SHOW_BOOKINGS',
+                'view_bols': 'SHOW_BOLS',
             };
             return mapping[intent] || null;
         };
 
         const actionType = mapIntentToActionType(parsedResponse.intent);
 
-        if (actionType && parsedResponse.missingFields.length === 0) {
+        if (actionType) {
+            // Normalize Gemini's entity field names to our canonical names
+            const normalizedEntities = normalizeEntities(parsedResponse.entities || {});
             return {
                 text: parsedResponse.response,
                 action: {
                     type: actionType,
-                    entities: parsedResponse.entities,
-                    missingFields: [],
+                    entities: normalizedEntities,
+                    missingFields: [], // Code-side validation in AiDashboard computes real missing fields
                     confirmed: false
                 }
-            };
-        } else if (actionType && parsedResponse.missingFields.length > 0) {
-            // If missing fields, we don't return a structured 'action' yet because the UI might try to execute it
-            // Instead we just return the text response which asks for the missing fields
-            return {
-                text: parsedResponse.response,
-                // We could pass partial action state if the UI supported it, but for now text interaction is safer
             };
         }
 
         // Default response
-        return { text: parsedResponse.response || "I processed that." };
+        const responseText = parsedResponse.response || "I processed that.";
+
+        // Store conversation exchange in memory (async, don't await)
+        if (userId) {
+            storeConversationExchange(userId, msg, responseText).catch(() => { });
+        }
+
+        return { text: responseText };
 
     } catch (e: any) {
         console.error("Dashboard Agent Error:", e);
@@ -1429,5 +1815,444 @@ If tracking info cannot be found after trying all strategies, set error to a bri
             source: null, lastPort: null,
             error: error.message || 'Failed to look up ETA'
         };
+    }
+};
+
+// --- BOB AI ASSISTANT ---
+
+export interface BobContext {
+    activeModule: string;
+    subModule: string;
+    userName: string;
+    userRole: string;
+    currentCompany: string;
+    allowedModules: string[];
+    data: {
+        customers?: { count: number; sample: string[] };
+        products?: { count: number; sample: string[] };
+        salesOrders?: { count: number; recent: any[] };
+        suppliers?: { count: number; sample: string[] };
+        opportunities?: { count: number };
+        bookings?: { count: number; active: any[] };
+        billOfLadings?: { count: number };
+        shipments?: { count: number };
+        freightQuotes?: { count: number };
+        purchaseOrders?: { count: number };
+        inventory?: { count: number };
+        costCalculations?: { count: number };
+        ports?: { count: number; sample: string[] };
+        cargoAgents?: { count: number; sample: string[] };
+    };
+}
+
+const BOB_SYSTEM_PROMPT = `You are **Bob**, a smart and friendly AI assistant built into the X-Solution AI Business Platform.
+
+═══════════════════════════════════════════════════════
+IDENTITY & TONE
+═══════════════════════════════════════════════════════
+- Name: Bob
+- Personality: Helpful, professional, concise, warm but not overly casual
+- Use **bold** for key terms, bullet lists for clarity
+- Keep answers short (2-5 sentences) unless user asks for detail
+- Use emojis sparingly (max 1-2 per message) for friendliness
+- Never fabricate data — only reference what's in the provided context
+- If you don't have data, say so honestly and suggest where to find it
+
+═══════════════════════════════════════════════════════
+PLATFORM MODULE MAP
+═══════════════════════════════════════════════════════
+Here's what each module does:
+
+**DASHBOARD** — Overview with KPIs, charts, and quick stats across all operations.
+
+**AI_UPLOAD (Automation)** — AI-powered document processing tools:
+  - Doc OCR: Scan and extract data from uploaded documents
+  - Inbox Scanner: Process incoming emails automatically
+  - Proposal Engine: Generate professional proposals
+  - PL/Invoice Engine: Process packing lists and invoices via OCR
+  - Logistics AI: AI-assisted logistics management
+  - Commissions: Track and manage sales commissions
+
+**BUY (Purchase)** — Procurement management:
+  - Suppliers: Manage supplier database
+  - Supplier Quotes: View and compare supplier offers
+  - Purchase Orders: Create and track POs
+  - Inventory: Monitor stock levels
+
+**CALCULATOR** — Cost analysis tools:
+  - Cost Calculation: Calculate landed costs with freight, duties, etc.
+  - Saved Costs: History of previous calculations
+  - Cost Sheet: Spreadsheet-style cost breakdown
+  - Price List: Product price lists with margins
+
+**SELL (Sales)** — Sales operations:
+  - iCRM: Intelligent CRM with AI-powered insights
+  - SMAIL Assistant: Smart email assistant for sales
+  - Customers: Customer database
+  - Pipeline: Sales opportunity pipeline
+  - Customer 360: Full customer profile view
+  - Price List: Sale pricing
+  - Sales Orders: Create and manage sales orders
+  - Sale Brazil: Brazil-specific sales module
+
+**LOGISTICS** — Shipping and logistics:
+  - Logistic Manager: AI-powered logistics assistant
+  - Bill of Ladings: Manage B/L documents
+  - Bookings: Shipping booking management
+  - Freight Quotes: Rate quotes from carriers/agents
+
+**DATA** — Master data management:
+  - Cargo Agents, Banks, Carriers, Customers, Locations, Ports, Products, Suppliers
+
+**FINANCE** — Financial operations and reporting.
+
+**CUSTOMER_PORTAL** — External view for customers to track their orders.
+
+**SETTINGS** — System admin: Users, Companies, Database Config, Branding, Integrations.
+
+═══════════════════════════════════════════════════════
+CAPABILITIES
+═══════════════════════════════════════════════════════
+1. **Data Queries**: Answer questions about visible data (customers, orders, products, etc.)
+2. **Navigation Help**: Tell users which module to use for a task
+3. **How-To Guide**: Explain step-by-step how to use features
+4. **Insights**: Summarize data trends and key metrics from context
+5. **Workflow Tips**: Suggest efficient workflows (e.g., "To create a full shipment flow, first create the SO, then the booking, then the B/L")
+
+═══════════════════════════════════════════════════════
+RULES
+═══════════════════════════════════════════════════════
+1. ONLY reference data that appears in the context. Never invent customer names, order numbers, or amounts.
+2. If the user asks about data not in your context, say "I don't have that data loaded right now. You can find it in [module name]."
+3. When answering data questions, cite counts and names from context.
+4. Keep formatting clean with markdown: **bold**, *italic*, bullet lists, numbered steps.
+5. For "how to" questions, provide numbered steps.
+6. Always consider the user's ROLE — they may not have access to all modules.
+7. Never reveal passwords, API keys, or sensitive config.
+`;
+
+export const getBobResponse = async (
+    userMessage: string,
+    history: { role: 'user' | 'model'; text: string }[],
+    context: BobContext
+): Promise<string> => {
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+        // Build the module label map for readable context
+        const moduleLabels: Record<string, string> = {
+            DASHBOARD: 'Dashboard', AI_UPLOAD: 'Automation', BUY: 'Purchase',
+            CALCULATOR: 'Calculator', SELL: 'Sales', LOGISTICS: 'Logistics',
+            DATA: 'Data', FINANCE: 'Finance', CUSTOMER_PORTAL: 'Client Portal',
+            SETTINGS: 'Settings'
+        };
+
+        const currentModuleLabel = moduleLabels[context.activeModule] || context.activeModule;
+        const currentLocation = context.subModule
+            ? `${currentModuleLabel} > ${context.subModule}`
+            : currentModuleLabel;
+
+        // Build data summary string
+        const dataParts: string[] = [];
+        const d = context.data;
+        if (d.customers) dataParts.push(`Customers: ${d.customers.count} total (e.g., ${d.customers.sample.join(', ')})`);
+        if (d.products) dataParts.push(`Products: ${d.products.count} total (e.g., ${d.products.sample.join(', ')})`);
+        if (d.suppliers) dataParts.push(`Suppliers: ${d.suppliers.count} total (e.g., ${d.suppliers.sample.join(', ')})`);
+        if (d.salesOrders) dataParts.push(`Sales Orders: ${d.salesOrders.count} total. Recent: ${JSON.stringify(d.salesOrders.recent.slice(0, 3))}`);
+        if (d.opportunities) dataParts.push(`Opportunities: ${d.opportunities.count} total`);
+        if (d.bookings) dataParts.push(`Bookings: ${d.bookings.count} total. Active: ${JSON.stringify(d.bookings.active.slice(0, 3))}`);
+        if (d.billOfLadings) dataParts.push(`Bills of Lading: ${d.billOfLadings.count} total`);
+        if (d.shipments) dataParts.push(`Shipments: ${d.shipments.count} total`);
+        if (d.freightQuotes) dataParts.push(`Freight Quotes: ${d.freightQuotes.count} total`);
+        if (d.purchaseOrders) dataParts.push(`Purchase Orders: ${d.purchaseOrders.count} total`);
+        if (d.inventory) dataParts.push(`Inventory Items: ${d.inventory.count} total`);
+        if (d.costCalculations) dataParts.push(`Cost Calculations: ${d.costCalculations.count} total`);
+        if (d.ports) dataParts.push(`Ports: ${d.ports.count} total (e.g., ${d.ports.sample.join(', ')})`);
+        if (d.cargoAgents) dataParts.push(`Cargo Agents: ${d.cargoAgents.count} total (e.g., ${d.cargoAgents.sample.join(', ')})`);
+
+        const contextPrompt = `
+CURRENT SESSION:
+- User: ${context.userName} (Role: ${context.userRole})
+- Company: ${context.currentCompany}
+- Current Location: 📍 ${currentLocation}
+- Modules user can access: ${context.allowedModules.map(m => moduleLabels[m] || m).join(', ')}
+
+DATA AVAILABLE (filtered by user permissions):
+${dataParts.join('\n')}
+
+CONVERSATION HISTORY:
+${history.map(h => `${h.role === 'user' ? 'User' : 'Bob'}: ${h.text}`).join('\n')}
+
+USER MESSAGE: "${userMessage}"
+`;
+
+        // Use dynamic persona for Bob too
+        const bobPersona = await getPersona();
+        const bobPromptHeader = buildSystemPrompt(bobPersona);
+        const dynamicBobPrompt = `${bobPromptHeader}\n\n${BOB_SYSTEM_PROMPT.split('PLATFORM MODULE MAP')[1] ? '═══════════════════════════════════════════════════════\nPLATFORM MODULE MAP' + BOB_SYSTEM_PROMPT.split('PLATFORM MODULE MAP')[1] : BOB_SYSTEM_PROMPT}`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: contextPrompt,
+            config: {
+                systemInstruction: dynamicBobPrompt
+            }
+        });
+
+        return response.text || "I'm here to help! What would you like to know?";
+    } catch (error) {
+        console.error('[Bob AI] Error:', error);
+        return "I'm having a small hiccup right now. Please try again in a moment.";
+    }
+};
+
+// --- COST-PROFIT AI ---
+
+export interface CostBreakdownEstimate {
+    pickupCost: number;
+    oceanFreight: number;
+    deliveryCost: number;
+    insuranceCost: number;
+    dutyPercent: number;
+    clearanceCost: number;
+    explanation: string;
+}
+
+export const getCostProfitAnalysis = async (
+    productName: string,
+    quantity: number,
+    unitPrice: number,
+    incoterm: string,
+    originPort: string,
+    destinationPort: string,
+    currency: string,
+    freightQuotes: FreightQuote[],
+    existingCalcs: CostCalculation[]
+): Promise<{ estimate: CostBreakdownEstimate; sources: Record<string, 'db' | 'ai'> }> => {
+    // Step 1: Try to match from existing freight quotes
+    const sources: Record<string, 'db' | 'ai'> = {};
+    const dbMatch = freightQuotes.find(fq =>
+        fq.status === 'ACTIVE' &&
+        (fq.originPort?.toLowerCase().includes(originPort.toLowerCase()) || fq.originPortCode?.toLowerCase() === originPort.toLowerCase()) &&
+        (fq.destinationPort?.toLowerCase().includes(destinationPort.toLowerCase()) || fq.destinationPortCode?.toLowerCase() === destinationPort.toLowerCase())
+    );
+
+    const totalBase = unitPrice * quantity;
+    let pickup = 0, ocean = 0, delivery = 0;
+
+    if (dbMatch) {
+        pickup = dbMatch.pickupCost || 0;
+        ocean = dbMatch.oceanCost || dbMatch.rate || 0;
+        delivery = dbMatch.deliveryCost || 0;
+        sources.pickupCost = 'db';
+        sources.oceanFreight = 'db';
+        sources.deliveryCost = 'db';
+    }
+
+    // Step 2: Check existing calculations for similar product/route
+    const similarCalc = existingCalcs.find(c =>
+        c.productName?.toLowerCase() === productName.toLowerCase() &&
+        c.poa?.toLowerCase().includes(originPort.toLowerCase()) &&
+        c.pod?.toLowerCase().includes(destinationPort.toLowerCase())
+    );
+
+    // Step 3: AI fills in anything still missing
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const prompt = `You are a cost estimation AI for international commodity trading (textile fibers, plastic resins, recycled materials).
+Estimate the import cost breakdown for:
+- Product: ${productName}
+- Quantity: ${quantity} lbs
+- Unit Price: ${unitPrice} ${currency}
+- Total Base: $${totalBase.toFixed(2)}
+- Incoterm: ${incoterm}
+- Route: ${originPort} → ${destinationPort}
+${dbMatch ? `- DB Freight Quote found: pickup=$${pickup}, ocean=$${ocean}, delivery=$${delivery}` : '- No freight quote in DB'}
+${similarCalc ? `- Similar past calculation: duty=${similarCalc.dutyPercent}%, insurance=$${similarCalc.insuranceCost}, clearance=$${similarCalc.portClearanceCost}` : '- No past calculation for this product/route'}
+
+Return JSON with these fields:
+- pickupCost: number (origin pickup/drayage in USD, 0 if incoterm is not EXW)
+- oceanFreight: number (ocean freight in USD, 0 if incoterm is CIF/CFR/DDP)
+- deliveryCost: number (destination delivery/drayage in USD, 0 if incoterm is DDP)
+- insuranceCost: number (cargo insurance in USD, typically 0.3-0.5% of CIF value)
+- dutyPercent: number (import duty percentage, based on typical HTS codes for this product type)
+- clearanceCost: number (customs clearance and port handling fees in USD)
+- explanation: string (brief 2-3 sentence summary of your estimation rationale)
+
+Use realistic US import cost estimates. If DB values are provided, use those and only estimate the missing ones.`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        pickupCost: { type: Type.NUMBER },
+                        oceanFreight: { type: Type.NUMBER },
+                        deliveryCost: { type: Type.NUMBER },
+                        insuranceCost: { type: Type.NUMBER },
+                        dutyPercent: { type: Type.NUMBER },
+                        clearanceCost: { type: Type.NUMBER },
+                        explanation: { type: Type.STRING }
+                    }
+                }
+            }
+        });
+
+        if (response.text) {
+            const aiResult = JSON.parse(response.text) as CostBreakdownEstimate;
+
+            // Merge: DB values take priority, AI fills gaps
+            const estimate: CostBreakdownEstimate = {
+                pickupCost: dbMatch?.pickupCost ? pickup : aiResult.pickupCost,
+                oceanFreight: (dbMatch?.oceanCost || dbMatch?.rate) ? ocean : aiResult.oceanFreight,
+                deliveryCost: dbMatch?.deliveryCost ? delivery : aiResult.deliveryCost,
+                insuranceCost: similarCalc?.insuranceCost ?? aiResult.insuranceCost,
+                dutyPercent: similarCalc?.dutyPercent ?? aiResult.dutyPercent,
+                clearanceCost: similarCalc?.portClearanceCost ?? aiResult.clearanceCost,
+                explanation: aiResult.explanation
+            };
+
+            // Set source tracking
+            if (!sources.pickupCost) sources.pickupCost = 'ai';
+            if (!sources.oceanFreight) sources.oceanFreight = 'ai';
+            if (!sources.deliveryCost) sources.deliveryCost = 'ai';
+            sources.insuranceCost = similarCalc?.insuranceCost != null ? 'db' : 'ai';
+            sources.dutyPercent = similarCalc?.dutyPercent != null ? 'db' : 'ai';
+            sources.clearanceCost = similarCalc?.portClearanceCost != null ? 'db' : 'ai';
+
+            return { estimate, sources };
+        }
+    } catch (e) {
+        // Fallback: return DB values + zeros
+    }
+
+    return {
+        estimate: {
+            pickupCost: pickup,
+            oceanFreight: ocean,
+            deliveryCost: delivery,
+            insuranceCost: totalBase * 0.004,
+            dutyPercent: similarCalc?.dutyPercent ?? 5,
+            clearanceCost: similarCalc?.portClearanceCost ?? 350,
+            explanation: 'Fallback estimates used. AI service unavailable.'
+        },
+        sources: {
+            pickupCost: dbMatch ? 'db' : 'ai',
+            oceanFreight: dbMatch ? 'db' : 'ai',
+            deliveryCost: dbMatch ? 'db' : 'ai',
+            insuranceCost: similarCalc ? 'db' : 'ai',
+            dutyPercent: similarCalc ? 'db' : 'ai',
+            clearanceCost: similarCalc ? 'db' : 'ai'
+        }
+    };
+};
+
+export interface MarginRecommendation {
+    productName: string;
+    recommendedMargin: number;
+    reasoning: string;
+}
+
+export const getCostProfitSummary = async (
+    items: Array<{ productName: string; unitLandedCost: number; supplierName: string; quantity: number; incoterm: string }>
+): Promise<MarginRecommendation[]> => {
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const prompt = `You are a pricing strategy AI for international commodity trading (textile fibers, plastic resins, recycled materials).
+
+For each product below, recommend an optimal selling margin percentage and explain your reasoning:
+
+${items.map((item, i) => `${i + 1}. ${item.productName} — Unit Landed Cost: $${item.unitLandedCost.toFixed(4)}/lb, Supplier: ${item.supplierName}, Qty: ${item.quantity} lbs, Incoterm: ${item.incoterm}`).join('\n')}
+
+Consider:
+- Market competitiveness for commodity trading
+- Volume-based pricing (larger quantities = lower margins acceptable)
+- Incoterm complexity (DDP requires higher margin for risk)
+- Typical margins for B2B commodity trading: 8-25%
+
+Return a JSON array with one object per product:
+- productName: string
+- recommendedMargin: number (percentage, e.g. 15 for 15%)
+- reasoning: string (1-2 sentence explanation)`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            productName: { type: Type.STRING },
+                            recommendedMargin: { type: Type.NUMBER },
+                            reasoning: { type: Type.STRING }
+                        }
+                    }
+                }
+            }
+        });
+
+        if (response.text) {
+            return JSON.parse(response.text) as MarginRecommendation[];
+        }
+        return items.map(item => ({ productName: item.productName, recommendedMargin: 15, reasoning: 'Default margin applied.' }));
+    } catch (e) {
+        return items.map(item => ({ productName: item.productName, recommendedMargin: 15, reasoning: 'AI unavailable. Default 15% margin applied.' }));
+    }
+};
+
+export const getCostProfitOfferRanking = async (
+    offers: Array<{ offerNumber: string; supplierName: string; items: Array<{ productName: string; unitPrice: number; quantity: number }>; incoterm: string; originPort?: string; destinationPort?: string }>
+): Promise<{ ranking: Array<{ offerNumber: string; score: number; reasoning: string }>; summary: string }> => {
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const prompt = `You are a procurement AI for international commodity trading.
+
+Rank these supplier offers from best to worst value:
+
+${offers.map((o, i) => `${i + 1}. Offer #${o.offerNumber} from ${o.supplierName} (${o.incoterm})
+   Items: ${o.items.map(it => `${it.productName}: ${it.quantity} lbs @ $${it.unitPrice}/lb`).join(', ')}
+   Route: ${o.originPort || 'N/A'} → ${o.destinationPort || 'N/A'}`).join('\n\n')}
+
+Consider: unit price, incoterm favorability (EXW=buyer bears more cost, DDP=seller bears), route logistics cost implications, and total value.
+
+Return JSON:
+- ranking: array of {offerNumber: string, score: number (1-100), reasoning: string}
+- summary: string (2-3 sentence overall recommendation)`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        ranking: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    offerNumber: { type: Type.STRING },
+                                    score: { type: Type.NUMBER },
+                                    reasoning: { type: Type.STRING }
+                                }
+                            }
+                        },
+                        summary: { type: Type.STRING }
+                    }
+                }
+            }
+        });
+
+        if (response.text) return JSON.parse(response.text);
+        return { ranking: [], summary: 'Unable to rank offers.' };
+    } catch (e) {
+        return { ranking: [], summary: 'AI service unavailable for ranking.' };
     }
 };

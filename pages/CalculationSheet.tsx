@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { CostCalculation, Company, Product, CompanyImage, SupplierOffer, FreightQuote } from '../types';
-import { Save, Trash2, Plus, Calculator, RefreshCw, AlertCircle, AlertTriangle, CheckCircle2, Search, ArrowRight, GripVertical, Filter, X, FileDown, Eye, Image as ImageIcon, Package, MapPin, Anchor, FileText, Download, ShieldCheck, Tag, DollarSign, FileCode, Ship, Copy, ExternalLink, Loader2, FilePlus, ChevronDown, Brain, Send, Mail, Edit2 } from 'lucide-react';
+import { CostCalculation, Company, Product, CompanyImage, SupplierOffer, FreightQuote, Port } from '../types';
+import { Save, Trash2, Plus, Calculator, RefreshCw, AlertCircle, AlertTriangle, CheckCircle2, Search, ArrowRight, GripVertical, Filter, X, FileDown, Eye, Image as ImageIcon, Package, MapPin, Anchor, FileText, Download, ShieldCheck, Tag, DollarSign, FileCode, Ship, Copy, ExternalLink, Loader2, FilePlus, ChevronDown, Brain, Send, Mail, Edit2, FlaskConical } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getSupabaseClient } from '../services/supabase';
@@ -11,6 +11,7 @@ interface CalculationSheetProps {
     products: Product[];
     supplierOffers?: SupplierOffer[];
     freightQuotes?: FreightQuote[];
+    ports?: Port[];
     onSave: (calc: CostCalculation) => void;
     onUpdate: (calc: CostCalculation) => void;
     onDelete: (id: string) => void;
@@ -18,6 +19,8 @@ interface CalculationSheetProps {
     availableCompanies: Company[];
     isPriceList?: boolean;
     allowMargin?: boolean;
+    readOnly?: boolean;
+    currentUser?: any;
 }
 
 // Temporary interface for grid row state before saving
@@ -42,18 +45,55 @@ const CalculationSheet: React.FC<CalculationSheetProps> = ({
     products,
     supplierOffers = [],
     freightQuotes = [],
+    ports = [],
     onSave,
     onUpdate,
     onDelete,
     currentCompanyId,
     availableCompanies,
     isPriceList = false,
-    allowMargin = true
+    allowMargin = true,
+    readOnly = false,
+    currentUser
 }) => {
+    // Helper: extract only city and state from a full address
+    const extractCityState = (location: string | undefined | null): string => {
+        if (!location) return '';
+        const parts = location.split(',').map(p => p.trim()).filter(Boolean);
+        if (parts.length >= 3) {
+            // "200 Curtis Harley Drive, Spartanburg, SC" → "Spartanburg, SC"
+            return parts.slice(-2).join(', ');
+        }
+        return location.trim();
+    };
+
     const [rows, setRows] = useState<GridRow[]>([]);
+
+    // Self-fetch ports if prop is empty (fallback)
+    const [localPorts, setLocalPorts] = useState<Port[]>([]);
+    useEffect(() => {
+        if (ports.length === 0) {
+            const client = getSupabaseClient();
+            client.from('ports').select('*').then(({ data, error }) => {
+                if (data && !error) {
+                    console.log('[CalculationSheet] Self-fetched ports:', data.length);
+                    setLocalPorts(data as Port[]);
+                }
+            });
+        }
+    }, [ports]);
+    const effectivePorts = ports.length > 0 ? ports : localPorts;
     const [searchTerm, setSearchTerm] = useState('');
     const [notification, setNotification] = useState<{ msg: string, type: 'success' | 'error' } | null>(null);
-    const [displayUnit, setDisplayUnit] = useState<'LBS' | 'KGS'>('LBS');
+    const [displayUnit, setDisplayUnit] = useState<'LBS' | 'KGS'>('KGS');
+
+    // Helper: extract port code from strings like "Houston (HOU)" or "Manaus (BRMAO)" -> "USHOU" or "BRMAO"
+    const extractPortCode = (str: string | undefined | null): string => {
+        if (!str) return '';
+        const parenMatch = str.match(/\(([A-Z0-9]{2,6})\)/);
+        if (parenMatch) return parenMatch[1];
+        return str.trim();
+    };
     const [typeFilter, setTypeFilter] = useState<'ALL' | 'IMPORT' | 'EXPORT' | 'LOCAL'>('ALL');
 
     // Sales Resume State
@@ -63,6 +103,12 @@ const CalculationSheet: React.FC<CalculationSheetProps> = ({
     // TDS Viewer State
     const [viewingTds, setViewingTds] = useState<{ url: string, filename: string, productName: string } | null>(null);
     const [tdsBlobUrl, setTdsBlobUrl] = useState<string | null>(null);
+
+    // Sample Request State
+    const [sampleModal, setSampleModal] = useState<{ productName: string, row: GridRow } | null>(null);
+    const [sampleForm, setSampleForm] = useState({ customerName: '', quantity: '', notes: '', status: 'PENDING' as string });
+    const [sampleSubmitting, setSampleSubmitting] = useState(false);
+    const [sampleCustomers, setSampleCustomers] = useState<string[]>([]);
 
     // Add Row Dropdown State
     const [showAddMenu, setShowAddMenu] = useState(false);
@@ -96,16 +142,16 @@ const CalculationSheet: React.FC<CalculationSheetProps> = ({
         product: 220,
         hsCode: 110,
         pickup: 140,
-        poa: 140,
-        pod: 140,
-        qty: 110,
-        baseCost: 120,
+        poa: 70,
+        pod: 70,
+        qty: 88,
+        baseCost: 72,
         freightAI: 40,
-        freight: 100,
-        insurance: 90,
-        clearance: 100,
-        duty: 80,
-        landed: 130,
+        freight: 70,
+        insurance: 63,
+        clearance: 70,
+        duty: 56,
+        landed: 78,
         margin: 90,
         term: 100,
         sell: 130,
@@ -170,11 +216,11 @@ const CalculationSheet: React.FC<CalculationSheetProps> = ({
 
             let cleanOrigin = c.origin;
             if (type === 'EXPORT') {
-                cleanOrigin = c.origin.replace('Export: ', '').split(' -> ')[0];
+                cleanOrigin = (c.origin || '').replace('Export: ', '').split(' -> ')[0];
             } else if (type === 'LOCAL') {
                 cleanOrigin = '';
             } else {
-                cleanOrigin = c.origin.split(' -> ')[0];
+                cleanOrigin = (c.origin || '').split(' -> ')[0];
             }
 
             const displayPOA = c.poa || cleanOrigin;
@@ -227,19 +273,23 @@ const CalculationSheet: React.FC<CalculationSheetProps> = ({
                 }
             }
 
-            // Auto-link supplier quote price as fobPrice if current fobPrice is 0
+            // Auto-link supplier quote number and price from supplier offers
             let fobPriceToUse = c.fobPrice || 0;
             let quoteNumberToUse = c.quoteNumber || '';
-            if (fobPriceToUse === 0 && supplierOffers && supplierOffers.length > 0) {
+            if (supplierOffers && supplierOffers.length > 0) {
                 const matchingOffer = supplierOffers.find(offer =>
                     offer.items.some(item => item.productName === c.productName)
                 );
                 if (matchingOffer) {
                     const matchingItem = matchingOffer.items.find(item => item.productName === c.productName);
-                    if (matchingItem?.unitPrice) {
+                    // Always link quote number if empty
+                    if (!quoteNumberToUse) {
+                        quoteNumberToUse = matchingOffer.offerNumber || '';
+                    }
+                    // Only override fobPrice if it's 0
+                    if (fobPriceToUse === 0 && matchingItem?.unitPrice) {
                         console.log('💰 Auto-linking quote price:', { product: c.productName, quote: matchingOffer.offerNumber, price: matchingItem.unitPrice });
                         fobPriceToUse = matchingItem.unitPrice;
-                        quoteNumberToUse = quoteNumberToUse || matchingOffer.offerNumber;
                     }
                 }
             }
@@ -249,12 +299,13 @@ const CalculationSheet: React.FC<CalculationSheetProps> = ({
                 hsCode: displayHSCode,
                 origin: displayPOA,
                 destination: displayPOD,
+                pickupLocation: extractCityState(c.pickupLocation),
                 fobPrice: fobPriceToUse,
                 quoteNumber: quoteNumberToUse,
                 freightCost: freightCostToUse,
                 rowId: c.id,
                 type: type,
-                isDirty: freightCostToUse !== (c.freightCost || 0) || fobPriceToUse !== (c.fobPrice || 0),
+                isDirty: freightCostToUse !== (c.freightCost || 0) || fobPriceToUse !== (c.fobPrice || 0) || quoteNumberToUse !== (c.quoteNumber || ''),
                 isNew: false
             };
             return calculateRow(row);
@@ -395,7 +446,7 @@ const CalculationSheet: React.FC<CalculationSheetProps> = ({
             hsCode: '',
             origin: offer.originPort || '',
             destination: offer.destinationPort || '',
-            pickupLocation: offer.loadingLocation || '',
+            pickupLocation: extractCityState(offer.loadingLocation),
             quantity: item.quantity || 1,
             fobPrice: item.unitPrice || 0,
             freightCost: 0,
@@ -444,7 +495,7 @@ const CalculationSheet: React.FC<CalculationSheetProps> = ({
             portClearanceCost: calc.portClearanceCost,
             deliveryCost: calc.deliveryCost,
             marginPercent: calc.marginPercent,
-            type: calc.origin === 'Local' ? 'LOCAL' : calc.origin.startsWith('Export:') ? 'EXPORT' : 'IMPORT',
+            type: calc.origin === 'Local' ? 'LOCAL' : (calc.origin || '').startsWith('Export:') ? 'EXPORT' : 'IMPORT',
             deliveryMethod: calc.deliveryMethod || 'EXW',
             isNew: true,
             isDirty: true
@@ -540,6 +591,15 @@ X-Solution AI Business Platform`;
                 }
             }
 
+            // Enforce 5% minimum margin on Price List
+            if (field === 'marginPercent' && isPriceList) {
+                const numVal = Number(storeValue);
+                if (numVal !== 0 && numVal < 5) {
+                    storeValue = 5;
+                    showNotification('Minimum margin is 5%', 'error');
+                }
+            }
+
             const updatedRow = { ...row, [field]: storeValue, isDirty: true };
             return calculateRow(updatedRow);
         }));
@@ -548,6 +608,12 @@ X-Solution AI Business Platform`;
     const handleSave = (row: GridRow) => {
         if (!row.productName) {
             showNotification("Product Name is required", 'error');
+            return;
+        }
+
+        // Enforce 5% minimum margin on Price List
+        if (isPriceList && Number(row.marginPercent) > 0 && Number(row.marginPercent) < 5) {
+            showNotification('Margin cannot be less than 5%', 'error');
             return;
         }
 
@@ -589,7 +655,9 @@ X-Solution AI Business Platform`;
             deliveryZip: row.deliveryZip,
             deliveryMethod: row.deliveryMethod as any,
             salesCarrierId: row.salesCarrierId,
-            salesCarrierName: row.salesCarrierName
+            salesCarrierName: row.salesCarrierName,
+            quoteNumber: row.quoteNumber || '',
+            supplierName: row.supplierName || ''
         };
 
         if (row.isNew) {
@@ -633,33 +701,271 @@ X-Solution AI Business Platform`;
         }
     };
 
-    const handleOpenTDS = (row: GridRow) => {
+    const handleOpenTDS = async (row: GridRow) => {
         const matchingProduct = products.find(p => p.name === row.productName);
-        if (matchingProduct?.tdsUrl) {
+        if (!matchingProduct) {
+            showNotification("No matching product found.", 'error');
+            return;
+        }
+
+        // If product has an uploaded TDS, use it directly
+        if (matchingProduct.tdsUrl) {
             setViewingTds({
                 url: matchingProduct.tdsUrl,
                 filename: matchingProduct.tdsFile || `${matchingProduct.name}_TDS.pdf`,
                 productName: matchingProduct.name
             });
-        } else {
-            showNotification("No Technical Data Sheet (TDS) available for this product.", 'error');
+            return;
+        }
+
+        // Otherwise, auto-generate a professional TDS PDF
+        try {
+            const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+            const pageW = doc.internal.pageSize.getWidth();
+            const margin = 14;
+            const contentW = pageW - margin * 2;
+            let y = 14;
+
+            // ── Fetch company logo ──
+            let logoUrl: string | null = null;
+            const client = getSupabaseClient();
+            if (client) {
+                const { data: logoData } = await client.from('imagens').select('url').eq('companyId', currentCompanyId).eq('type', 'LOGO').single();
+                if (logoData?.url) logoUrl = logoData.url;
+                if (!logoUrl) {
+                    const { data: sysLogo } = await client.from('imagens').select('url').eq('companyId', 'SYSTEM').eq('type', 'LOGO').single();
+                    if (sysLogo?.url) logoUrl = sysLogo.url;
+                }
+            }
+
+            // ── Fetch product image ──
+            let productImageUrl: string | null = null;
+            if (client && matchingProduct.imageIds?.length) {
+                const { data: imgData } = await client.from('imagens').select('url').in('id', matchingProduct.imageIds).limit(1);
+                if (imgData?.[0]?.url) productImageUrl = imgData[0].url;
+            }
+
+            // ── Header bar ──
+            doc.setFillColor(15, 23, 42); // slate-900
+            doc.rect(0, 0, pageW, 36, 'F');
+
+            // Logo
+            if (logoUrl) {
+                try {
+                    const format = logoUrl.includes('image/png') ? 'PNG' : 'JPEG';
+                    doc.addImage(logoUrl, format, margin, 6, 28, 0);
+                } catch (e) { console.warn('Logo image failed', e); }
+            }
+
+            // Title
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(18);
+            doc.setTextColor(255, 255, 255);
+            doc.text('TECHNICAL DATA SHEET', pageW - margin, 18, { align: 'right' });
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(148, 163, 184);
+            const company = availableCompanies.find(c => c.id === currentCompanyId);
+            doc.text(company?.name || '', pageW - margin, 26, { align: 'right' });
+            doc.text(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), pageW - margin, 32, { align: 'right' });
+
+            y = 44;
+
+            // ── Product Name Banner ──
+            doc.setFillColor(241, 245, 249);
+            doc.roundedRect(margin, y, contentW, 16, 3, 3, 'F');
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(14);
+            doc.setTextColor(30, 41, 59);
+            doc.text(matchingProduct.name.toUpperCase(), margin + 6, y + 11);
+            y += 22;
+
+            // ── Two-column layout: Image | Overview ──
+            const colLeft = margin;
+            const colRight = margin + 72;
+            const imgAreaW = 62;
+
+            // Product Image
+            if (productImageUrl) {
+                try {
+                    const fmt = productImageUrl.includes('image/png') ? 'PNG' : 'JPEG';
+                    doc.addImage(productImageUrl, fmt, colLeft, y, imgAreaW, imgAreaW * 0.75);
+                } catch (e) { console.warn('Product image failed', e); }
+            } else {
+                doc.setFillColor(248, 250, 252);
+                doc.setDrawColor(226, 232, 240);
+                doc.roundedRect(colLeft, y, imgAreaW, imgAreaW * 0.75, 3, 3, 'FD');
+                doc.setFontSize(9);
+                doc.setTextColor(148, 163, 184);
+                doc.text('No Image Available', colLeft + imgAreaW / 2, y + (imgAreaW * 0.75) / 2, { align: 'center' });
+            }
+
+            // Overview section (right of image)
+            const overviewY = y;
+            const specs = matchingProduct.specs || {} as any;
+            const isValidValue = (v: string | undefined | null): boolean => {
+                if (!v) return false;
+                const trimmed = v.trim().toLowerCase();
+                return trimmed !== '' && trimmed !== '-' && trimmed !== 'n/a' && trimmed !== 'unknown';
+            };
+
+            const overviewItems: [string, string][] = [
+                ['Category', matchingProduct.category || ''],
+                ['Grade', matchingProduct.grade || ''],
+                ['HS Code', matchingProduct.hsCode || ''],
+            ].filter(([, value]) => isValidValue(value)) as [string, string][];
+
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(59, 130, 246);
+            doc.text('PRODUCT OVERVIEW', colRight, overviewY + 5);
+
+            let oy = overviewY + 12;
+            overviewItems.forEach(([label, value]) => {
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(8);
+                doc.setTextColor(100, 116, 139);
+                doc.text(label.toUpperCase(), colRight, oy);
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(10);
+                doc.setTextColor(30, 41, 59);
+                doc.text(String(value), colRight + 35, oy);
+                oy += 8;
+            });
+
+            y += imgAreaW * 0.75 + 8;
+
+            // ── Description ──
+            if (matchingProduct.description) {
+                doc.setFillColor(239, 246, 255);
+                doc.roundedRect(margin, y, contentW, 18, 2, 2, 'F');
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(8);
+                doc.setTextColor(59, 130, 246);
+                doc.text('DESCRIPTION', margin + 4, y + 6);
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(9);
+                doc.setTextColor(30, 41, 59);
+                const descLines = doc.splitTextToSize(matchingProduct.description, contentW - 8);
+                doc.text(descLines.slice(0, 2), margin + 4, y + 12);
+                y += 22;
+            }
+
+            // ── Technical Specifications Table ──
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10);
+            doc.setTextColor(59, 130, 246);
+            doc.text('TECHNICAL SPECIFICATIONS', margin, y + 5);
+            y += 10;
+
+            const specRows: [string, string][] = [
+                specs.type ? ['Type / Polymer', specs.type] : null,
+                specs.form ? ['Form', specs.form] : null,
+                specs.color ? ['Color', specs.color] : null,
+                specs.process ? ['Processing Method', specs.process] : null,
+                specs.reinforced ? ['Reinforcement', specs.reinforced] : null,
+                specs.additives ? ['Additives', specs.additives] : null,
+                specs.rv ? ['Relative Viscosity (RV)', specs.rv] : null,
+                specs.mfr ? ['Melt Flow Rate (MFR)', specs.mfr] : null,
+                specs.origin ? ['Origin / Country', specs.origin] : null,
+                specs.packages ? ['Packaging', specs.packages] : null,
+            ].filter((row): row is [string, string] => row !== null && isValidValue(row[1]));
+
+            if (specRows.length > 0) {
+                autoTable(doc, {
+                    startY: y,
+                    head: [['Property', 'Value']],
+                    body: specRows,
+                    margin: { left: margin, right: margin },
+                    theme: 'grid',
+                    headStyles: {
+                        fillColor: [15, 23, 42],
+                        textColor: [255, 255, 255],
+                        fontSize: 9,
+                        fontStyle: 'bold',
+                        halign: 'left',
+                        cellPadding: 4,
+                    },
+                    bodyStyles: {
+                        fontSize: 9,
+                        cellPadding: 4,
+                        textColor: [30, 41, 59],
+                    },
+                    alternateRowStyles: {
+                        fillColor: [248, 250, 252],
+                    },
+                    columnStyles: {
+                        0: { cellWidth: 65, fontStyle: 'bold', textColor: [71, 85, 105] },
+                        1: { cellWidth: 'auto' },
+                    },
+                });
+                y = (doc as any).lastAutoTable.finalY + 8;
+            } else {
+                doc.setFont('helvetica', 'italic');
+                doc.setFontSize(9);
+                doc.setTextColor(148, 163, 184);
+                doc.text('No technical specifications available.', margin, y + 5);
+                y += 12;
+            }
+
+            // ── Footer ──
+            const footerY = doc.internal.pageSize.getHeight() - 16;
+            doc.setDrawColor(226, 232, 240);
+            doc.line(margin, footerY - 4, pageW - margin, footerY - 4);
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(148, 163, 184);
+            doc.text('This document is for informational purposes only. Specifications may vary.', margin, footerY);
+            doc.text(`Generated by ${company?.name || 'X-Solution'} • ${new Date().toLocaleDateString()}`, pageW - margin, footerY, { align: 'right' });
+            doc.text('CONFIDENTIAL', pageW / 2, footerY + 5, { align: 'center' });
+
+            // ── Convert to base64 for the viewer modal ──
+            const pdfBase64 = doc.output('datauristring').split(',')[1];
+            setViewingTds({
+                url: pdfBase64,
+                filename: `${matchingProduct.name}_TDS.pdf`,
+                productName: matchingProduct.name
+            });
+
+        } catch (err) {
+            console.error('TDS generation error:', err);
+            showNotification("Failed to generate TDS.", 'error');
         }
     };
 
     const triggerTdsDownload = (url: string, filename: string) => {
         if (!url) return;
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename || 'Technical_Data_Sheet.pdf';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        try {
+            const base64 = url.includes(',') ? url.split(',')[1] : url;
+            const cleanBase64 = base64.trim().replace(/\s/g, '');
+            const binaryString = atob(cleanBase64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: 'application/pdf' });
+            const blobUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = filename || 'Technical_Data_Sheet.pdf';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(blobUrl);
+        } catch (e) {
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename || 'Technical_Data_Sheet.pdf';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
     };
 
     const handleCopyResume = () => {
         if (!viewingResume) return;
         const { calc, product } = viewingResume;
-
         const specLines = [
             product.specs?.type && `• Type: ${product.specs.type}`,
             product.grade && `• Grade: ${product.grade}`,
@@ -767,10 +1073,7 @@ Atenciosamente,`.trim();
 
         return true;
     }).sort((a, b) => {
-        if (isPriceList) {
-            return (a.productName || '').localeCompare(b.productName || '');
-        }
-        return 0;
+        return (a.productName || '').localeCompare(b.productName || '');
     });
 
     const showTypeColumn = typeFilter === 'ALL';
@@ -867,19 +1170,19 @@ Atenciosamente,`.trim();
     };
 
     return (
-        <div className="h-full flex flex-col bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
-            <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
-                <div className="flex items-center gap-3">
-                    <div className="bg-emerald-600 p-2 rounded-lg text-white shadow-sm">
-                        <Calculator size={20} />
+        <div className="h-full flex flex-col overflow-hidden animate-in fade-in">
+            <div className="mb-6 flex items-start justify-between shrink-0 px-4 pt-4">
+                <div className="flex items-center gap-4">
+                    <div className="p-2 bg-gradient-to-r from-violet-500 to-purple-500 rounded-xl text-white">
+                        <Calculator size={24} />
                     </div>
                     <div>
-                        <h2 className="text-lg font-bold text-slate-800">{isPriceList ? 'Price List' : 'Master Calculation Sheet'}</h2>
-                        <p className="text-xs text-slate-500">{isPriceList ? 'Simplified Sales View' : 'Unified view for Import, Export, and Local pricing'}</p>
+                        <h1 className="text-2xl font-bold text-slate-800">{isPriceList ? 'Price List' : 'Master Calculation Sheet'}</h1>
+                        <p className="text-slate-500 text-sm mt-1">{isPriceList ? 'Simplified Sales View' : 'Unified view for Import, Export, and Local pricing'}</p>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3 w-full md:w-auto">
+                <div className="flex items-center gap-3">
                     <div className="flex bg-slate-200/50 rounded-lg p-1 border border-slate-300/50">
                         <button onClick={() => setTypeFilter('ALL')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${typeFilter === 'ALL' ? 'bg-white text-slate-800 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700'}`}>ALL</button>
                         <button onClick={() => setTypeFilter('IMPORT')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${typeFilter === 'IMPORT' ? 'bg-white text-blue-600 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-blue-600'}`}>IMPORT</button>
@@ -892,17 +1195,17 @@ Atenciosamente,`.trim();
                         <button onClick={() => setDisplayUnit('KGS')} className={`px-3 py-1.5 text-xs font-bold rounded ${displayUnit === 'KGS' ? 'bg-white text-blue-700 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700'}`}>KGS</button>
                     </div>
 
-                    <div className="relative flex-1 md:w-64">
+                    <div className="relative w-64">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                        <input className="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Filter rows..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                        <input className="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-500 outline-none" placeholder="Filter rows..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                     </div>
                     {isPriceList && <button onClick={handleDownloadPDF} className="bg-slate-800 hover:bg-slate-900 text-white p-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm transition-colors" title="Download PDF"><FileDown size={20} /></button>}
 
                     {/* Add Row Dropdown */}
-                    <div className="relative" ref={addMenuRef}>
+                    {!readOnly && <div className="relative" ref={addMenuRef}>
                         <button
                             onClick={() => setShowAddMenu(!showAddMenu)}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-sm font-bold shadow-sm transition-colors flex items-center gap-2"
+                            className="flex items-center gap-2 px-5 py-2.5 bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-all shadow-md font-medium"
                         >
                             <FilePlus size={18} />
                             <span className="hidden sm:inline">Add Row</span>
@@ -949,7 +1252,7 @@ Atenciosamente,`.trim();
                                 </button>
                             </div>
                         )}
-                    </div>
+                    </div>}
                 </div>
             </div>
 
@@ -983,32 +1286,49 @@ Atenciosamente,`.trim();
                             {showCostColumns && <th className="px-3 py-3 border-b border-r border-slate-200 text-right bg-slate-200/50 text-slate-800 relative group" style={{ width: colWidths.landed }}><div className="flex items-center justify-end gap-2"><span>Unit Landed</span>{renderColumnFilter('unitLandedCost')}</div><div onMouseDown={(e) => startResize(e, 'landed')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-400 group-hover:bg-slate-300 z-10" /></th>}
                             {showSalesColumns && <th className="px-3 py-3 border-b border-r border-slate-200 text-center bg-emerald-50/50 text-emerald-700 relative group" style={{ width: colWidths.term }}><div className="flex items-center justify-center gap-2"><span>Sale Term</span>{renderColumnFilter('deliveryMethod')}</div><div onMouseDown={(e) => startResize(e, 'term')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-400 group-hover:bg-slate-300 z-10" /></th>}
                             {showMarginColumn && <th className="px-3 py-3 border-b border-r border-slate-200 text-right bg-emerald-50/50 text-emerald-700 relative group" style={{ width: colWidths.margin }}><div className="flex items-center justify-end gap-2"><span>Margin %</span>{renderColumnFilter('marginPercent')}</div><div onMouseDown={(e) => startResize(e, 'margin')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-400 group-hover:bg-slate-300 z-10" /></th>}
-                            {showSalesColumns && <th className="px-3 py-3 border-b border-r border-slate-200 text-right bg-emerald-100/50 text-emerald-800 relative group" style={{ width: colWidths.sell }}><div className="flex items-center justify-end gap-2"><span>Sell Price</span>{renderColumnFilter('recommendedSalesPrice')}</div><div onMouseDown={(e) => startResize(e, 'sell')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-400 group-hover:bg-slate-300 z-10" /></th>}
+                            {showSalesColumns && <th className="px-3 py-3 border-b border-r border-slate-200 text-right bg-emerald-100/50 text-emerald-800 relative group" style={{ width: colWidths.sell }}><div className="flex items-center justify-end gap-2"><div className="text-right"><span className="block">Sell Price</span><span className="text-[9px] font-normal text-emerald-600/70 normal-case">$/lb · $/kg · $/MT</span></div>{renderColumnFilter('recommendedSalesPrice')}</div><div onMouseDown={(e) => startResize(e, 'sell')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-400 group-hover:bg-slate-300 z-10" /></th>}
                             <th className="px-3 py-3 border-b border-slate-200 text-center relative group" style={{ width: colWidths.actions }}>Actions<div onMouseDown={(e) => startResize(e, 'actions')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-400 group-hover:bg-slate-300 z-10" /></th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-sm">
                         {filteredRows.map((row, index) => {
                             const matchingProduct = products.find(p => p.name === row.productName);
-                            const hasTds = !!matchingProduct?.tdsUrl;
+                            // TDS is always available (auto-generated if no uploaded file)
                             return (
                                 <tr key={row.rowId} className={`group hover:bg-slate-50 transition-colors ${row.isDirty ? 'bg-amber-50/30' : ''}`}>
-                                    <td className="px-3 py-2 border-r border-slate-100 text-center text-xs text-slate-400">{index + 1}</td>
-                                    <td className="px-3 py-2 border-r border-slate-100 text-xs font-mono text-teal-600">{row.quoteNumber || '-'}</td>
-                                    <td className="px-3 py-2 border-r border-slate-100 text-xs font-mono font-bold text-slate-500">{row.calculationNumber}</td>
-                                    {showTypeColumn && <td className="px-3 py-2 border-r border-slate-100"><select className={`w-full bg-transparent text-xs font-bold rounded py-1 px-2 border border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none cursor-pointer ${row.type === 'IMPORT' ? 'text-blue-600' : row.type === 'EXPORT' ? 'text-purple-600' : 'text-emerald-600'}`} value={row.type} onChange={(e) => handleChange(row.rowId, 'type', e.target.value)}><option value="IMPORT">IMPORT</option><option value="EXPORT">EXPORT</option><option value="LOCAL">LOCAL</option></select></td>}
-                                    <td className="px-3 py-2 border-r border-slate-100"><input className="w-full text-sm font-medium text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none" value={row.productName} onChange={(e) => handleChange(row.rowId, 'productName', e.target.value)} placeholder="Product Name" /></td>
-                                    {isPriceList && <td className="px-3 py-2 border-r border-slate-100"><input className="w-full text-xs font-mono text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none" value={row.hsCode || ''} onChange={(e) => handleChange(row.rowId, 'hsCode', e.target.value)} placeholder="HS Code" /></td>}
-                                    {showPickupColumn && <td className="px-3 py-2 border-r border-slate-100"><input className="w-full text-xs text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none" value={row.pickupLocation || ''} onChange={(e) => handleChange(row.rowId, 'pickupLocation', e.target.value)} placeholder="Pickup" /></td>}
-                                    <td className="px-3 py-2 border-r border-slate-100"><input className="w-full text-xs text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none" value={row.origin} onChange={(e) => handleChange(row.rowId, 'origin', e.target.value)} placeholder="POA" /></td>
-                                    <td className="px-3 py-2 border-r border-slate-100"><input className="w-full text-xs text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none" value={row.destination} onChange={(e) => handleChange(row.rowId, 'destination', e.target.value)} placeholder="POD" /></td>
-                                    <td className="px-3 py-2 border-r border-slate-100 text-right"><FormattedInput value={getDisplayQty(row.quantity || 0)} onChange={(val) => handleChange(row.rowId, 'quantity', val)} decimals={0} className="w-full text-right bg-transparent border-b border-transparent hover:border-blue-500 focus:border-blue-500 focus:bg-white outline-none" /></td>
-                                    {showCostColumns && <td className="px-3 py-2 border-r border-slate-100 text-right bg-blue-50/20"><input type="number" className="w-full text-right font-mono text-slate-700 bg-transparent border-b border-transparent hover:border-blue-300 focus:border-blue-500 focus:bg-white outline-none" value={getDisplayPrice(row.fobPrice || 0)} onChange={(e) => handleChange(row.rowId, 'fobPrice', e.target.value)} placeholder="0.00" /></td>}
+                                    <td className="px-3 py-0.5 border-r border-slate-100 text-center text-xs text-slate-400">{index + 1}</td>
+                                    <td className="px-3 py-0.5 border-r border-slate-100 text-xs font-mono text-teal-600">{row.quoteNumber || '-'}</td>
+                                    <td className="px-3 py-0.5 border-r border-slate-100 text-xs font-mono font-bold text-slate-500">{row.calculationNumber}</td>
+                                    {showTypeColumn && <td className="px-3 py-0.5 border-r border-slate-100"><select className={`w-full bg-transparent text-xs font-bold rounded py-1 px-2 border border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none cursor-pointer ${row.type === 'IMPORT' ? 'text-blue-600' : row.type === 'EXPORT' ? 'text-purple-600' : 'text-emerald-600'}`} value={row.type} onChange={(e) => handleChange(row.rowId, 'type', e.target.value)}><option value="IMPORT">IMPORT</option><option value="EXPORT">EXPORT</option><option value="LOCAL">LOCAL</option></select></td>}
+                                    <td className="px-3 py-0.5 border-r border-slate-100"><input className="w-full text-sm font-medium text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none" value={row.productName} onChange={(e) => handleChange(row.rowId, 'productName', e.target.value)} placeholder="Product Name" /></td>
+                                    {isPriceList && <td className="px-3 py-0.5 border-r border-slate-100"><input className="w-full text-xs font-mono text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none" value={row.hsCode || ''} onChange={(e) => handleChange(row.rowId, 'hsCode', e.target.value)} placeholder="HS Code" /></td>}
+                                    {showPickupColumn && <td className="px-3 py-0.5 border-r border-slate-100"><input className="w-full text-xs text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none" value={row.pickupLocation || ''} onChange={(e) => handleChange(row.rowId, 'pickupLocation', e.target.value)} placeholder="City, ST" /></td>}
+                                    <td className="px-3 py-0.5 border-r border-slate-100"><span className="text-xs text-slate-600 font-mono" title={row.origin}>{extractPortCode(row.origin)}</span></td>
+                                    <td className="px-3 py-0.5 border-r border-slate-100">
+                                        {effectivePorts.length > 0 ? (
+                                            <select
+                                                className="w-full text-xs text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none cursor-pointer"
+                                                value={row.destination || ''}
+                                                onChange={(e) => handleChange(row.rowId, 'destination', e.target.value)}
+                                            >
+                                                <option value="">Select POD</option>
+                                                {effectivePorts.sort((a, b) => a.name.localeCompare(b.name)).map(port => (
+                                                    <option key={port.id} value={`${port.name} (${port.code})`}>
+                                                        {port.code}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <span className="text-xs text-slate-600 font-mono" title={row.destination}>{extractPortCode(row.destination)}</span>
+                                        )}
+                                    </td>
+                                    <td className="px-3 py-0.5 border-r border-slate-100 text-right"><FormattedInput value={getDisplayQty(row.quantity || 0)} onChange={(val) => handleChange(row.rowId, 'quantity', val)} decimals={0} className="w-full text-right bg-transparent border-b border-transparent hover:border-blue-500 focus:border-blue-500 focus:bg-white outline-none" /></td>
+                                    {showCostColumns && <td className="px-3 py-0.5 border-r border-slate-100 text-right bg-blue-50/20"><input type="number" step="0.01" className="w-full text-right font-mono text-slate-700 bg-transparent border-b border-transparent hover:border-blue-300 focus:border-blue-500 focus:bg-white outline-none" value={(() => { const val = displayUnit === 'KGS' ? (row.fobPrice || 0) * KG_TO_LBS : (row.fobPrice || 0); return val ? val.toFixed(2) : ''; })()} onChange={(e) => handleChange(row.rowId, 'fobPrice', e.target.value)} placeholder="0.00" /></td>}
                                     {showCostColumns && (() => {
                                         const matchingQuote = findMatchingFreightQuote(row);
                                         const hasQuote = matchingQuote !== null;
                                         return (
-                                            <td className="px-1 py-2 border-r border-slate-100 text-center bg-gradient-to-b from-violet-50/50 to-blue-50/50">
+                                            <td className="px-1 py-0.5 border-r border-slate-100 text-center bg-gradient-to-b from-violet-50/50 to-blue-50/50">
                                                 <button
                                                     onClick={() => {
                                                         if (hasQuote && matchingQuote.rate) {
@@ -1033,41 +1353,64 @@ Atenciosamente,`.trim();
                                             </td>
                                         );
                                     })()}
-                                    {showCostColumns && <td className="px-3 py-2 border-r border-slate-100 text-right bg-blue-50/20"><FormattedInput value={row.freightCost || 0} onChange={(val) => handleChange(row.rowId, 'freightCost', val)} decimals={2} className="w-full text-right font-mono text-slate-700 bg-transparent border-b border-transparent hover:border-blue-300 focus:border-blue-500 focus:bg-white outline-none" /></td>}
-                                    {showCostColumns && <td className="px-3 py-2 border-r border-slate-100 text-right bg-cyan-50/20"><FormattedInput value={row.insuranceCost || 0} onChange={(val) => handleChange(row.rowId, 'insuranceCost', val)} decimals={2} className="w-full text-right font-mono text-slate-700 bg-transparent border-b border-transparent hover:border-cyan-300 focus:border-cyan-500 focus:bg-white outline-none" /></td>}
-                                    {showCostColumns && <td className="px-3 py-2 border-r border-slate-100 text-right bg-amber-50/20"><FormattedInput value={row.portClearanceCost || 0} onChange={(val) => handleChange(row.rowId, 'portClearanceCost', val)} decimals={2} className="w-full text-right font-mono text-slate-700 bg-transparent border-b border-transparent hover:border-amber-300 focus:border-amber-500 focus:bg-white outline-none" /></td>}
-                                    {showDutyColumn && <td className="px-3 py-2 border-r border-slate-100 text-right bg-amber-50/20"><FormattedInput value={row.dutyPercent || 0} onChange={(val) => handleChange(row.rowId, 'dutyPercent', val)} decimals={2} disabled={row.type === 'LOCAL'} className={`w-full text-right font-mono bg-transparent border-b border-transparent hover:border-amber-300 focus:border-amber-500 focus:bg-white outline-none ${row.type === 'LOCAL' ? 'text-slate-300 cursor-not-allowed' : 'text-slate-700'}`} /></td>}
-                                    {showCostColumns && <td className="px-3 py-2 border-r border-slate-100 text-right bg-slate-100"><span className="font-mono font-bold text-slate-700 block">${getDisplayPrice(row.unitLandedCost || 0)}</span><span className="text-[10px] text-slate-400 block">Total: ${(row.totalLandedCost || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></td>}
-                                    {showSalesColumns && <td className="px-3 py-2 border-r border-slate-100 bg-emerald-50/20">{isPriceList ? <div className="w-full text-xs font-bold text-slate-700 text-center py-1">{row.deliveryMethod || 'EXW'}</div> : <select className="w-full bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer" value={row.deliveryMethod || 'EXW'} onChange={(e) => handleChange(row.rowId, 'deliveryMethod', e.target.value)}><option value="EXW">EXW</option><option value="FCA">FCA</option><option value="FAS">FAS</option><option value="FOB">FOB</option><option value="CFR">CFR</option><option value="CIF">CIF</option><option value="CPT">CPT</option><option value="CIP">CIP</option><option value="DAP">DAP</option><option value="DPU">DPU</option><option value="DDP">DDP</option></select>}</td>}
-                                    {showMarginColumn && <td className="px-3 py-2 border-r border-slate-100 text-right bg-emerald-50/20"><input type="number" className="w-full text-right font-bold text-emerald-600 bg-transparent border-b border-transparent hover:border-emerald-300 focus:border-emerald-500 focus:bg-white outline-none" value={row.marginPercent} onChange={(e) => handleChange(row.rowId, 'marginPercent', e.target.value)} placeholder="0" /></td>}
-                                    {showSalesColumns && <td className="px-3 py-2 border-r border-slate-100 text-right bg-emerald-100/30"><span className="font-mono font-bold text-emerald-700 block">${getDisplayPrice(row.recommendedSalesPrice || 0)}</span>{!isPriceList && row.recommendedSalesPrice && row.quantity ? <span className="text-[10px] text-emerald-600/70 block">Profit: ${((row.recommendedSalesPrice - (row.unitLandedCost || 0)) * row.quantity).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> : null}</td>}
-                                    <td className="px-3 py-2 text-center">
+                                    {showCostColumns && <td className="px-3 py-0.5 border-r border-slate-100 text-right bg-blue-50/20"><FormattedInput value={row.freightCost || 0} onChange={(val) => handleChange(row.rowId, 'freightCost', val)} decimals={2} className="w-full text-right font-mono text-slate-700 bg-transparent border-b border-transparent hover:border-blue-300 focus:border-blue-500 focus:bg-white outline-none" /></td>}
+                                    {showCostColumns && <td className="px-3 py-0.5 border-r border-slate-100 text-right bg-cyan-50/20"><FormattedInput value={row.insuranceCost || 0} onChange={(val) => handleChange(row.rowId, 'insuranceCost', val)} decimals={2} className="w-full text-right font-mono text-slate-700 bg-transparent border-b border-transparent hover:border-cyan-300 focus:border-cyan-500 focus:bg-white outline-none" /></td>}
+                                    {showCostColumns && <td className="px-3 py-0.5 border-r border-slate-100 text-right bg-amber-50/20"><FormattedInput value={row.portClearanceCost || 0} onChange={(val) => handleChange(row.rowId, 'portClearanceCost', val)} decimals={2} className="w-full text-right font-mono text-slate-700 bg-transparent border-b border-transparent hover:border-amber-300 focus:border-amber-500 focus:bg-white outline-none" /></td>}
+                                    {showDutyColumn && <td className="px-3 py-0.5 border-r border-slate-100 text-right bg-amber-50/20"><FormattedInput value={row.dutyPercent || 0} onChange={(val) => handleChange(row.rowId, 'dutyPercent', val)} decimals={2} disabled={row.type === 'LOCAL'} className={`w-full text-right font-mono bg-transparent border-b border-transparent hover:border-amber-300 focus:border-amber-500 focus:bg-white outline-none ${row.type === 'LOCAL' ? 'text-slate-300 cursor-not-allowed' : 'text-slate-700'}`} /></td>}
+                                    {showCostColumns && <td className="px-3 py-0.5 border-r border-slate-100 text-right bg-slate-100"><span className="font-mono font-bold text-slate-700 block">${getDisplayPrice(row.unitLandedCost || 0)}</span><span className="text-[10px] text-slate-400 block">Total: ${(row.totalLandedCost || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></td>}
+                                    {showSalesColumns && <td className="px-3 py-0.5 border-r border-slate-100 bg-emerald-50/20">{isPriceList ? <div className="w-full text-xs font-bold text-slate-700 text-center py-1">{row.deliveryMethod || 'EXW'}</div> : <select className="w-full bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer" value={row.deliveryMethod || 'EXW'} onChange={(e) => handleChange(row.rowId, 'deliveryMethod', e.target.value)}><option value="EXW">EXW</option><option value="FCA">FCA</option><option value="FAS">FAS</option><option value="FOB">FOB</option><option value="CFR">CFR</option><option value="CIF">CIF</option><option value="CPT">CPT</option><option value="CIP">CIP</option><option value="DAP">DAP</option><option value="DPU">DPU</option><option value="DDP">DDP</option></select>}</td>}
+                                    {showMarginColumn && <td className="px-3 py-0.5 border-r border-slate-100 text-right bg-emerald-50/20">{readOnly ? <span className="font-bold text-emerald-600">{row.marginPercent}</span> : <input type="number" min={isPriceList ? 5 : undefined} className={`w-full text-right font-bold bg-transparent border-b border-transparent hover:border-emerald-300 focus:border-emerald-500 focus:bg-white outline-none ${isPriceList && Number(row.marginPercent) > 0 && Number(row.marginPercent) < 5 ? 'text-red-500' : 'text-emerald-600'}`} value={row.marginPercent} onChange={(e) => handleChange(row.rowId, 'marginPercent', e.target.value)} placeholder="5" />}</td>}
+                                    {showSalesColumns && (() => { const priceLb = row.recommendedSalesPrice || 0; const priceKg = priceLb * KG_TO_LBS; const priceMT = priceLb * 2204.62; return <td className="px-3 py-1 border-r border-slate-100 text-right bg-emerald-100/30"><span className="font-mono text-xs text-emerald-700 block">${priceLb ? priceLb.toFixed(4) : ''}/lbs</span>{priceLb > 0 && <><span className="font-mono text-xs text-emerald-700 block">${priceKg.toFixed(4)}/kg</span><span className="font-mono text-xs text-emerald-700 block">${priceMT.toFixed(2)}/MT</span></>}{!isPriceList && row.recommendedSalesPrice && row.quantity ? <span className="text-[10px] text-emerald-600/70 block">Profit: ${((row.recommendedSalesPrice - (row.unitLandedCost || 0)) * row.quantity).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> : null}</td>; })()}
+                                    <td className="px-3 py-0.5 text-center">
                                         <div className="flex justify-center gap-1.5">
                                             {!row.isNew && <button onClick={() => handleOpenResume(row)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded transition-colors" title="View Sales Resume"><Eye size={16} /></button>}
 
-                                            {/* TDS View Action - Always visible but pale and disabled if no TDS */}
+                                            {/* TDS View Action - Always active (auto-generates if no uploaded TDS) */}
                                             {!row.isNew && (
                                                 <button
                                                     onClick={() => handleOpenTDS(row)}
-                                                    disabled={!hasTds}
-                                                    className={`p-1.5 rounded transition-colors ${hasTds ? 'text-indigo-500 hover:bg-indigo-50' : 'text-slate-300 cursor-not-allowed opacity-50'}`}
-                                                    title={hasTds ? "View Product TDS" : "No TDS Available"}
+                                                    className="p-1.5 rounded transition-colors text-indigo-500 hover:bg-indigo-50"
+                                                    title="View Product TDS"
                                                 >
                                                     <FileText size={16} />
                                                 </button>
                                             )}
 
-                                            {/* Edit Row Action */}
-                                            <button
+                                            {/* Sample Request Action */}
+                                            {!row.isNew && (
+                                                <button
+                                                    onClick={async () => {
+                                                        setSampleModal({ productName: row.productName, row });
+                                                        setSampleForm({ customerName: '', quantity: '', notes: '', status: 'PENDING' });
+                                                        // Fetch customers for this company (scoped)
+                                                        const cl = getSupabaseClient();
+                                                        if (cl) {
+                                                            let query = cl.from('customers').select('name').eq('companyId', currentCompanyId).order('name');
+                                                            if (currentUser?.role === 'Sales') {
+                                                                query = query.eq('sales_person_id', currentUser.id);
+                                                            }
+                                                            const { data } = await query;
+                                                            setSampleCustomers(data?.map((c: any) => c.name) || []);
+                                                        }
+                                                    }}
+                                                    className="p-1.5 rounded transition-colors text-teal-500 hover:bg-teal-50"
+                                                    title="Request Sample"
+                                                >
+                                                    <FlaskConical size={16} />
+                                                </button>
+                                            )}
+
+                                            {/* Edit Row Action - hidden in readOnly */}
+                                            {!readOnly && <button
                                                 onClick={() => setEditRowModal(row)}
                                                 className="p-1.5 text-amber-500 hover:bg-amber-50 rounded transition-colors"
                                                 title="Edit Row"
                                             >
                                                 <Edit2 size={16} />
-                                            </button>
+                                            </button>}
 
-                                            <button onClick={() => handleSave(row)} disabled={!row.isDirty} className={`p-1.5 rounded transition-colors ${row.isDirty ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-300'}`} title="Save Row"><Save size={16} /></button>
-                                            <button onClick={() => handleDeleteRow(row.rowId, row.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete Row"><Trash2 size={16} /></button>
+                                            {!readOnly && <button onClick={() => handleSave(row)} disabled={!row.isDirty} className={`p-1.5 rounded transition-colors ${row.isDirty ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-300'}`} title="Save Row"><Save size={16} /></button>}
+                                            {!readOnly && <button onClick={() => handleDeleteRow(row.rowId, row.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete Row"><Trash2 size={16} /></button>}
                                         </div>
                                     </td>
                                 </tr>
@@ -1144,6 +1487,106 @@ Atenciosamente,`.trim();
                             )}
                         </div>
                         <div className="p-3 border-t border-slate-200 bg-slate-50 flex justify-end shrink-0"><button onClick={() => setViewingTds(null)} className="px-6 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-100 transition-all">Close Viewer</button></div>
+                    </div>
+                </div>
+            )}
+
+            {/* Sample Request Modal */}
+            {sampleModal && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-300">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-300">
+                        <div className="p-5 border-b border-slate-200 bg-gradient-to-r from-teal-50 to-slate-50">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-teal-600 rounded-lg text-white"><FlaskConical size={20} /></div>
+                                <div>
+                                    <h3 className="font-bold text-slate-800">Request Sample</h3>
+                                    <p className="text-xs text-slate-500">{sampleModal.productName}</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Customer</label>
+                                <select
+                                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none bg-white"
+                                    value={sampleForm.customerName}
+                                    onChange={e => setSampleForm(prev => ({ ...prev, customerName: e.target.value }))}
+                                >
+                                    <option value="">Select Customer...</option>
+                                    {sampleCustomers.map(name => <option key={name} value={name}>{name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Status</label>
+                                <select
+                                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none bg-white"
+                                    value={sampleForm.status}
+                                    onChange={e => setSampleForm(prev => ({ ...prev, status: e.target.value }))}
+                                >
+                                    <option value="PENDING">PENDING</option>
+                                    <option value="SENT">SENT</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity</label>
+                                <input
+                                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
+                                    placeholder="e.g., 5 kg, 10 lbs"
+                                    value={sampleForm.quantity}
+                                    onChange={e => setSampleForm(prev => ({ ...prev, quantity: e.target.value }))}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Notes</label>
+                                <textarea
+                                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none resize-none"
+                                    rows={3}
+                                    placeholder="Any special instructions..."
+                                    value={sampleForm.notes}
+                                    onChange={e => setSampleForm(prev => ({ ...prev, notes: e.target.value }))}
+                                />
+                            </div>
+                        </div>
+                        <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
+                            <button
+                                onClick={() => setSampleModal(null)}
+                                className="px-5 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-100 transition-all"
+                            >Cancel</button>
+                            <button
+                                onClick={async () => {
+                                    if (!sampleForm.customerName.trim()) {
+                                        showNotification('Please enter a customer name.', 'error');
+                                        return;
+                                    }
+                                    setSampleSubmitting(true);
+                                    try {
+                                        const client = getSupabaseClient();
+                                        if (!client) throw new Error('No DB connection');
+                                        await client.from('sample_requests').insert({
+                                            companyId: currentCompanyId,
+                                            productName: sampleModal.productName,
+                                            requestedBy: availableCompanies.find(c => c.id === currentCompanyId)?.name || 'Unknown',
+                                            customerName: sampleForm.customerName.trim(),
+                                            quantity: sampleForm.quantity.trim() || null,
+                                            notes: sampleForm.notes.trim() || null,
+                                            status: sampleForm.status,
+                                        });
+                                        showNotification(`Sample request submitted for ${sampleModal.productName}!`, 'success');
+                                        setSampleModal(null);
+                                    } catch (err) {
+                                        console.error('Sample request error:', err);
+                                        showNotification('Failed to submit sample request.', 'error');
+                                    } finally {
+                                        setSampleSubmitting(false);
+                                    }
+                                }}
+                                disabled={sampleSubmitting}
+                                className="px-5 py-2 bg-teal-600 text-white rounded-lg text-sm font-bold hover:bg-teal-700 transition-all shadow-sm flex items-center gap-2 disabled:opacity-50"
+                            >
+                                {sampleSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                                {sampleSubmitting ? 'Submitting...' : 'Submit Request'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -1388,7 +1831,7 @@ Atenciosamente,`.trim();
                                     <Edit2 size={20} />
                                 </div>
                                 <div>
-                                    <h2 className="text-lg font-bold text-slate-800">Edit Calculation Row</h2>
+                                    <h2 className="text-lg font-bold text-slate-800">{isPriceList ? 'Edit Price List Row' : 'Edit Calculation Row'}</h2>
                                     <p className="text-sm text-slate-500">{editRowModal.calculationNumber} - {editRowModal.productName}</p>
                                 </div>
                             </div>
@@ -1396,156 +1839,277 @@ Atenciosamente,`.trim();
 
                         {/* Form */}
                         <div className="flex-1 overflow-auto p-4 space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product Name</label>
-                                    <input
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.productName}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, productName: e.target.value } : null)}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Type</label>
-                                    <select
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.type}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, type: e.target.value as 'IMPORT' | 'EXPORT' | 'LOCAL' } : null)}
-                                    >
-                                        <option value="IMPORT">IMPORT</option>
-                                        <option value="EXPORT">EXPORT</option>
-                                        <option value="LOCAL">LOCAL</option>
-                                    </select>
-                                </div>
-                            </div>
+                            {isPriceList ? (
+                                /* Price List Edit Mode - only price list fields */
+                                <>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product Name</label>
+                                            <input
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.productName}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, productName: e.target.value } : null)}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">HS Code</label>
+                                            <input
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none font-mono"
+                                                value={editRowModal.hsCode || ''}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, hsCode: e.target.value } : null)}
+                                                placeholder="0000.00.00"
+                                            />
+                                        </div>
+                                    </div>
 
-                            <div className="grid grid-cols-3 gap-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pickup Location</label>
-                                    <input
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.pickupLocation || ''}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, pickupLocation: e.target.value } : null)}
-                                        placeholder="City, ZIP"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">POA (Origin)</label>
-                                    <input
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.origin}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, origin: e.target.value } : null)}
-                                        placeholder="Port of Origin"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">POD (Destination)</label>
-                                    <input
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.destination}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, destination: e.target.value } : null)}
-                                        placeholder="Port of Destination"
-                                    />
-                                </div>
-                            </div>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Sale Term</label>
+                                            <select
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.deliveryMethod || 'EXW'}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, deliveryMethod: e.target.value as GridRow['deliveryMethod'] } : null)}
+                                            >
+                                                <option value="EXW">EXW</option>
+                                                <option value="FCA">FCA</option>
+                                                <option value="FAS">FAS</option>
+                                                <option value="FOB">FOB</option>
+                                                <option value="CFR">CFR</option>
+                                                <option value="CIF">CIF</option>
+                                                <option value="CPT">CPT</option>
+                                                <option value="CIP">CIP</option>
+                                                <option value="DAP">DAP</option>
+                                                <option value="DPU">DPU</option>
+                                                <option value="DDP">DDP</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Margin %</label>
+                                            <input
+                                                type="number"
+                                                min={5}
+                                                step="0.1"
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-emerald-600"
+                                                value={editRowModal.marginPercent || ''}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, marginPercent: parseFloat(e.target.value) || 0 } : null)}
+                                                placeholder="5"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Sell Price ($/lb)</label>
+                                            <div className="px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-sm font-mono font-bold text-emerald-700">
+                                                ${(editRowModal.recommendedSalesPrice || 0).toFixed(4)}
+                                            </div>
+                                        </div>
+                                    </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity (LBS)</label>
-                                    <input
-                                        type="number"
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.quantity || ''}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, quantity: parseFloat(e.target.value) || 0 } : null)}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Base Cost ($/lb)</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.fobPrice || ''}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, fobPrice: parseFloat(e.target.value) || 0 } : null)}
-                                    />
-                                </div>
-                            </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">POA (Origin)</label>
+                                            <input
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.origin}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, origin: e.target.value } : null)}
+                                                placeholder="Port of Origin"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">POD (Destination)</label>
+                                            {effectivePorts.length > 0 ? (
+                                                <select
+                                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none cursor-pointer"
+                                                    value={editRowModal.destination || ''}
+                                                    onChange={(e) => setEditRowModal(prev => prev ? { ...prev, destination: e.target.value } : null)}
+                                                >
+                                                    <option value="">Select POD</option>
+                                                    {effectivePorts.sort((a, b) => a.name.localeCompare(b.name)).map(port => (
+                                                        <option key={port.id} value={`${port.name} (${port.code})`}>
+                                                            {port.name} ({port.code})
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <input
+                                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                    value={editRowModal.destination}
+                                                    onChange={(e) => setEditRowModal(prev => prev ? { ...prev, destination: e.target.value } : null)}
+                                                    placeholder="Port of Destination"
+                                                />
+                                            )}
+                                        </div>
+                                    </div>
 
-                            <div className="grid grid-cols-4 gap-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Freight</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.freightCost || ''}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, freightCost: parseFloat(e.target.value) || 0 } : null)}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Insurance</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.insuranceCost || ''}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, insuranceCost: parseFloat(e.target.value) || 0 } : null)}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Clearance</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.portClearanceCost || ''}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, portClearanceCost: parseFloat(e.target.value) || 0 } : null)}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Duty %</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.dutyPercent || ''}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, dutyPercent: parseFloat(e.target.value) || 0 } : null)}
-                                    />
-                                </div>
-                            </div>
+                                    {/* Read-only cost summary */}
+                                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                                        <p className="text-xs font-bold text-slate-500 uppercase mb-2">Cost Summary (read-only)</p>
+                                        <div className="grid grid-cols-4 gap-3 text-xs">
+                                            <div><span className="text-slate-400">Base:</span> <span className="font-mono font-bold">${(editRowModal.fobPrice || 0).toFixed(4)}</span></div>
+                                            <div><span className="text-slate-400">Freight:</span> <span className="font-mono font-bold">${(editRowModal.freightCost || 0).toFixed(2)}</span></div>
+                                            <div><span className="text-slate-400">Landed:</span> <span className="font-mono font-bold">${(editRowModal.unitLandedCost || 0).toFixed(4)}</span></div>
+                                            <div><span className="text-slate-400">Qty:</span> <span className="font-mono font-bold">{(editRowModal.quantity || 0).toLocaleString()} lbs</span></div>
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                /* Standard Cost Calculation Edit Mode */
+                                <>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product Name</label>
+                                            <input
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.productName}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, productName: e.target.value } : null)}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Type</label>
+                                            <select
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.type}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, type: e.target.value as 'IMPORT' | 'EXPORT' | 'LOCAL' } : null)}
+                                            >
+                                                <option value="IMPORT">IMPORT</option>
+                                                <option value="EXPORT">EXPORT</option>
+                                                <option value="LOCAL">LOCAL</option>
+                                            </select>
+                                        </div>
+                                    </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Sale Term</label>
-                                    <select
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.deliveryMethod || 'EXW'}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, deliveryMethod: e.target.value } : null)}
-                                    >
-                                        <option value="EXW">EXW</option>
-                                        <option value="FCA">FCA</option>
-                                        <option value="FAS">FAS</option>
-                                        <option value="FOB">FOB</option>
-                                        <option value="CFR">CFR</option>
-                                        <option value="CIF">CIF</option>
-                                        <option value="CPT">CPT</option>
-                                        <option value="CIP">CIP</option>
-                                        <option value="DAP">DAP</option>
-                                        <option value="DPU">DPU</option>
-                                        <option value="DDP">DDP</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Margin %</label>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
-                                        value={editRowModal.marginPercent || ''}
-                                        onChange={(e) => setEditRowModal(prev => prev ? { ...prev, marginPercent: parseFloat(e.target.value) || 0 } : null)}
-                                    />
-                                </div>
-                            </div>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pick Up</label>
+                                            <input
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.pickupLocation || ''}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, pickupLocation: e.target.value } : null)}
+                                                placeholder="City, ST"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">POA (Origin)</label>
+                                            <input
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.origin}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, origin: e.target.value } : null)}
+                                                placeholder="Port of Origin"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">POD (Destination)</label>
+                                            {effectivePorts.length > 0 ? (
+                                                <select
+                                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none cursor-pointer"
+                                                    value={editRowModal.destination || ''}
+                                                    onChange={(e) => setEditRowModal(prev => prev ? { ...prev, destination: e.target.value } : null)}
+                                                >
+                                                    <option value="">Select POD</option>
+                                                    {effectivePorts.sort((a, b) => a.name.localeCompare(b.name)).map(port => (
+                                                        <option key={port.id} value={`${port.name} (${port.code})`}>
+                                                            {port.name} ({port.code})
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <input
+                                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                    value={editRowModal.destination}
+                                                    onChange={(e) => setEditRowModal(prev => prev ? { ...prev, destination: e.target.value } : null)}
+                                                    placeholder="Port of Destination"
+                                                />
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Quantity (LBS)</label>
+                                            <input
+                                                type="number"
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.quantity || ''}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, quantity: parseFloat(e.target.value) || 0 } : null)}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Base Cost ($/lb)</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.fobPrice || ''}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, fobPrice: parseFloat(e.target.value) || 0 } : null)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-4 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Freight</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.freightCost || ''}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, freightCost: parseFloat(e.target.value) || 0 } : null)}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Insurance</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.insuranceCost || ''}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, insuranceCost: parseFloat(e.target.value) || 0 } : null)}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Clearance</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.portClearanceCost || ''}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, portClearanceCost: parseFloat(e.target.value) || 0 } : null)}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Duty %</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.dutyPercent || ''}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, dutyPercent: parseFloat(e.target.value) || 0 } : null)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Sale Term</label>
+                                            <select
+                                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+                                                value={editRowModal.deliveryMethod || 'EXW'}
+                                                onChange={(e) => setEditRowModal(prev => prev ? { ...prev, deliveryMethod: e.target.value as GridRow['deliveryMethod'] } : null)}
+                                            >
+                                                <option value="EXW">EXW</option>
+                                                <option value="FCA">FCA</option>
+                                                <option value="FAS">FAS</option>
+                                                <option value="FOB">FOB</option>
+                                                <option value="CFR">CFR</option>
+                                                <option value="CIF">CIF</option>
+                                                <option value="CPT">CPT</option>
+                                                <option value="CIP">CIP</option>
+                                                <option value="DAP">DAP</option>
+                                                <option value="DPU">DPU</option>
+                                                <option value="DDP">DDP</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
                         </div>
 
                         {/* Footer */}

@@ -4,16 +4,17 @@ import {
     FileSpreadsheet, FileText, X, CheckCircle2, AlertCircle, Loader2,
     Sparkles, Download, Upload, Edit3, Mail, Send, ChevronRight,
     ChevronLeft, Trash2, Plus, DollarSign, Percent, Package, Users,
-    Save, Eye, Building
+    Save, Eye, Building, ArrowRight, ShoppingCart, FileCheck
 } from 'lucide-react';
 import { Supplier, Customer, SupplierOffer, SupplierQuoteItem } from '../types';
-import { analyzeDocument, generateSalesEmail } from '../services/geminiService';
+import { analyzeDocument } from '../services/geminiService';
 
 interface ProposalEngineProps {
     suppliers: Supplier[];
     customers: Customer[];
     onAddSupplierOffer: (offer: Omit<SupplierOffer, 'id'>) => Promise<SupplierOffer | null>;
     currentCompanyId: string;
+    onGoToSource?: () => void;
 }
 
 interface ExtractedItem {
@@ -22,14 +23,11 @@ interface ExtractedItem {
     grade: string;
     quantity: number;
     unitPrice: number;
-    costTotal: number;
-    markup: number;
-    sellPrice: number;
-    sellTotal: number;
+    total: number;
     selected: boolean;
 }
 
-type WizardStep = 'UPLOAD' | 'EDIT' | 'EMAIL';
+type WizardStep = 'UPLOAD' | 'EDIT' | 'SAVED';
 type UploadMode = 'GENERIC' | 'SGT';
 
 // SGT ENTERPRISES specific color mapping
@@ -110,7 +108,8 @@ const ProposalEngine: React.FC<ProposalEngineProps> = ({
     suppliers,
     customers,
     onAddSupplierOffer,
-    currentCompanyId
+    currentCompanyId,
+    onGoToSource
 }) => {
     // Wizard State
     const [currentStep, setCurrentStep] = useState<WizardStep>('UPLOAD');
@@ -128,15 +127,15 @@ const ProposalEngine: React.FC<ProposalEngineProps> = ({
     // Extracted Data State
     const [extractedItems, setExtractedItems] = useState<ExtractedItem[]>([]);
     const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
-    const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
     const [quoteNotes, setQuoteNotes] = useState<string>('');
+    const [currency, setCurrency] = useState<string>('USD');
+    const [incoterm, setIncoterm] = useState<string>('FOB');
+    const [paymentTerms, setPaymentTerms] = useState<string>('Net 30');
 
-    // Email State
-    const [emailSubject, setEmailSubject] = useState<string>('');
-    const [emailBody, setEmailBody] = useState<string>('');
-    const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
+    // Save State
     const [isSaving, setIsSaving] = useState(false);
     const [savedOfferId, setSavedOfferId] = useState<string | null>(null);
+    const [savedOfferNumber, setSavedOfferNumber] = useState<string>('');
 
     // --- File Processing ---
     const handleFileSelect = async (file: File, mode: UploadMode = 'GENERIC') => {
@@ -151,7 +150,6 @@ const ProposalEngine: React.FC<ProposalEngineProps> = ({
             if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
                 if (mode === 'SGT') {
                     items = await processSGTQuote(file);
-                    // Auto-select SGT supplier
                     const sgtSupplier = suppliers.find(s => s.name.toLowerCase().includes('sgt'));
                     if (sgtSupplier) setSelectedSupplierId(sgtSupplier.id);
                 } else {
@@ -187,7 +185,6 @@ const ProposalEngine: React.FC<ProposalEngineProps> = ({
             const sheet = workbook.Sheets[sheetName];
             const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-            // Skip first 4 rows (header)
             for (let i = 4; i < rows.length; i++) {
                 const row = rows[i];
                 if (!row || row.length < 4) continue;
@@ -218,13 +215,10 @@ const ProposalEngine: React.FC<ProposalEngineProps> = ({
         return entries.map((entry, idx) => ({
             id: `sgt-${Date.now()}-${idx}`,
             productName: entry.translated,
-            grade: entry.color, // Original color as grade
-            quantity: entry.weight, // Weight in lbs as quantity
-            unitPrice: 0, // User to fill in
-            costTotal: 0,
-            markup: 15,
-            sellPrice: 0,
-            sellTotal: 0,
+            grade: entry.color,
+            quantity: entry.weight,
+            unitPrice: 0,
+            total: 0,
             selected: true
         }));
     };
@@ -238,7 +232,6 @@ const ProposalEngine: React.FC<ProposalEngineProps> = ({
             const sheet = workbook.Sheets[sheetName];
             const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-            // Try to find header row (look for common patterns)
             let headerRowIndex = -1;
             for (let i = 0; i < Math.min(10, rows.length); i++) {
                 const row = rows[i];
@@ -250,18 +243,15 @@ const ProposalEngine: React.FC<ProposalEngineProps> = ({
                 }
             }
 
-            // Parse data rows
-            const startRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 4; // Default skip 4 rows
+            const startRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 4;
 
             for (let i = startRow; i < rows.length; i++) {
                 const row = rows[i];
                 if (!row || row.length < 3) continue;
 
-                // Try to extract: ProductName, Quantity, Price
                 const productName = String(row[0] || row[1] || '').trim();
                 if (!productName || productName.length < 2) continue;
 
-                // Find numeric values for quantity and price
                 let quantity = 0;
                 let unitPrice = 0;
 
@@ -280,10 +270,7 @@ const ProposalEngine: React.FC<ProposalEngineProps> = ({
                         grade: '',
                         quantity,
                         unitPrice: unitPrice || 0,
-                        costTotal: quantity * unitPrice,
-                        markup: 15, // Default 15% markup
-                        sellPrice: unitPrice * 1.15,
-                        sellTotal: quantity * unitPrice * 1.15,
+                        total: quantity * unitPrice,
                         selected: true
                     });
                 }
@@ -294,7 +281,6 @@ const ProposalEngine: React.FC<ProposalEngineProps> = ({
     };
 
     const processPDF = async (file: File): Promise<ExtractedItem[]> => {
-        // Convert to base64
         const buffer = await file.arrayBuffer();
         const base64 = btoa(
             new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
@@ -315,9 +301,7 @@ Return ONLY the JSON array, no other text.
 
         const response = await analyzeDocument(base64, 'application/pdf', prompt);
 
-        // Parse AI response
         try {
-            // Clean response - find JSON array
             const jsonMatch = response.match(/\[[\s\S]*\]/);
             if (!jsonMatch) throw new Error('No items found in document');
 
@@ -329,10 +313,7 @@ Return ONLY the JSON array, no other text.
                 grade: item.grade || '',
                 quantity: item.quantity || 0,
                 unitPrice: item.unitPrice || 0,
-                costTotal: (item.quantity || 0) * (item.unitPrice || 0),
-                markup: 15,
-                sellPrice: (item.unitPrice || 0) * 1.15,
-                sellTotal: (item.quantity || 0) * (item.unitPrice || 0) * 1.15,
+                total: (item.quantity || 0) * (item.unitPrice || 0),
                 selected: true
             }));
         } catch (e) {
@@ -364,11 +345,8 @@ Return ONLY the JSON array, no other text.
 
             const updated = { ...item, [field]: value };
 
-            // Recalculate totals when relevant fields change
-            if (['quantity', 'unitPrice', 'markup'].includes(field)) {
-                updated.costTotal = updated.quantity * updated.unitPrice;
-                updated.sellPrice = updated.unitPrice * (1 + updated.markup / 100);
-                updated.sellTotal = updated.quantity * updated.sellPrice;
+            if (['quantity', 'unitPrice'].includes(field)) {
+                updated.total = updated.quantity * updated.unitPrice;
             }
 
             return updated;
@@ -386,29 +364,14 @@ Return ONLY the JSON array, no other text.
             grade: '',
             quantity: 0,
             unitPrice: 0,
-            costTotal: 0,
-            markup: 15,
-            sellPrice: 0,
-            sellTotal: 0,
+            total: 0,
             selected: true
         }]);
     };
 
-    const applyGlobalMarkup = (markup: number) => {
-        setExtractedItems(prev => prev.map(item => ({
-            ...item,
-            markup,
-            sellPrice: item.unitPrice * (1 + markup / 100),
-            sellTotal: item.quantity * item.unitPrice * (1 + markup / 100)
-        })));
-    };
-
     // --- Calculations ---
     const selectedItems = extractedItems.filter(i => i.selected);
-    const totalCost = selectedItems.reduce((sum, i) => sum + i.costTotal, 0);
-    const totalSell = selectedItems.reduce((sum, i) => sum + i.sellTotal, 0);
-    const totalProfit = totalSell - totalCost;
-    const avgMargin = totalCost > 0 ? ((totalSell - totalCost) / totalCost) * 100 : 0;
+    const totalAmount = selectedItems.reduce((sum, i) => sum + i.total, 0);
 
     // --- Save to Supplier Offers ---
     const saveToSupplierOffers = async () => {
@@ -418,12 +381,14 @@ Return ONLY the JSON array, no other text.
         }
 
         setIsSaving(true);
+        setProcessingError(null);
 
         try {
             const supplier = suppliers.find(s => s.id === selectedSupplierId);
+            const offerNumber = `SQ-${Date.now()}`;
 
             const offer: Omit<SupplierOffer, 'id'> = {
-                offerNumber: `SQ-${Date.now()}`,
+                offerNumber,
                 companyId: currentCompanyId,
                 supplierId: selectedSupplierId,
                 supplierName: supplier?.name || 'Unknown',
@@ -431,13 +396,13 @@ Return ONLY the JSON array, no other text.
                     productName: item.productName,
                     quantity: item.quantity,
                     unitPrice: item.unitPrice,
-                    total: item.costTotal
+                    total: item.total
                 })),
-                totalAmount: totalCost,
-                currency: 'USD',
-                incoterm: 'FOB',
+                totalAmount,
+                currency: currency as SupplierOffer['currency'],
+                incoterm: incoterm as SupplierOffer['incoterm'],
                 validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                paymentTerms: 'Net 30',
+                paymentTerms,
                 status: 'Received',
                 notes: quoteNotes
             };
@@ -445,49 +410,13 @@ Return ONLY the JSON array, no other text.
             const saved = await onAddSupplierOffer(offer);
             if (saved) {
                 setSavedOfferId(saved.id);
+                setSavedOfferNumber(offerNumber);
+                setCurrentStep('SAVED');
             }
         } catch (err: any) {
             setProcessingError('Failed to save supplier offer');
         } finally {
             setIsSaving(false);
-        }
-    };
-
-    // --- Email Generation ---
-    const generateEmail = async () => {
-        if (!selectedCustomerId) {
-            setProcessingError('Please select a customer');
-            return;
-        }
-
-        setIsGeneratingEmail(true);
-        setProcessingError(null);
-
-        try {
-            const customer = customers.find(c => c.id === selectedCustomerId);
-            const customerName = customer?.name || 'Valued Customer';
-
-            // Create quote items for email
-            const quoteItems = selectedItems.map(item => ({
-                productId: item.id,
-                productName: item.productName,
-                grade: item.grade || 'Standard',
-                quantityLBS: item.quantity,
-                unitPriceUSD: item.sellPrice,
-                totalUSD: item.sellTotal
-            }));
-
-            const email = await generateSalesEmail(customerName, quoteItems, totalSell);
-
-            // Parse email response
-            setEmailSubject(`Quote for ${customerName} - ${selectedItems.length} Products`);
-            setEmailBody(email);
-            setCurrentStep('EMAIL');
-
-        } catch (err: any) {
-            setProcessingError('Failed to generate email. Please try again.');
-        } finally {
-            setIsGeneratingEmail(false);
         }
     };
 
@@ -497,27 +426,49 @@ Return ONLY the JSON array, no other text.
         setUploadedFile(null);
         setExtractedItems([]);
         setSelectedSupplierId('');
-        setSelectedCustomerId('');
         setQuoteNotes('');
-        setEmailSubject('');
-        setEmailBody('');
+        setCurrency('USD');
+        setIncoterm('FOB');
+        setPaymentTerms('Net 30');
         setProcessingError(null);
         setSavedOfferId(null);
+        setSavedOfferNumber('');
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     // --- Render Step Indicator ---
+    const handleStepIndicatorClick = (targetStep: WizardStep) => {
+        if (targetStep === 'EDIT' && currentStep === 'UPLOAD') {
+            // Manual entry: go to Edit with a blank item
+            setExtractedItems([{
+                id: `item-${Date.now()}`,
+                productName: '',
+                grade: '',
+                quantity: 0,
+                unitPrice: 0,
+                total: 0,
+                selected: true
+            }]);
+            setCurrentStep('EDIT');
+        } else if (targetStep === 'UPLOAD') {
+            resetWizard();
+        }
+    };
+
     const renderStepIndicator = () => (
         <div className="flex items-center justify-center gap-2 mb-8">
             {[
-                { step: 'UPLOAD' as WizardStep, label: 'Upload', icon: Upload },
-                { step: 'EDIT' as WizardStep, label: 'Edit & Price', icon: Edit3 },
-                { step: 'EMAIL' as WizardStep, label: 'Generate Email', icon: Mail }
+                { step: 'UPLOAD' as WizardStep, label: 'Upload Offer', icon: Upload },
+                { step: 'EDIT' as WizardStep, label: 'Edit', icon: Edit3 },
+                { step: 'SAVED' as WizardStep, label: 'Save', icon: Save }
             ].map((s, idx) => {
+                const stepOrder = ['UPLOAD', 'EDIT', 'SAVED'];
+                const currentIdx = stepOrder.indexOf(currentStep);
+                const sIdx = stepOrder.indexOf(s.step);
                 const isActive = currentStep === s.step;
-                const isPast = (currentStep === 'EDIT' && s.step === 'UPLOAD') ||
-                    (currentStep === 'EMAIL' && s.step !== 'EMAIL');
+                const isPast = sIdx < currentIdx;
                 const Icon = s.icon;
+                const canClick = (s.step === 'EDIT' && currentStep === 'UPLOAD') || (s.step === 'UPLOAD' && currentStep !== 'UPLOAD');
 
                 return (
                     <React.Fragment key={s.step}>
@@ -525,11 +476,14 @@ Return ONLY the JSON array, no other text.
                             <div className={`w-12 h-0.5 ${isPast ? 'bg-emerald-500' : 'bg-slate-200'}`} />
                         )}
                         <div
-                            className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all ${isActive
+                            onClick={() => canClick && handleStepIndicatorClick(s.step)}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all ${canClick ? 'cursor-pointer' : ''} ${isActive
                                 ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
                                 : isPast
-                                    ? 'bg-emerald-100 text-emerald-700'
-                                    : 'bg-slate-100 text-slate-400'
+                                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                    : canClick
+                                        ? 'bg-slate-100 text-slate-500 hover:bg-indigo-100 hover:text-indigo-600'
+                                        : 'bg-slate-100 text-slate-400'
                                 }`}
                         >
                             <Icon size={18} />
@@ -545,11 +499,11 @@ Return ONLY the JSON array, no other text.
     const renderUploadStep = () => (
         <div className="space-y-6">
             <div className="text-center mb-6">
-                <h3 className="text-xl font-bold text-slate-800">Upload Supplier Quote</h3>
-                <p className="text-slate-500 text-sm mt-1">Upload a PDF or Excel file containing supplier pricing</p>
+                <h3 className="text-xl font-bold text-slate-800">Upload Supplier Offer</h3>
+                <p className="text-slate-500 text-sm mt-1">Upload a PDF or Excel file, or click <strong>Edit</strong> above for manual entry</p>
             </div>
 
-            {/* Two Upload Options */}
+            {/* Upload Options */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Generic Upload */}
                 <div
@@ -585,7 +539,7 @@ Return ONLY the JSON array, no other text.
                                     <FileSpreadsheet size={32} className="text-green-600" />
                                 </div>
                             </div>
-                            <p className="text-slate-700 font-bold">Generic Quote Upload</p>
+                            <p className="text-slate-700 font-bold">Generic Offer Upload</p>
                             <p className="text-xs text-slate-400">
                                 PDF or Excel with any format
                             </p>
@@ -662,7 +616,7 @@ Return ONLY the JSON array, no other text.
     // --- Step 2: Edit ---
     const renderEditStep = () => (
         <div className="space-y-6">
-            {/* Header with supplier selection */}
+            {/* Header with supplier selection and offer details */}
             <div className="flex flex-wrap gap-4 items-end justify-between">
                 <div className="flex-1 min-w-[200px]">
                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
@@ -680,47 +634,51 @@ Return ONLY the JSON array, no other text.
                     </select>
                 </div>
 
-                <div className="flex-1 min-w-[200px]">
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                        <Users size={12} className="inline mr-1" /> Customer
-                    </label>
+                <div className="min-w-[120px]">
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Currency</label>
                     <select
-                        value={selectedCustomerId}
-                        onChange={(e) => setSelectedCustomerId(e.target.value)}
+                        value={currency}
+                        onChange={(e) => setCurrency(e.target.value)}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                     >
-                        <option value="">Select Customer...</option>
-                        {customers.map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
+                        <option value="USD">USD</option>
+                        <option value="EUR">EUR</option>
+                        <option value="BRL">BRL</option>
+                        <option value="GTQ">GTQ</option>
+                    </select>
+                </div>
+
+                <div className="min-w-[120px]">
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Incoterm</label>
+                    <select
+                        value={incoterm}
+                        onChange={(e) => setIncoterm(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    >
+                        <option value="FOB">FOB</option>
+                        <option value="CIF">CIF</option>
+                        <option value="CFR">CFR</option>
+                        <option value="EXW">EXW</option>
+                        <option value="DDP">DDP</option>
+                    </select>
+                </div>
+
+                <div className="min-w-[140px]">
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Payment Terms</label>
+                    <select
+                        value={paymentTerms}
+                        onChange={(e) => setPaymentTerms(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    >
+                        <option value="Net 30">Net 30</option>
+                        <option value="Net 60">Net 60</option>
+                        <option value="Net 90">Net 90</option>
+                        <option value="Cash in Advance">Cash in Advance</option>
+                        <option value="Letter of Credit">Letter of Credit</option>
                     </select>
                 </div>
 
                 <div className="flex gap-2">
-                    <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-lg">
-                        <Percent size={14} className="text-slate-500" />
-                        <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            placeholder="Global %"
-                            className="w-16 bg-transparent text-sm font-medium focus:outline-none"
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                    applyGlobalMarkup(parseFloat((e.target as HTMLInputElement).value) || 0);
-                                }
-                            }}
-                        />
-                        <button
-                            onClick={() => {
-                                const input = document.querySelector('input[placeholder="Global %"]') as HTMLInputElement;
-                                applyGlobalMarkup(parseFloat(input?.value) || 0);
-                            }}
-                            className="text-indigo-600 hover:text-indigo-700 text-xs font-bold"
-                        >
-                            Apply
-                        </button>
-                    </div>
                     <button
                         onClick={addNewItem}
                         className="flex items-center gap-1 px-3 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors text-sm font-medium"
@@ -728,6 +686,18 @@ Return ONLY the JSON array, no other text.
                         <Plus size={16} /> Add Item
                     </button>
                 </div>
+            </div>
+
+            {/* Notes */}
+            <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Notes</label>
+                <input
+                    type="text"
+                    value={quoteNotes}
+                    onChange={(e) => setQuoteNotes(e.target.value)}
+                    placeholder="Optional notes about this offer..."
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
             </div>
 
             {/* Items Table */}
@@ -739,12 +709,9 @@ Return ONLY the JSON array, no other text.
                                 <th className="p-3 text-left font-bold text-slate-600 w-8"></th>
                                 <th className="p-3 text-left font-bold text-slate-600">Product</th>
                                 <th className="p-3 text-left font-bold text-slate-600">Grade</th>
-                                <th className="p-3 text-right font-bold text-slate-600">Qty</th>
-                                <th className="p-3 text-right font-bold text-slate-600">Cost $</th>
-                                <th className="p-3 text-right font-bold text-slate-600">Cost Total</th>
-                                <th className="p-3 text-center font-bold text-indigo-600">Markup %</th>
-                                <th className="p-3 text-right font-bold text-emerald-600">Sell $</th>
-                                <th className="p-3 text-right font-bold text-emerald-600">Sell Total</th>
+                                <th className="p-3 text-right font-bold text-slate-600">Quantity</th>
+                                <th className="p-3 text-right font-bold text-slate-600">Unit Price</th>
+                                <th className="p-3 text-right font-bold text-slate-600">Total</th>
                                 <th className="p-3 w-10"></th>
                             </tr>
                         </thead>
@@ -773,7 +740,7 @@ Return ONLY the JSON array, no other text.
                                             value={item.grade}
                                             onChange={(e) => updateItem(item.id, 'grade', e.target.value)}
                                             placeholder="—"
-                                            className="w-20 bg-transparent text-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-300 rounded px-1"
+                                            className="w-24 bg-transparent text-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-300 rounded px-1"
                                         />
                                     </td>
                                     <td className="p-3">
@@ -781,7 +748,7 @@ Return ONLY the JSON array, no other text.
                                             type="number"
                                             value={item.quantity}
                                             onChange={(e) => updateItem(item.id, 'quantity', parseFloat(e.target.value) || 0)}
-                                            className="w-20 text-right bg-transparent font-mono focus:outline-none focus:ring-1 focus:ring-indigo-300 rounded px-1"
+                                            className="w-24 text-right bg-transparent font-mono focus:outline-none focus:ring-1 focus:ring-indigo-300 rounded px-1"
                                         />
                                     </td>
                                     <td className="p-3">
@@ -790,28 +757,11 @@ Return ONLY the JSON array, no other text.
                                             step="0.01"
                                             value={item.unitPrice}
                                             onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
-                                            className="w-20 text-right bg-transparent font-mono focus:outline-none focus:ring-1 focus:ring-indigo-300 rounded px-1"
+                                            className="w-24 text-right bg-transparent font-mono focus:outline-none focus:ring-1 focus:ring-indigo-300 rounded px-1"
                                         />
                                     </td>
-                                    <td className="p-3 text-right font-mono text-slate-600">
-                                        ${item.costTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </td>
-                                    <td className="p-3">
-                                        <div className="flex items-center justify-center">
-                                            <input
-                                                type="number"
-                                                step="1"
-                                                value={item.markup}
-                                                onChange={(e) => updateItem(item.id, 'markup', parseFloat(e.target.value) || 0)}
-                                                className="w-14 text-center bg-indigo-50 border border-indigo-200 rounded-lg py-1 font-mono text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                                            />
-                                        </div>
-                                    </td>
-                                    <td className="p-3 text-right font-mono font-medium text-emerald-600">
-                                        ${item.sellPrice.toFixed(2)}
-                                    </td>
-                                    <td className="p-3 text-right font-mono font-bold text-emerald-600">
-                                        ${item.sellTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    <td className="p-3 text-right font-mono font-medium text-slate-700">
+                                        ${item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </td>
                                     <td className="p-3">
                                         <button
@@ -828,23 +778,20 @@ Return ONLY the JSON array, no other text.
                 </div>
             </div>
 
-            {/* Summary Cards */}
-            <div className="grid grid-cols-4 gap-4">
+            {/* Summary */}
+            <div className="grid grid-cols-3 gap-4">
                 <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-                    <p className="text-xs text-slate-500 font-bold uppercase">Total Cost</p>
-                    <p className="text-2xl font-bold text-slate-700">${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-                </div>
-                <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
-                    <p className="text-xs text-emerald-600 font-bold uppercase">Total Sell</p>
-                    <p className="text-2xl font-bold text-emerald-700">${totalSell.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                    <p className="text-xs text-slate-500 font-bold uppercase">Selected Items</p>
+                    <p className="text-2xl font-bold text-slate-700">{selectedItems.length}</p>
                 </div>
                 <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-200">
-                    <p className="text-xs text-indigo-600 font-bold uppercase">Total Profit</p>
-                    <p className="text-2xl font-bold text-indigo-700">${totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                    <p className="text-xs text-indigo-600 font-bold uppercase">Total Amount</p>
+                    <p className="text-2xl font-bold text-indigo-700">${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
                 </div>
                 <div className="bg-purple-50 rounded-xl p-4 border border-purple-200">
-                    <p className="text-xs text-purple-600 font-bold uppercase">Avg Margin</p>
-                    <p className="text-2xl font-bold text-purple-700">{avgMargin.toFixed(1)}%</p>
+                    <p className="text-xs text-purple-600 font-bold uppercase">Currency / Terms</p>
+                    <p className="text-lg font-bold text-purple-700">{currency} · {incoterm}</p>
+                    <p className="text-xs text-purple-500">{paymentTerms}</p>
                 </div>
             </div>
 
@@ -859,30 +806,16 @@ Return ONLY the JSON array, no other text.
 
                 <button
                     onClick={saveToSupplierOffers}
-                    disabled={!selectedSupplierId || isSaving}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all ${savedOfferId
-                        ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
-                        : selectedSupplierId
-                            ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                            : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                        }`}
-                >
-                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : savedOfferId ? <CheckCircle2 size={18} /> : <Save size={18} />}
-                    {savedOfferId ? 'Saved to Offers' : 'Save to Supplier Offers'}
-                </button>
-
-                <button
-                    onClick={generateEmail}
-                    disabled={!selectedCustomerId || selectedItems.length === 0 || isGeneratingEmail}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold transition-all ${selectedCustomerId && selectedItems.length > 0
+                    disabled={!selectedSupplierId || isSaving || selectedItems.length === 0}
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold transition-all ${selectedSupplierId && selectedItems.length > 0
                         ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-700 hover:to-purple-700 shadow-md hover:shadow-lg'
                         : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                         }`}
                 >
-                    {isGeneratingEmail ? (
-                        <><Loader2 size={18} className="animate-spin" /> Generating...</>
+                    {isSaving ? (
+                        <><Loader2 size={18} className="animate-spin" /> Saving...</>
                     ) : (
-                        <><Sparkles size={18} /> Generate Proposal Email <ChevronRight size={18} /></>
+                        <><Save size={18} /> Save Supplier Offer <ChevronRight size={18} /></>
                     )}
                 </button>
             </div>
@@ -895,104 +828,107 @@ Return ONLY the JSON array, no other text.
         </div>
     );
 
-    // --- Step 3: Email ---
-    const renderEmailStep = () => (
-        <div className="space-y-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h3 className="text-xl font-bold text-slate-800">Preview & Send Proposal</h3>
-                    <p className="text-slate-500 text-sm mt-1">Review the AI-generated email and send to customer</p>
-                </div>
-                <div className="text-right">
-                    <p className="text-xs text-slate-400">Sending to</p>
-                    <p className="font-bold text-slate-700">{customers.find(c => c.id === selectedCustomerId)?.name}</p>
-                </div>
-            </div>
+    // --- Step 3: Saved ---
+    const renderSavedStep = () => {
+        const supplier = suppliers.find(s => s.id === selectedSupplierId);
 
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                <div className="p-4 border-b border-slate-100 bg-slate-50">
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Subject</label>
-                    <input
-                        type="text"
-                        value={emailSubject}
-                        onChange={(e) => setEmailSubject(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    />
-                </div>
-                <div className="p-4">
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email Body</label>
-                    <textarea
-                        value={emailBody}
-                        onChange={(e) => setEmailBody(e.target.value)}
-                        rows={15}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
-                    />
-                </div>
-            </div>
-
-            {/* Summary reminder */}
-            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <Package size={24} className="text-emerald-600" />
+        return (
+            <div className="space-y-8 py-4">
+                {/* Success Banner */}
+                <div className="text-center space-y-4">
+                    <div className="mx-auto w-20 h-20 bg-gradient-to-br from-emerald-400 to-teal-500 rounded-full flex items-center justify-center shadow-lg shadow-emerald-200">
+                        <CheckCircle2 size={40} className="text-white" />
+                    </div>
                     <div>
-                        <p className="font-bold text-emerald-800">{selectedItems.length} Products</p>
-                        <p className="text-sm text-emerald-600">Total Value: ${totalSell.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                        <h3 className="text-2xl font-bold text-slate-800">Offer Saved Successfully!</h3>
+                        <p className="text-slate-500 mt-1">
+                            Offer <span className="font-mono font-bold text-indigo-600">{savedOfferNumber}</span> from{' '}
+                            <span className="font-bold text-slate-700">{supplier?.name}</span> has been saved
+                        </p>
                     </div>
                 </div>
-                <div className="flex items-center gap-3">
-                    <DollarSign size={24} className="text-emerald-600" />
-                    <div className="text-right">
-                        <p className="font-bold text-emerald-800">${totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })} Profit</p>
-                        <p className="text-sm text-emerald-600">{avgMargin.toFixed(1)}% Margin</p>
+
+                {/* Offer Summary */}
+                <div className="bg-gradient-to-r from-slate-50 to-indigo-50 border border-slate-200 rounded-xl p-6">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                        <div>
+                            <p className="text-xs text-slate-500 font-bold uppercase">Items</p>
+                            <p className="text-xl font-bold text-slate-800">{selectedItems.length}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-500 font-bold uppercase">Total Amount</p>
+                            <p className="text-xl font-bold text-indigo-700">${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-500 font-bold uppercase">Currency</p>
+                            <p className="text-xl font-bold text-slate-800">{currency}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-500 font-bold uppercase">Terms</p>
+                            <p className="text-xl font-bold text-slate-800">{incoterm} · {paymentTerms}</p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* What's Next */}
+                <div className="space-y-3">
+                    <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider">What's Next?</h4>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Generate Source */}
+                        <button
+                            onClick={() => {
+                                if (onGoToSource) onGoToSource();
+                            }}
+                            className="group p-6 bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl text-left hover:border-indigo-400 hover:shadow-lg transition-all"
+                        >
+                            <div className="flex items-start gap-4">
+                                <div className="p-3 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-xl text-white group-hover:scale-110 transition-transform">
+                                    <ArrowRight size={24} />
+                                </div>
+                                <div>
+                                    <p className="font-bold text-slate-800 text-lg">Generate Source</p>
+                                    <p className="text-sm text-slate-500 mt-1">
+                                        Continue the Order-Sale flow. Go to the Source step to select this offer and calculate costs.
+                                    </p>
+                                </div>
+                            </div>
+                        </button>
+
+                        {/* Upload Another Offer */}
+                        <button
+                            onClick={resetWizard}
+                            className="group p-6 bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-2xl text-left hover:border-emerald-400 hover:shadow-lg transition-all"
+                        >
+                            <div className="flex items-start gap-4">
+                                <div className="p-3 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl text-white group-hover:scale-110 transition-transform">
+                                    <Upload size={24} />
+                                </div>
+                                <div>
+                                    <p className="font-bold text-slate-800 text-lg">Upload New Offer</p>
+                                    <p className="text-sm text-slate-500 mt-1">
+                                        Upload another supplier offer to save and compare.
+                                    </p>
+                                </div>
+                            </div>
+                        </button>
                     </div>
                 </div>
             </div>
-
-            {/* Actions */}
-            <div className="flex gap-3 pt-4">
-                <button
-                    onClick={() => setCurrentStep('EDIT')}
-                    className="px-4 py-2.5 border border-slate-300 rounded-lg text-slate-600 font-medium hover:bg-slate-50 transition-colors"
-                >
-                    <ChevronLeft size={18} className="inline mr-1" /> Back to Edit
-                </button>
-
-                <button
-                    onClick={() => {
-                        // Copy to clipboard as a fallback
-                        navigator.clipboard.writeText(`Subject: ${emailSubject}\n\n${emailBody}`);
-                        alert('Email copied to clipboard! You can paste it into your email client.');
-                    }}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-700 rounded-lg font-medium hover:bg-slate-200 transition-colors"
-                >
-                    <Eye size={18} /> Copy to Clipboard
-                </button>
-
-                <button
-                    onClick={() => {
-                        const customer = customers.find(c => c.id === selectedCustomerId);
-                        const mailto = `mailto:${customer?.email || ''}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
-                        window.open(mailto, '_blank');
-                    }}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-lg font-bold hover:from-emerald-600 hover:to-teal-600 shadow-md hover:shadow-lg transition-all"
-                >
-                    <Send size={18} /> Open in Email Client
-                </button>
-            </div>
-        </div>
-    );
+        );
+    };
 
     return (
         <div className="p-6 max-w-6xl mx-auto">
             {/* Header */}
-            <div className="mb-8">
-                <h2 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
-                    <div className="p-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl text-white">
-                        <Sparkles size={24} />
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-xl text-white"><Upload size={24} /></div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Supplier Offer</h1>
+                        <p className="text-slate-500 text-sm mt-1">Upload, edit and save supplier offers</p>
                     </div>
-                    Proposal Engine
-                </h2>
-                <p className="text-slate-500 mt-1">Transform supplier quotes into customer proposals in minutes</p>
+                </div>
             </div>
 
             {/* Step Indicator */}
@@ -1002,7 +938,7 @@ Return ONLY the JSON array, no other text.
             <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
                 {currentStep === 'UPLOAD' && renderUploadStep()}
                 {currentStep === 'EDIT' && renderEditStep()}
-                {currentStep === 'EMAIL' && renderEmailStep()}
+                {currentStep === 'SAVED' && renderSavedStep()}
             </div>
         </div>
     );

@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Customer, Company, Port } from '../types';
+import { Customer, Company, Port, User } from '../types';
 import { Search, Plus, Building2, Phone, Mail, CreditCard, X, Save, AlertCircle, Pencil, Trash2, Eye, Calendar, TrendingUp, LayoutGrid, List, MapPin, Filter, CheckCircle2, Hash, Anchor, FilePlus } from 'lucide-react';
 import { PAYMENT_TERM_OPTIONS } from '../constants';
 import { FormattedInput } from '../components/UnitInputs';
@@ -15,6 +15,8 @@ interface CustomersProps {
     initialViewMode?: 'grid' | 'table';
     ports: Port[];
     onAddPort: (p: Port) => void;
+    users?: User[];
+    currentUser?: User;
 }
 
 // Helper to extract unique values for filtering
@@ -26,7 +28,7 @@ const getUniqueValues = (data: any[], key: string) => {
     return Array.from(new Set(values)).sort();
 };
 
-const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDelete, currentCompanyId, availableCompanies, initialViewMode = 'table', ports, onAddPort }) => {
+const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDelete, currentCompanyId, availableCompanies, initialViewMode = 'table', ports, onAddPort, users = [], currentUser }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [isAdding, setIsAdding] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -54,6 +56,7 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
         taxId: '',
         contactPerson: '',
         email: '',
+        email2: '',
         phone: '',
         location: '',
         city: '',
@@ -151,7 +154,8 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
     const handleAddNew = () => {
         setFormData({
             ...initialFormState,
-            companyId: currentCompanyId === 'ALL' && availableCompanies.length > 0 ? availableCompanies[0].id : currentCompanyId
+            companyId: currentCompanyId === 'ALL' && availableCompanies.length > 0 ? availableCompanies[0].id : currentCompanyId,
+            ...(currentUser && currentUser.role === 'Sales' ? { sales_person_id: currentUser.id, sales_person_name: currentUser.name } : {})
         });
         setEditingId(null);
         setIsAdding(true);
@@ -180,15 +184,15 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
         // Ports are typically global ('ALL') or system wide
         const companyIdForNewRecord = 'ALL';
 
-        const newPort: Port = {
-            id: `PRT${Date.now()}`,
+        const newPort = {
+            id: `P${Date.now()}`,
             companyId: companyIdForNewRecord,
             code: newPortCode.toUpperCase(),
             name: newPortName,
             country: newPortCountry
         };
 
-        await onAddPort(newPort);
+        await onAddPort(newPort as any);
 
         setFormData(prev => ({ ...prev, pod: `${newPort.name} (${newPort.code})` }));
 
@@ -207,7 +211,7 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
         if (editingId) {
             onUpdate({ ...formData, id: editingId } as Customer);
         } else {
-            const customerToAdd: Customer = {
+            const customerToAdd = {
                 id: `C${Date.now()}`,
                 companyId: formData.companyId || currentCompanyId,
                 name: formData.name || '',
@@ -215,6 +219,7 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                 taxId: formData.taxId,
                 contactPerson: formData.contactPerson || '',
                 email: formData.email || '',
+                email2: formData.email2 || '',
                 phone: formData.phone || '',
                 location: formData.location || '',
                 city: formData.city || '',
@@ -226,7 +231,11 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                 paymentTerms: formData.paymentTerms || 'Net 30',
                 status: (formData.status as 'Active' | 'Inactive' | 'At Risk') || 'Active',
                 lastOrderDate: formData.lastOrderDate || new Date().toISOString().split('T')[0],
-                totalVolumeLBS: 0
+                totalVolumeLBS: 0,
+                brokerName: formData.brokerName || '',
+                brokerEmail: formData.brokerEmail || '',
+                sales_person_id: formData.sales_person_id || '',
+                sales_person_name: formData.sales_person_name || ''
             };
             onAdd(customerToAdd);
         }
@@ -299,65 +308,68 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
 
     return (
         <div className="h-full bg-slate-100 flex flex-col overflow-hidden">
-            {/* Modern Header */}
-            <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl">
-                        <Building2 className="text-white" size={22} />
-                    </div>
+            {/* Header */}
+            <div className="bg-white border-b border-slate-200 px-6 py-4 shrink-0">
+                <div className="flex items-start justify-between mb-4">
                     <div>
-                        <h1 className="text-lg font-bold text-slate-800">CUSTOMERS</h1>
-                        <p className="text-xs text-slate-500">Client Management • Profiles</p>
+                        <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
+                            <div className="p-2 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-xl text-white">
+                                <Building2 size={24} />
+                            </div>
+                            CUSTOMERS
+                        </h1>
+                        <p className="text-slate-500 text-sm mt-1">Client Management • Profiles</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <button onClick={handleAddNew} className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-all shadow-md font-medium">
+                            <Plus size={18} /> Add Customer
+                        </button>
                     </div>
                 </div>
-                <div className="flex items-center gap-4">
-                    {/* Stats */}
-                    <div className="flex gap-6 text-xs mr-4">
-                        <div className="text-center">
-                            <div className="text-2xl font-bold text-blue-600">{totalCustomers}</div>
-                            <div className="text-slate-500">Total</div>
+                {/* Filter Bar: Stats, Search, View Toggle */}
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-6 text-xs">
+                        <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100">
+                            <span className="text-blue-600 font-bold text-lg">{totalCustomers}</span>
+                            <span className="text-slate-500">Total</span>
                         </div>
-                        <div className="text-center">
-                            <div className="text-2xl font-bold text-emerald-600">{activeCustomers}</div>
-                            <div className="text-slate-500">Active</div>
+                        <div className="flex items-center gap-2 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">
+                            <span className="text-emerald-600 font-bold text-lg">{activeCustomers}</span>
+                            <span className="text-slate-500">Active</span>
                         </div>
-                        <div className="text-center">
-                            <div className="text-2xl font-bold text-amber-500">{(totalVolume / 1000).toFixed(0)}k</div>
-                            <div className="text-slate-500">Vol LBS</div>
+                        <div className="flex items-center gap-2 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">
+                            <span className="text-amber-500 font-bold text-lg">{(totalVolume / 1000).toFixed(0)}k</span>
+                            <span className="text-slate-500">Vol LBS</span>
                         </div>
                     </div>
-                    {/* Search */}
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                        <input
-                            type="text"
-                            placeholder="Search..."
-                            className="pl-9 pr-4 py-2 w-48 border border-slate-300 bg-white rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
+                    <div className="flex items-center gap-3">
+                        {/* Search */}
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                            <input
+                                type="text"
+                                placeholder="Search..."
+                                className="pl-9 pr-4 py-2 w-48 border border-slate-300 bg-white rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </div>
+                        {/* View Toggle */}
+                        <div className="bg-slate-100 rounded-lg p-1 flex gap-1">
+                            <button
+                                onClick={() => setViewMode('grid')}
+                                className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                            >
+                                <LayoutGrid size={16} />
+                            </button>
+                            <button
+                                onClick={() => setViewMode('table')}
+                                className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                            >
+                                <List size={16} />
+                            </button>
+                        </div>
                     </div>
-                    {/* View Toggle */}
-                    <div className="bg-slate-100 rounded-lg p-1 flex gap-1">
-                        <button
-                            onClick={() => setViewMode('grid')}
-                            className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                        >
-                            <LayoutGrid size={16} />
-                        </button>
-                        <button
-                            onClick={() => setViewMode('table')}
-                            className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                        >
-                            <List size={16} />
-                        </button>
-                    </div>
-                    {/* Add Button */}
-                    {!isSystemView && (
-                        <button onClick={handleAddNew} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors" title="Add Customer">
-                            <FilePlus size={20} />
-                        </button>
-                    )}
                 </div>
             </div>
 
@@ -383,7 +395,7 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                                                     {customer.name.substring(0, 2).toUpperCase()}
                                                 </div>
                                                 <div>
-                                                    <h3 className="font-bold text-slate-800 text-sm truncate max-w-[120px]" title={customer.name}>{customer.name}</h3>
+                                                    <h3 className="font-bold text-slate-800 text-sm" title={customer.name}>{customer.name}</h3>
                                                     <p className="text-xs text-slate-500">{customer.contactPerson}</p>
                                                 </div>
                                             </div>
@@ -415,12 +427,10 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
 
                                         <div className="flex justify-between items-center text-xs text-slate-400 pt-2 border-t border-slate-100">
                                             <span className="font-medium bg-slate-100 px-2 py-0.5 rounded text-slate-600">{customer.paymentTerms}</span>
-                                            {!isSystemView && (
-                                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={(e) => handleEdit(customer, e)} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-amber-500"><Pencil size={14} /></button>
-                                                    <button onClick={(e) => handleDelete(customer.id, e)} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
-                                                </div>
-                                            )}
+                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button onClick={(e) => handleEdit(customer, e)} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-amber-500"><Pencil size={14} /></button>
+                                                <button onClick={(e) => handleDelete(customer.id, e)} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
+                                            </div>
                                         </div>
                                     </div>
                                 ))}
@@ -428,54 +438,47 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                         </div>
                     ) : (
                         <div className="flex-1 overflow-auto custom-scrollbar">
-                            <table className="w-full text-left border-collapse">
+                            <table className="w-full text-left border-collapse text-xs">
                                 <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                                     <tr>
                                         {renderColumnHeader('name', 'Customer')}
-                                        {renderColumnHeader('contactPerson', 'Contact Info')}
-                                        <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase">Location / POD</th>
-                                        <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase">Financials</th>
+                                        {renderColumnHeader('contactPerson', 'Contact')}
+                                        <th className="px-2 py-1.5 text-[10px] font-semibold text-slate-500 uppercase">Phone</th>
+                                        <th className="px-2 py-1.5 text-[10px] font-semibold text-slate-500 uppercase">Email</th>
+                                        <th className="px-2 py-1.5 text-[10px] font-semibold text-slate-500 uppercase">Location</th>
+                                        <th className="px-2 py-1.5 text-[10px] font-semibold text-slate-500 uppercase">POD</th>
+                                        <th className="px-2 py-1.5 text-[10px] font-semibold text-slate-500 uppercase">Broker</th>
+                                        <th className="px-2 py-1.5 text-[10px] font-semibold text-slate-500 uppercase">Terms</th>
                                         {renderColumnHeader('status', 'Status')}
-                                        <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase text-right">Actions</th>
+                                        <th className="px-2 py-1.5 text-[10px] font-semibold text-slate-500 uppercase text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {filteredCustomers.map((customer) => (
+                                    {[...filteredCustomers].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map((customer) => (
                                         <tr key={customer.id} className="hover:bg-slate-50 transition-colors group border-l-2 border-l-transparent hover:border-l-blue-500">
-                                            <td className="px-3 py-2">
-                                                <div className="flex items-center gap-2">
-                                                    <div className="font-bold text-sm text-slate-800">{customer.name}</div>
-                                                    {customer.nickname && <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">{customer.nickname}</span>}
-                                                </div>
-                                                {currentCompanyId === 'ALL' && (
-                                                    <div className="text-[10px] text-slate-400 mt-0.5">{availableCompanies.find(c => c.id === customer.companyId)?.name}</div>
-                                                )}
-                                            </td>
-                                            <td className="px-3 py-2">
-                                                <div className="text-sm text-slate-700 font-medium">{customer.contactPerson}</div>
-                                                <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Mail size={10} /> {customer.email}</div>
-                                            </td>
-                                            <td className="px-3 py-2">
-                                                <div className="text-xs text-slate-600 truncate max-w-[150px]" title={formatAddress(customer)}>{customer.city}, {customer.country}</div>
-                                                {customer.pod && <div className="text-[10px] text-blue-600 font-medium mt-0.5 flex items-center gap-1"><Anchor size={10} /> {customer.pod}</div>}
-                                            </td>
-                                            <td className="px-3 py-2">
-                                                <div className="flex items-center gap-2 text-xs">
-                                                    <span className="font-mono font-medium text-slate-700">${customer.creditLimit.toLocaleString(undefined, { notation: 'compact' })}</span>
-                                                    <span className="text-slate-300">|</span>
-                                                    <span className="text-slate-500">{customer.paymentTerms}</span>
+                                            <td className="px-2 py-1">
+                                                <div className="flex items-center gap-1">
+                                                    <span className="font-bold text-slate-800" title={customer.name}>{customer.name}</span>
+                                                    {customer.nickname && <span className="text-[9px] bg-slate-100 text-slate-500 px-1 py-0 rounded">{customer.nickname}</span>}
                                                 </div>
                                             </td>
-                                            <td className="px-3 py-2">
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase ${customer.status === 'Active' ? 'bg-emerald-50 text-emerald-700' :
+                                            <td className="px-2 py-1 text-slate-700 truncate max-w-[100px]">{customer.contactPerson}</td>
+                                            <td className="px-2 py-1 text-slate-500 text-xs">{customer.phone || '-'}</td>
+                                            <td className="px-2 py-1 text-slate-500 truncate max-w-[140px]">{customer.email}</td>
+                                            <td className="px-2 py-1 text-slate-500 truncate max-w-[100px]" title={formatAddress(customer)}>{customer.city}{customer.country ? `, ${customer.country}` : ''}</td>
+                                            <td className="px-2 py-1 text-blue-600 truncate max-w-[100px]">{customer.pod || '-'}</td>
+                                            <td className="px-2 py-1 text-slate-600 truncate max-w-[80px]">{customer.brokerName ? customer.brokerName.split(' ')[0] : '-'}</td>
+                                            <td className="px-2 py-1 text-slate-500">{customer.paymentTerms}</td>
+                                            <td className="px-2 py-1">
+                                                <span className={`inline-flex items-center px-1.5 py-0 rounded text-[9px] font-bold uppercase ${customer.status === 'Active' ? 'bg-emerald-50 text-emerald-700' :
                                                     customer.status === 'At Risk' ? 'bg-red-50 text-red-700' : 'bg-slate-50 text-slate-600'
                                                     }`}>{customer.status}</span>
                                             </td>
-                                            <td className="px-3 py-2 text-sm text-right">
-                                                <div className="flex items-center justify-end gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                                                    <button type="button" onClick={(e) => { e.stopPropagation(); setViewingCustomer(customer); }} title="View Details" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><Eye size={16} /></button>
-                                                    {!isSystemView && <button type="button" onClick={(e) => handleEdit(customer, e)} title="Edit" className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"><Pencil size={16} /></button>}
-                                                    {!isSystemView && <button type="button" onClick={(e) => handleDelete(customer.id, e)} title="Delete" className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>}
+                                            <td className="px-2 py-1 text-right">
+                                                <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                                                    <button type="button" onClick={(e) => { e.stopPropagation(); setViewingCustomer(customer); }} title="View Details" className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"><Eye size={14} /></button>
+                                                    <button type="button" onClick={(e) => handleEdit(customer, e)} title="Edit" className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors"><Pencil size={14} /></button>
+                                                    <button type="button" onClick={(e) => handleDelete(customer.id, e)} title="Delete" className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 size={14} /></button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -547,7 +550,7 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                                 <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
                                     <label className="block text-xs font-bold text-blue-800 uppercase mb-1">Assign to Company</label>
                                     <select required name="companyId" value={formData.companyId} onChange={handleInputChange} className="w-full border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
-                                        {availableCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        {[...availableCompanies].sort((a, b) => a.name.localeCompare(b.name)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                     </select>
                                 </div>
                             )}
@@ -588,11 +591,20 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                                 </div>
                             </div>
 
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email *</label>
-                                <div className="relative">
-                                    <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                    <input required type="email" name="email" value={formData.email || ''} onChange={handleInputChange} className="w-full pl-9 pr-3 py-2 border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="contact@company.com" />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email *</label>
+                                    <div className="relative">
+                                        <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input required type="email" name="email" value={formData.email || ''} onChange={handleInputChange} className="w-full pl-9 pr-3 py-2 border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="contact@company.com" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email 2</label>
+                                    <div className="relative">
+                                        <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input type="email" name="email2" value={formData.email2 || ''} onChange={handleInputChange} className="w-full pl-9 pr-3 py-2 border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="secondary@company.com" />
+                                    </div>
                                 </div>
                             </div>
 
@@ -640,11 +652,57 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                                         >
                                             <option value="">Select Port...</option>
                                             <option value="_ADD_NEW_" className="font-bold text-blue-400 bg-slate-800">+ Add New Port</option>
-                                            {ports.map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
+                                            {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
                                         </select>
                                     </div>
                                     {portAddedMessage && <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1"><CheckCircle2 size={10} /> {portAddedMessage}</p>}
                                 </div>
+                            </div>
+
+                            <div className="p-4 bg-slate-50 rounded-lg border border-slate-100 space-y-3">
+                                <h4 className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1"><Building2 size={12} /> Broker Details</h4>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-700 mb-1">Broker Name</label>
+                                        <input name="brokerName" className="w-full border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg p-2 text-sm" value={formData.brokerName || ''} onChange={handleInputChange} placeholder="Broker company name" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-700 mb-1">Broker Email</label>
+                                        <input type="email" name="brokerEmail" className="w-full border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg p-2 text-sm" value={formData.brokerEmail || ''} onChange={handleInputChange} placeholder="broker@company.com" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="p-4 bg-rose-50 rounded-lg border border-rose-100 space-y-3">
+                                <h4 className="text-xs font-bold text-rose-700 uppercase mb-1 flex items-center gap-1"><Building2 size={12} /> Sales Person</h4>
+                                {currentUser && currentUser.role === 'Sales' ? (
+                                    <div className="w-full border border-slate-600 bg-slate-900 text-white rounded-lg px-3 py-2 text-sm font-medium">{currentUser.name}</div>
+                                ) : (
+                                    <select
+                                        name="sales_person_id"
+                                        className="w-full border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg px-3 py-2 text-sm"
+                                        value={formData.sales_person_id || ''}
+                                        onChange={(e) => {
+                                            const selectedUser = users.find(u => u.id === e.target.value);
+                                            setFormData(prev => ({
+                                                ...prev,
+                                                sales_person_id: e.target.value,
+                                                sales_person_name: selectedUser?.name || ''
+                                            }));
+                                        }}
+                                    >
+                                        <option value="">No sales person assigned</option>
+                                        {(users || [])
+                                            .filter(u => {
+                                                const r = String(u.role).toLowerCase();
+                                                return ['sales', 'manager', 'ceo', 'admin'].includes(r);
+                                            })
+                                            .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                                            .map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)
+                                        }
+                                    </select>
+                                )}
+                                <p className="text-[10px] text-rose-600">Assign a sales representative to this customer. Sales users only see customers assigned to them.</p>
                             </div>
 
                             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
@@ -701,6 +759,7 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                                 <div className="space-y-3">
                                     <div><p className="text-xs text-slate-500 mb-0.5">Primary Contact</p><p className="font-medium text-slate-800">{viewingCustomer.contactPerson}</p></div>
                                     <div><p className="text-xs text-slate-500 mb-0.5">Email Address</p><p className="font-medium text-slate-800 flex items-center gap-2"><Mail size={14} className="text-slate-400" />{viewingCustomer.email}</p></div>
+                                    {viewingCustomer.email2 && <div><p className="text-xs text-slate-500 mb-0.5">Email 2</p><p className="font-medium text-slate-800 flex items-center gap-2"><Mail size={14} className="text-slate-400" />{viewingCustomer.email2}</p></div>}
                                     <div><p className="text-xs text-slate-500 mb-0.5">Phone Number</p><p className="font-medium text-slate-800 flex items-center gap-2"><Phone size={14} className="text-slate-400" />{viewingCustomer.phone}</p></div>
                                     <div>
                                         <p className="text-xs text-slate-500 mb-0.5">Address</p>
@@ -713,6 +772,19 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                                         <div>
                                             <p className="text-xs text-slate-500 mb-0.5">Preferred POD</p>
                                             <p className="font-medium text-slate-800 flex items-center gap-2"><Anchor size={14} className="text-blue-400" />{viewingCustomer.pod}</p>
+                                        </div>
+                                    )}
+                                    {(viewingCustomer.brokerName || viewingCustomer.brokerEmail) && (
+                                        <div className="pt-2 border-t border-slate-100">
+                                            <p className="text-xs text-slate-500 mb-0.5">Broker</p>
+                                            {viewingCustomer.brokerName && <p className="font-medium text-slate-800">{viewingCustomer.brokerName}</p>}
+                                            {viewingCustomer.brokerEmail && <p className="text-sm text-slate-600 flex items-center gap-1"><Mail size={12} className="text-slate-400" />{viewingCustomer.brokerEmail}</p>}
+                                        </div>
+                                    )}
+                                    {viewingCustomer.sales_person_name && (
+                                        <div className="pt-2 border-t border-slate-100">
+                                            <p className="text-xs text-slate-500 mb-0.5">Sales Person</p>
+                                            <p className="font-medium text-rose-700">{viewingCustomer.sales_person_name}</p>
                                         </div>
                                     )}
                                 </div>
@@ -729,7 +801,7 @@ const Customers: React.FC<CustomersProps> = ({ customers, onAdd, onUpdate, onDel
                             </div>
                         </div>
                         <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
-                            {!isSystemView && <button onClick={(e) => { setViewingCustomer(null); handleEdit(viewingCustomer, { stopPropagation: () => { } } as React.MouseEvent); }} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium shadow-sm flex items-center gap-2"><Pencil size={14} /> Edit Profile</button>}
+                            <button onClick={(e) => { setViewingCustomer(null); handleEdit(viewingCustomer, { stopPropagation: () => { } } as React.MouseEvent); }} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium shadow-sm flex items-center gap-2"><Pencil size={14} /> Edit Profile</button>
                             <button onClick={() => setViewingCustomer(null)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-sm">Close</button>
                         </div>
                     </div>

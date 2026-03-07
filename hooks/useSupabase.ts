@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getSupabaseClient } from '../services/supabase';
+import { activityLogger } from '../services/activityLogService';
 
 export interface UseSupabaseOptions {
   select?: string;
@@ -11,11 +12,6 @@ export function useSupabase<T extends { id: string }>(
   tableName: string,
   options?: UseSupabaseOptions
 ) {
-  // DEBUG: Log options for specific tables to trace 500 errors
-  if (tableName === 'commission_sales_orders' || tableName === 'bookings') {
-    console.log(`[useSupabase] Init ${tableName}`, { options, select: options?.select });
-  }
-
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -45,20 +41,12 @@ export function useSupabase<T extends { id: string }>(
 
       const { data: dbData, error: dbError } = await query;
 
-      // DEBUG: Log fetch results for bookings
-      if (tableName === 'bookings') {
-        console.log(`[useSupabase FETCH] ${tableName}: rows=${dbData?.length ?? 'null'}, error=${dbError ? dbError.message : 'none'}, code=${dbError ? (dbError as any).code : 'n/a'}`);
-        if (dbData && dbData.length > 0) {
-          console.log(`[useSupabase FETCH] ${tableName} first row:`, JSON.stringify(dbData[0]));
-        }
-        if (dbError) {
-          console.error(`[useSupabase FETCH] ${tableName} FULL ERROR:`, JSON.stringify(dbError));
-        }
-      }
-
       if (dbError) throw dbError;
 
-      setData((dbData as T[]) || []);
+      // Deduplicate by id to prevent duplicate dropdown options
+      const rawData = (dbData as unknown as T[]) || [];
+      const deduped = [...new Map(rawData.map(item => [item.id, item])).values()];
+      setData(deduped);
     } catch (err: unknown) {
       const error = err as Error & { code?: string };
       const msg = error.message || 'Unknown error';
@@ -84,14 +72,6 @@ export function useSupabase<T extends { id: string }>(
           // We can also try to reload the page if it persists, but that's aggressive.
           // Let's just set the state for now.
           setHasSchemaError(true);
-
-          // HACK: Sometimes a simple retry after a short delay works if it was a race condition
-          // But usually this means columns are missing.
-
-          // If we are in dev mode, we might want to alert the user clearly
-          if (import.meta.env.DEV) {
-            alert(`Database Schema Mismatch for table '${tableName}': ${msg}. \n\nPlease run the SQL update script provided in the assistant chat.`);
-          }
         }
       }
 
@@ -128,10 +108,22 @@ export function useSupabase<T extends { id: string }>(
 
       const newRecord = newData as T;
       setData((prev) => [newRecord, ...prev]);
+
+      // Activity Log: record creation
+      if (tableName !== 'activity_logs') {
+        activityLogger.logCreate(tableName, newRecord as any);
+      }
+
       return newRecord;
     } catch (err: unknown) {
       const msg = (err as Error).message;
       setError(`Insert failed: ${msg}`);
+
+      // Activity Log: record creation error
+      if (tableName !== 'activity_logs') {
+        activityLogger.logCrudError('CREATE', tableName, null, msg);
+      }
+
       return null;
     } finally {
       setSaving(false);
@@ -142,6 +134,7 @@ export function useSupabase<T extends { id: string }>(
     setSaving(true);
     setError(null);
     const oldData = [...data];
+    const oldRecord = data.find((i) => i.id === record.id) || null;
 
     // Optimistic update
     setData((prev) => prev.map((i) => (i.id === record.id ? record : i)));
@@ -170,11 +163,23 @@ export function useSupabase<T extends { id: string }>(
 
       const updatedRecord = updated as T;
       setData((prev) => prev.map((i) => (i.id === record.id ? updatedRecord : i)));
+
+      // Activity Log: record update with field-level diff
+      if (tableName !== 'activity_logs') {
+        activityLogger.logUpdate(tableName, updatedRecord as any, oldRecord as any);
+      }
+
       return updatedRecord;
     } catch (err: unknown) {
       setData(oldData); // Rollback
       const msg = (err as Error).message;
       setError(`Update failed: ${msg}`);
+
+      // Activity Log: record update error
+      if (tableName !== 'activity_logs') {
+        activityLogger.logCrudError('UPDATE', tableName, record.id, msg);
+      }
+
       return null;
     } finally {
       setSaving(false);
@@ -197,11 +202,22 @@ export function useSupabase<T extends { id: string }>(
 
       if (dbError) throw dbError;
 
+      // Activity Log: record deletion
+      if (tableName !== 'activity_logs') {
+        activityLogger.logDelete(tableName, id);
+      }
+
       return true;
     } catch (err: unknown) {
       setData(oldData); // Rollback
       const msg = (err as Error).message;
       setError(`Delete failed: ${msg}`);
+
+      // Activity Log: record deletion error
+      if (tableName !== 'activity_logs') {
+        activityLogger.logCrudError('DELETE', tableName, id, msg);
+      }
+
       return false;
     } finally {
       setSaving(false);

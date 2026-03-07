@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Supplier, Company, SupplierQuote, PurchaseOrder, SavedLocation } from '../types';
-import { Search, Plus, X, Save, Pencil, Trash2, Building, Globe, Mail, Phone, Star, Tag, AlertCircle, LayoutGrid, List, MapPin, Filter, CheckCircle2, Hash, Eye, Truck, FilePlus } from 'lucide-react';
+import { Search, Plus, X, Save, Pencil, Trash2, Building, Globe, Mail, Phone, Star, Tag, AlertCircle, LayoutGrid, List, MapPin, Filter, CheckCircle2, Hash, Eye, Truck } from 'lucide-react';
 import { PAYMENT_TERM_OPTIONS } from '../constants';
 
 interface SuppliersProps {
@@ -259,17 +259,24 @@ const Suppliers: React.FC<SuppliersProps> = ({ suppliers, onAdd, onUpdate, onDel
 
     return (
         <div className="h-full bg-slate-100 flex flex-col overflow-hidden">
-            {/* Modern Header */}
-            <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-xl">
-                        <Building className="text-white" size={22} />
+            {/* Header Row */}
+            <div className="bg-white border-b border-slate-200 px-6 py-4 shrink-0">
+                <div className="mb-6 flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2.5 bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl text-white">
+                            <Building size={24} />
+                        </div>
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-800">Suppliers</h1>
+                            <p className="text-sm text-slate-500">Vendor Management & Contact Directory</p>
+                        </div>
                     </div>
-                    <div>
-                        <h1 className="text-lg font-bold text-slate-800">SUPPLIERS</h1>
-                        <p className="text-xs text-slate-500">Vendor Management • Contact Directory</p>
-                    </div>
+                    <button onClick={handleAddNew} className="flex items-center gap-2 px-5 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all shadow-md font-medium">
+                        <Plus size={18} />
+                        Add Supplier
+                    </button>
                 </div>
+                {/* Filter Bar */}
                 <div className="flex items-center gap-4">
                     {/* Stats */}
                     <div className="flex gap-6 text-xs mr-4">
@@ -286,6 +293,7 @@ const Suppliers: React.FC<SuppliersProps> = ({ suppliers, onAdd, onUpdate, onDel
                             <div className="text-slate-500">Avg Rating</div>
                         </div>
                     </div>
+                    <div className="flex-1" />
                     {/* Search */}
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -312,10 +320,6 @@ const Suppliers: React.FC<SuppliersProps> = ({ suppliers, onAdd, onUpdate, onDel
                             <List size={16} />
                         </button>
                     </div>
-                    {/* Add Button */}
-                    <button onClick={handleAddNew} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors" title="Add Supplier">
-                        <FilePlus size={20} />
-                    </button>
                 </div>
             </div>
 
@@ -486,7 +490,7 @@ const Suppliers: React.FC<SuppliersProps> = ({ suppliers, onAdd, onUpdate, onDel
                                 </button>
                             </div>
                             <form onSubmit={handleSubmit} className="p-6 space-y-4">
-                                {currentCompanyId === 'ALL' && (<div className="p-3 bg-blue-50 rounded-lg border border-blue-100"><label className="block text-xs font-bold text-blue-800 uppercase mb-1">Company</label><select required name="companyId" value={formData.companyId} onChange={handleInputChange} className="w-full border border-slate-600 bg-slate-900 text-white rounded p-2 text-sm"><option value="">Select Company...</option>{availableCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>)}
+                                {currentCompanyId === 'ALL' && (<div className="p-3 bg-blue-50 rounded-lg border border-blue-100"><label className="block text-xs font-bold text-blue-800 uppercase mb-1">Company</label><select required name="companyId" value={formData.companyId} onChange={handleInputChange} className="w-full border border-slate-600 bg-slate-900 text-white rounded p-2 text-sm"><option value="">Select Company...</option>{[...availableCompanies].sort((a, b) => a.name.localeCompare(b.name)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>)}
 
                                 {/* Basic Info */}
                                 <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Supplier Name *</label><input required name="name" value={formData.name || ''} onChange={handleInputChange} className="w-full border border-slate-600 bg-slate-900 text-white rounded p-2 text-sm" placeholder="Company name" /></div>

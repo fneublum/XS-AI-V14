@@ -1,158 +1,215 @@
 /**
- * HALL Service - Direct Brain API + Twilio WhatsApp Integration
- * 
- * Strategy 1: Call HALL's brain API directly for instant AI responses
- * Strategy 2: Send via Twilio WhatsApp as fallback
- * 
+ * HALL Service - Direct Brain API Integration
+ *
+ * Calls HALL's brain API directly for instant AI responses.
+ *
  * HALL Brain API: https://gen-lang-client-0755290444.ue.r.appspot.com/api/brain/chat
- * App's Twilio Number: loaded from Supabase system_settings
  * HALL's WhatsApp: +19047882483
+ *
+ * IMPORTANT: HALL uses a SEPARATE Supabase instance for its messages table.
+ * XS CRM Supabase = qfskvevighylzzmyiwre.supabase.co (no messages table)
+ * HALL Supabase    = xkoknmidesfzqktndwgf.supabase.co (has messages + conversations tables)
  */
 
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from './supabase';
+import { activityLogger } from './activityLogService';
 
 // HALL's endpoints
 export const HALL_PHONE_NUMBER = '+19047882483';
 const HALL_BRAIN_URL = 'https://gen-lang-client-0755290444.ue.r.appspot.com/api/brain/chat';
+const BRAIN_API_TIMEOUT = 15000; // 15s timeout for Brain API calls
+const BRAIN_API_MAX_RETRIES = 2;
 
-// Cache for Twilio credentials
-let twilioCredsCache: { accountSid: string; authToken: string; phoneNumber: string } | null = null;
 
-/**
- * Load Twilio credentials from Supabase system_settings
- */
-async function getTwilioCreds(): Promise<{ accountSid: string; authToken: string; phoneNumber: string } | null> {
-    if (twilioCredsCache) return twilioCredsCache;
+// HALL's Supabase instance (where messages table lives)
+const HALL_SUPABASE_URL = 'https://xkoknmidesfzqktndwgf.supabase.co';
+const HALL_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhrb2tubWlkZXNmenFrdG5kd2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0MzI5MzUsImV4cCI6MjA4MjAwODkzNX0.s-1g2A1QYPpNDEv_cc8-JTtKfNZNyMZBwkMZBYxupj4';
 
-    try {
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
-            .from('system_settings')
-            .select('value')
-            .eq('key', 'twilio_credentials')
-            .single();
+let hallSupabaseClient: SupabaseClient | null = null;
 
-        if (error || !data?.value) {
-            console.error('[hallService] No Twilio credentials found in system_settings');
-            return null;
-        }
-
-        const creds = typeof data.value === 'string' ? JSON.parse(data.value) : data.value;
-        twilioCredsCache = {
-            accountSid: creds.accountSid,
-            authToken: creds.authToken,
-            phoneNumber: creds.phoneNumber
-        };
-        return twilioCredsCache;
-    } catch (error) {
-        console.error('[hallService] Error loading Twilio credentials:', error);
-        return null;
+function getHallSupabase(): SupabaseClient {
+    if (!hallSupabaseClient) {
+        hallSupabaseClient = createClient(HALL_SUPABASE_URL, HALL_SUPABASE_ANON_KEY);
     }
+    return hallSupabaseClient;
 }
+
+
 
 export interface HallResponse {
     success: boolean;
     messageId?: string;
     reply?: string;
     error?: string;
+    provider?: 'brain';
 }
 
 export interface HallStatus {
     connected: boolean;
     provider?: string;
     phoneNumber?: string;
-    twilioConfigured?: boolean;
+
 }
 
 /**
- * Send a message to HALL's brain API directly (instant response)
+ * Send a message to HALL's brain API with retry logic and timeout
  */
 async function sendToHallBrain(message: string): Promise<HallResponse> {
-    console.log('[hallService] Sending via HALL Brain API...');
+    let lastError: Error | null = null;
 
-    const response = await fetch(HALL_BRAIN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, userId: 'xs-crm' })
-    });
-
-    if (!response.ok) {
-        throw new Error(`HALL Brain API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    let replyText = '';
-
-    // Parse the response (may be nested JSON string)
-    if (data.response) {
+    for (let attempt = 0; attempt <= BRAIN_API_MAX_RETRIES; attempt++) {
         try {
-            const parsed = typeof data.response === 'string' ? JSON.parse(data.response) : data.response;
-            replyText = parsed.text || parsed.message || JSON.stringify(parsed);
-        } catch {
-            replyText = data.response;
-        }
-    }
+            if (attempt > 0) {
+                // Exponential backoff: 1s, 2s
+                await new Promise(r => setTimeout(r, 1000 * attempt));
+            }
 
-    console.log('[hallService] HALL Brain replied:', replyText.substring(0, 80));
-    return { success: true, reply: replyText, messageId: `brain-${Date.now()}` };
-}
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), BRAIN_API_TIMEOUT);
 
-/**
- * Send a WhatsApp message to HALL via Twilio (fallback)
- */
-async function sendToHallTwilio(message: string): Promise<HallResponse> {
-    const creds = await getTwilioCreds();
-    if (!creds) {
-        return { success: false, error: 'Twilio credentials not configured. Go to Settings > Twilio Integration.' };
-    }
+            const response = await fetch(HALL_BRAIN_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message, userId: 'xs-crm' }),
+                signal: controller.signal
+            });
 
-    // Try Supabase RPC (server-side, no CORS issues)
-    try {
-        console.log('[hallService] Sending via Supabase RPC (Twilio)...');
-        const supabase = getSupabaseClient();
-        const { data: rpcResult, error: rpcError } = await supabase.rpc('send_twilio_message', {
-            p_to: `whatsapp:${HALL_PHONE_NUMBER}`,
-            p_from: `whatsapp:${creds.phoneNumber}`,
-            p_body: message,
-            p_account_sid: creds.accountSid,
-            p_auth_token: creds.authToken
-        });
+            clearTimeout(timeoutId);
 
-        if (rpcError) throw new Error(rpcError.message);
+            if (!response.ok) {
+                throw new Error(`HALL Brain API error: ${response.status}`);
+            }
 
-        if (rpcResult) {
-            const parsed = typeof rpcResult === 'string' ? JSON.parse(rpcResult) : rpcResult;
-            if (parsed.error) throw new Error(parsed.error);
-            if (parsed.status && parsed.status >= 200 && parsed.status < 300) {
-                const content = typeof parsed.content === 'string' ? JSON.parse(parsed.content) : parsed.content;
-                console.log('[hallService] Message sent via Twilio RPC:', content?.sid);
-                return { success: true, messageId: content?.sid || 'rpc-sent' };
+            const data = await response.json();
+            let replyText = '';
+
+            if (data.response) {
+                try {
+                    const parsed = typeof data.response === 'string' ? JSON.parse(data.response) : data.response;
+                    replyText = parsed.text || parsed.message || JSON.stringify(parsed);
+                } catch {
+                    replyText = data.response;
+                }
+            }
+
+            return { success: true, reply: replyText, messageId: `brain-${Date.now()}`, provider: 'brain' };
+        } catch (err: any) {
+            lastError = err;
+            if (err.name === 'AbortError') {
+                lastError = new Error('Brain API request timed out');
             }
         }
+    }
 
-        throw new Error('Unexpected RPC result');
-    } catch (rpcErr: any) {
-        console.warn('[hallService] Twilio RPC failed:', rpcErr.message);
-        return { success: false, error: rpcErr.message };
+    throw lastError || new Error('Brain API failed after retries');
+}
+
+
+
+/**
+ * Get or create the xs-crm conversation in HALL's DB.
+ * Messages table uses conversation_id (not phone_number).
+ */
+let xsCrmConversationId: string | null = null;
+
+async function getOrCreateXsCrmConversation(): Promise<string | null> {
+    if (xsCrmConversationId) return xsCrmConversationId;
+
+    try {
+        const hallDb = getHallSupabase();
+
+        // Check if xs-crm conversation exists
+        const { data } = await hallDb
+            .from('conversations')
+            .select('id')
+            .eq('phone_number', 'xs-crm')
+            .limit(1);
+
+        if (data && data.length > 0) {
+            xsCrmConversationId = data[0].id;
+            return xsCrmConversationId;
+        }
+
+        // Create a new conversation for xs-crm
+        const newId = crypto.randomUUID();
+        const { error } = await hallDb.from('conversations').insert({
+            id: newId,
+            user_id: 'default',
+            phone_number: 'xs-crm',
+            contact_name: 'XS CRM Dashboard',
+            channel: 'web',
+            status: 'active',
+            unread_count: 0,
+            last_message_preview: ''
+        });
+
+        if (!error) {
+            xsCrmConversationId = newId;
+            return xsCrmConversationId;
+        }
+    } catch {
+        // Silent fail
+    }
+    return null;
+}
+
+/**
+ * Save a message to HALL's Supabase messages table
+ * Uses conversation_id to match the actual table schema
+ */
+async function saveMessageToHall(content: string, direction: 'inbound' | 'outbound'): Promise<void> {
+    try {
+        const hallDb = getHallSupabase();
+        const conversationId = await getOrCreateXsCrmConversation();
+
+        await hallDb.from('messages').insert({
+            id: crypto.randomUUID(),
+            conversation_id: conversationId,
+            content,
+            direction,
+            channel: 'web',
+            message_type: 'text',
+            status: direction === 'outbound' ? 'sent' : 'delivered',
+            metadata: { source: 'xs-crm-dashboard' }
+        });
+
+        // Update conversation last_message
+        if (conversationId) {
+            await hallDb.from('conversations').update({
+                last_message_at: new Date().toISOString(),
+                last_message_preview: content.substring(0, 100)
+            }).eq('id', conversationId);
+        }
+    } catch {
+        // Silent fail - don't break the flow if message logging fails
     }
 }
 
 /**
- * Send a message to HALL
- * Strategy 1: HALL Brain API (instant AI response)
- * Strategy 2: Twilio WhatsApp (async, via Supabase RPC)
+ * Send a message to HALL via Brain API
+ * Also saves messages to HALL's DB for persistence
  */
 export async function sendToHall(message: string): Promise<HallResponse> {
-    // Strategy 1: Direct Brain API (instant response, no WhatsApp needed)
+    const _t0 = Date.now();
+    // Save outbound message to HALL's DB
+    saveMessageToHall(message, 'outbound');
+
     try {
         const result = await sendToHallBrain(message);
-        if (result.success) return result;
-    } catch (err: any) {
-        console.warn('[hallService] Brain API failed, falling back to Twilio:', err.message);
+        if (result.success) {
+            // Save HALL's reply to DB
+            if (result.reply) {
+                saveMessageToHall(result.reply, 'inbound');
+            }
+            activityLogger.logAiInteraction({ aiService: 'hall', agentType: 'brain_api', userPrompt: message, responseLength: result.reply?.length || 0, responseTimeMs: Date.now() - _t0 });
+            return result;
+        }
+    } catch {
+        // Brain API failed after retries
     }
 
-    // Strategy 2: Twilio WhatsApp (async fallback)
-    return sendToHallTwilio(message);
+    return { success: false, error: 'HALL Brain API is currently unreachable. Please try again later.' };
 }
 
 /**
@@ -160,50 +217,61 @@ export async function sendToHall(message: string): Promise<HallResponse> {
  */
 export async function getHallStatus(): Promise<HallStatus> {
     try {
-        // Check if HALL Brain API is reachable
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
         const healthCheck = await fetch('https://gen-lang-client-0755290444.ue.r.appspot.com/health', {
             method: 'GET',
-            signal: AbortSignal.timeout(5000)
+            signal: controller.signal
         }).catch(() => null);
 
+        clearTimeout(timeoutId);
+
         const brainOnline = healthCheck?.ok || false;
-        const creds = await getTwilioCreds();
 
         return {
-            connected: brainOnline || !!creds,
-            twilioConfigured: !!creds,
-            provider: brainOnline ? 'hall-brain' : 'twilio-direct',
-            phoneNumber: creds?.phoneNumber || ''
+            connected: brainOnline,
+            provider: brainOnline ? 'hall-brain' : 'disconnected'
         };
-    } catch (error) {
-        console.error('[hallService] Error getting status:', error);
-        return { connected: false, twilioConfigured: false };
+    } catch {
+        return { connected: false };
     }
 }
 
 /**
- * Get recent messages from HALL's conversation in Supabase
+ * Get recent messages from HALL's conversation
+ * Queries HALL's Supabase instance (xkoknmidesfzqktndwgf) where messages table lives
  */
-async function getHallMessages(limit = 20): Promise<any[]> {
+export async function getHallMessages(limit = 20): Promise<any[]> {
     try {
-        const supabase = getSupabaseClient();
-        const hallNumber = HALL_PHONE_NUMBER.replace('+', '');
+        const hallDb = getHallSupabase();
+        const conversationId = await getOrCreateXsCrmConversation();
 
-        const { data, error } = await supabase
+        if (conversationId) {
+            // Query by conversation_id (primary approach)
+            const { data, error } = await hallDb
+                .from('messages')
+                .select('id, content, direction, created_at, status, metadata')
+                .eq('conversation_id', conversationId)
+                .order('created_at', { ascending: false })
+                .limit(limit);
+
+            if (!error && data) {
+                return data.reverse();
+            }
+        }
+
+        // Fallback: query by metadata source
+        const { data: fallbackData, error: fallbackError } = await hallDb
             .from('messages')
-            .select('id, content, direction, created_at, phone_number, status')
-            .or(`phone_number.eq.${HALL_PHONE_NUMBER},phone_number.eq.${hallNumber},phone_number.ilike.%${hallNumber}%`)
+            .select('id, content, direction, created_at, status, metadata')
+            .eq('metadata->>source', 'xs-crm-dashboard')
             .order('created_at', { ascending: false })
             .limit(limit);
 
-        if (error) {
-            console.error('[hallService] Error fetching messages:', error);
-            return [];
-        }
-
-        return (data || []).reverse();
-    } catch (error) {
-        console.error('[hallService] Error getting HALL messages:', error);
+        if (fallbackError) return [];
+        return (fallbackData || []).reverse();
+    } catch {
         return [];
     }
 }
@@ -211,21 +279,18 @@ async function getHallMessages(limit = 20): Promise<any[]> {
 /**
  * Send message to HALL and return the AI response directly
  */
-export async function askHall(message: string, conversationHistory: { role: string; text: string }[] = []): Promise<string> {
+export async function askHall(message: string): Promise<string> {
     const result = await sendToHall(message);
 
     if (!result.success) {
         return `Error: ${result.error}`;
     }
 
-    // If we got a direct brain reply, return it
     if (result.reply) {
         return result.reply;
     }
 
-    // Twilio fallback — async response
-    console.log('[hallService] Message delivered to HALL via Twilio, SID:', result.messageId);
-    return `✅ Message sent to HALL via WhatsApp. HALL is processing your request and will respond shortly. (Message ID: ${result.messageId?.slice(-8)})`;
+    return `Message sent to HALL via WhatsApp. HALL is processing your request and will respond shortly. (Message ID: ${result.messageId?.slice(-8)})`;
 }
 
 export default {

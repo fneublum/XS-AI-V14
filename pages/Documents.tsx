@@ -78,27 +78,32 @@ const Documents: React.FC<DocumentsProps> = ({
 
     return (
         <div className="space-y-6">
-            {/* Header & Controls */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800">Documents Repository</h2>
-                    <p className="text-slate-500 text-sm">Manage extracted commercial documents</p>
+            {/* Header */}
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-2 bg-gradient-to-r from-rose-500 to-pink-500 rounded-xl text-white"><FileText size={24} /></div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Documents Repository</h1>
+                        <p className="text-slate-500 text-sm mt-1">Manage extracted commercial documents</p>
+                    </div>
                 </div>
-                <div className="flex gap-2 w-full md:w-auto">
-                    <div className="relative flex-1 md:w-64">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input 
-                            type="text" 
-                            placeholder={`Search ${activeTab.toLowerCase().replace('_', ' ')}s...`}
-                            className="w-full pl-10 pr-4 py-2 border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
-                        <button onClick={() => setViewMode('grid')} className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><LayoutGrid size={18} /></button>
-                        <button onClick={() => setViewMode('table')} className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><List size={18} /></button>
-                    </div>
+            </div>
+
+            {/* Search & View Toggle */}
+            <div className="flex gap-2 w-full mb-4">
+                <div className="relative flex-1 md:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input
+                        type="text"
+                        placeholder={`Search ${activeTab.toLowerCase().replace('_', ' ')}s...`}
+                        className="w-full pl-10 pr-4 py-2 border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
+                <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
+                    <button onClick={() => setViewMode('grid')} className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><LayoutGrid size={18} /></button>
+                    <button onClick={() => setViewMode('table')} className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><List size={18} /></button>
                 </div>
             </div>
 

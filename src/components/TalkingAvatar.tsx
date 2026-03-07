@@ -1,1 +1,0 @@
-../../components/TalkingAvatar.tsx

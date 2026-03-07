@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { SalesOrder, SalesOrderItem, Customer, Product, Booking, Role, Invoice, User, Company, Port, FreightQuote, SavedLocation, CargoAgent, CompanyImage, Bank } from '../types';
-import { Plus, Save, Trash2, Edit3, CheckCircle, XCircle, FileText, Link, Truck, Search, Bot, Loader2, Sparkles, AlertTriangle, ArrowRight, ClipboardList, Receipt, MapPin, Globe, Calendar, CreditCard, Ship, Package, Anchor, Mail, X, CheckCircle2, ListChecks, ArrowLeft, Building, Eye, FilePlus } from 'lucide-react';
-import PDFPreviewModal from '../src/components/PDFPreviewModal';
+import { Plus, Save, Trash2, Edit3, CheckCircle, XCircle, FileText, Link, Truck, Search, Bot, Loader2, Sparkles, AlertTriangle, ArrowRight, ClipboardList, Receipt, MapPin, Globe, Calendar, CreditCard, Ship, Package, Anchor, Mail, X, CheckCircle2, ListChecks, ArrowLeft, Building, Eye, FilePlus, ChevronDown } from 'lucide-react';
+import PDFPreviewModal from '../components/PDFPreviewModal';
 import { getSupabaseClient } from '../services/supabase';
 import { generateCustomerDescription } from '../services/geminiService';
 import { QuantityInput, PriceInput, FormattedInput } from '../components/UnitInputs';
@@ -10,6 +10,9 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PAYMENT_TERM_OPTIONS } from '../constants';
 import { useSupabase } from '../hooks/useSupabase';
+import { getTokenFor, loginRequest } from '../services/smailAuth';
+import { useWorkflow } from '../hooks/useWorkflow';
+import { autoPopulateService } from '../services/autoPopulateService';
 
 interface SalesOrdersProps {
     currentUser: User;
@@ -54,6 +57,12 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
     invoices = [],
     banks = []
 }) => {
+    // --- WORKFLOW ENGINE ---
+    const { onSalesOrderCreated, onSalesOrderApproved } = useWorkflow({
+        companyId: currentCompanyId,
+        userId: currentUser?.id,
+    });
+
     // --- FULFILLMENT CHECK ---
     const isOrderFulfilled = (order: SalesOrder) => {
         // Option 1: Direct status check (if manually set)
@@ -152,6 +161,11 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
     const [customerFilter, setCustomerFilter] = useState('');
 
     const isAdminOrManager = [Role.ADMIN, Role.CEO, Role.MANAGER].includes(currentUser.role);
+
+    // Scope customers: sales role only sees their assigned customers
+    const scopedCustomers = isAdminOrManager
+        ? customers
+        : customers.filter(c => c.sales_person_id === currentUser.id);
     const client = getSupabaseClient();
     const { data: cargoAgents } = useSupabase<CargoAgent>('cargo_agents');
     // We need company list for PDF header
@@ -522,6 +536,8 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
             onUpdate(orderData);
         } else {
             onAdd(orderData);
+            // Fire workflow event for new SO
+            onSalesOrderCreated(orderData.id, orderData as any);
         }
         setViewMode('LIST');
     };
@@ -533,8 +549,9 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
             approvedBy: currentUser.id
         });
 
-        // Auto-show Proforma PDF in modal after approval
+        // Fire workflow event for approval
         if (newStatus === 'APPROVED') {
+            onSalesOrderApproved(order.id, { ...order, status: newStatus } as any);
             const updatedOrder = { ...order, status: newStatus, approvedBy: currentUser.id };
             setTimeout(() => generateSalesDoc(updatedOrder, 'PROFORMA', false), 300);
         }
@@ -1070,41 +1087,17 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
             return;
         }
 
-        // --- CHECK EMAIL CONNECTION ---
-        const storedAccounts = localStorage.getItem('ai_email_accounts');
-        const accounts = storedAccounts ? JSON.parse(storedAccounts) : [];
-        const aiAccount = accounts.find((a: any) => a.email === 'ai.agent@xsolution.com' && a.provider === 'OUTLOOK');
-
-        if (!aiAccount) {
-            alert("Email 'ai.agent@xsolution.com' is not connected. Please go to Settings > Integrations to connect the AI Email Agent.");
+        // --- CHECK EMAIL CONNECTION (MSAL Interactive) ---
+        let token = '';
+        try {
+            token = await getTokenFor('automation', loginRequest.scopes);
+        } catch (e) {
+            alert("No email account connected. Please sign in via Settings → Email Integration.");
             return;
         }
 
-        let token = '';
-        try {
-            const config = JSON.parse(aiAccount.refreshToken || '{}');
-            const originalEndpoint = `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/token`;
-            const body = new URLSearchParams({
-                client_id: config.clientId,
-                scope: 'https://graph.microsoft.com/.default',
-                client_secret: aiAccount.password,
-                grant_type: 'client_credentials'
-            });
-
-            // Try direct call first, fall back to CORS proxy
-            let resp;
-            try {
-                resp = await fetch(originalEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body });
-            } catch {
-                const proxyEndpoint = `https://api.allorigins.win/raw?url=${encodeURIComponent(originalEndpoint)}`;
-                resp = await fetch(proxyEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body });
-            }
-
-            if (!resp.ok) throw new Error("Auth failed");
-            const data = await resp.json();
-            token = data.access_token;
-        } catch (e) {
-            alert("Failed to authenticate AI Agent. Please check credentials in Settings.");
+        if (!token) {
+            alert("No email account connected. Please sign in via Settings → Email Integration.");
             return;
         }
 
@@ -1172,7 +1165,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                 `;
 
                 try {
-                    await fetch(`https://graph.microsoft.com/v1.0/users/${aiAccount.email}/sendMail`, {
+                    await fetch(`https://graph.microsoft.com/v1.0/me/sendMail`, {
                         method: 'POST',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1296,7 +1289,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                                 onChange={handleCustomerSelect}
                             >
                                 <option value="">Select Customer...</option>
-                                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                {[...scopedCustomers].sort((a, b) => a.name.localeCompare(b.name)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
                         </div>
                         <div>
@@ -1422,7 +1415,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                                     >
                                         <option value="">Select Port...</option>
                                         <option value="_ADD_NEW_" className="font-bold text-blue-600 bg-blue-50">+ Add New Port</option>
-                                        {ports.map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
+                                        {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
                                     </select>
                                     {portAddedMessage && <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1"><CheckCircle2 size={10} /> {portAddedMessage}</p>}
                                 </div>
@@ -1450,7 +1443,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                                         >
                                             <option value="">Select Origin Port...</option>
                                             <option value="_ADD_NEW_" className="font-bold text-blue-600 bg-blue-50">+ Add New Port</option>
-                                            {ports.map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
+                                            {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
                                         </select>
                                     </div>
                                 )}
@@ -1513,7 +1506,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                                     onChange={(e) => setFormData({ ...formData, bankId: e.target.value })}
                                 >
                                     <option value="">Select Bank...</option>
-                                    {banks.map(bank => <option key={bank.id} value={bank.id}>{bank.name}</option>)}
+                                    {[...banks].sort((a, b) => a.name.localeCompare(b.name)).map(bank => <option key={bank.id} value={bank.id}>{bank.name}</option>)}
                                 </select>
                                 {banks.length === 0 && <p className="text-xs text-amber-600 mt-1">No banks configured. Add banks in Data → Banks.</p>}
                             </div>
@@ -1562,7 +1555,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                             <label className="block text-[10px] text-slate-500 mb-1">Internal Product</label>
                             <select className="w-full border border-slate-300 rounded p-2 text-xs" value={currentItem.productId || ''} onChange={handleProductSelect}>
                                 <option value="">Select...</option>
-                                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                {[...products].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                         </div>
                         <div className="col-span-3">
@@ -1650,8 +1643,11 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
         );
     }
 
-    // LIST VIEW
-    const displayOrders = salesOrders && salesOrders.length > 0 ? salesOrders : orders;
+    // LIST VIEW — scope orders to salesperson's customers if not admin/manager
+    const scopedCustomerNames = new Set(scopedCustomers.map(c => c.name));
+    const displayOrders = isAdminOrManager
+        ? salesOrders
+        : salesOrders.filter(o => scopedCustomerNames.has(o.customerName));
 
     // Dynamic Filter: If tab is FULFILLED, we check our logic
     const filteredOrders = displayOrders.filter(o => {
@@ -1663,7 +1659,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
 
         // Customer filter
         const customerMatch = !customerFilter ||
-            (o.customerName && o.customerName.toLowerCase().includes(customerFilter.toLowerCase()));
+            (o.customerName && o.customerName === customerFilter);
 
         return tabMatch && customerMatch;
     }).sort((a, b) => {
@@ -1680,30 +1676,36 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        <ClipboardList className="text-blue-600" /> Sales Orders
-                    </h2>
-                    <p className="text-slate-500 text-sm">Manage orders, approvals, and fulfillment.</p>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl text-white">
+                        <ClipboardList size={24} />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Sales Orders</h1>
+                        <p className="text-slate-500 text-sm mt-1">Manage orders, approvals, and fulfillment.</p>
+                    </div>
                 </div>
-                <button onClick={handleNewOrder} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors font-medium">
+                <button onClick={handleNewOrder} className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-all shadow-md font-medium">
                     <FilePlus size={20} />
-                    + NEW SALES ORDER
+                    New Sales Order
                 </button>
             </div>
 
             {/* Customer Filter */}
             <div className="flex items-center gap-3 mb-4">
-                <div className="relative flex-1 max-w-xs">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
-                    <input
-                        type="text"
-                        placeholder="Filter by customer name..."
+                <div className="relative max-w-xs">
+                    <select
                         value={customerFilter}
                         onChange={(e) => setCustomerFilter(e.target.value)}
-                        className="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                    />
+                        className="pl-3 pr-8 py-2 w-full border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm appearance-none bg-white"
+                    >
+                        <option value="">All Customers</option>
+                        {[...new Set(displayOrders.map(o => o.customerName).filter(Boolean))].sort().map(name => (
+                            <option key={name} value={name}>{name}</option>
+                        ))}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 </div>
                 {customerFilter && (
                     <button
@@ -1730,61 +1732,111 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                 ))}
             </div>
 
-            <div className="grid grid-cols-1 gap-3">
-                {filteredOrders.map(order => (
-                    <div key={order.id} className="bg-white border border-slate-200 rounded-lg p-3 hover:shadow-md transition-shadow">
-                        {/* Line 1: Order header with all key info */}
-                        <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-3 flex-wrap">
-                                <span className="text-sm font-bold text-slate-800">{order.orderNumber}</span>
-                                <div className="flex items-center gap-1.5">
-                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${order.orderType === 'CONTRACT' ? 'bg-purple-50 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>{order.orderType}</span>
-                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${order.saleType === 'EXPORT' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>{order.saleType || 'LOCAL'}</span>
-                                </div>
-                                <span className="text-slate-300">|</span>
-                                <p className="text-sm font-medium text-slate-700 truncate max-w-[200px]" title={order.customerName}>{order.customerName}</p>
-                                <span className="text-xs text-slate-400 flex items-center gap-1"><Calendar size={11} /> {new Date(order.orderDate).toLocaleDateString()}</span>
-                            </div>
-                            <div className="text-right shrink-0">
-                                <p className="text-base font-bold text-slate-800">{order.currency} {order.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                            </div>
-                        </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+                <table className="w-full table-fixed text-left">
+                    <colgroup>
+                        <col style={{ width: '10%' }} />
+                        <col style={{ width: '8%' }} />
+                        <col style={{ width: '18%' }} />
+                        <col style={{ width: '13%' }} />
+                        <col style={{ width: '11%' }} />
+                        <col style={{ width: '4%' }} />
+                        <col style={{ width: '7%' }} />
+                        <col style={{ width: '12%' }} />
+                        <col style={{ width: '17%' }} />
+                    </colgroup>
+                    <thead>
+                        <tr className="bg-slate-50 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                            <th className="px-2 py-2">Order #</th>
+                            <th className="px-2 py-2">Type</th>
+                            <th className="px-2 py-2">Customer</th>
+                            <th className="px-2 py-2">Delivery</th>
+                            <th className="px-2 py-2">POD</th>
+                            <th className="px-2 py-2 text-center">Items</th>
+                            <th className="px-2 py-2">Date</th>
+                            <th className="px-2 py-2 text-right">Amount</th>
+                            <th className="px-2 py-2 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filteredOrders.map(order => (
+                            <tr key={order.id} className="border-b border-slate-100 hover:bg-slate-50/80 transition-colors bg-white">
+                                {/* Order # */}
+                                <td className="px-2 py-2">
+                                    <span className="text-xs font-bold text-slate-800 font-mono">{order.orderNumber}</span>
+                                </td>
 
-                        {/* Line 2: Details + Actions */}
-                        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                            <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
-                                {(order.deliveryMethod || order.incoterm) && (
-                                    <span className="flex items-center gap-1">
-                                        <Truck size={11} className="text-slate-400" />
-                                        {order.deliveryMethod && <span className="mr-1">{order.deliveryMethod}</span>}
-                                        {order.incoterm && <span className="font-bold bg-slate-100 px-1 rounded text-slate-600">{order.incoterm}</span>}
-                                    </span>
-                                )}
-                                {order.pod && <span className="flex items-center gap-1"><Anchor size={11} className="text-slate-400" /> {order.pod}</span>}
-                                <span className="flex items-center gap-1 text-slate-400"><Package size={11} /> {order.items.length} Items</span>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                                {order.status === 'PENDING' && isAdminOrManager && (
-                                    <>
-                                        <button onClick={() => handleStatusChange(order, 'APPROVED')} className="text-[10px] bg-emerald-600 text-white px-2 py-1 rounded hover:bg-emerald-700 flex items-center gap-1 whitespace-nowrap"><CheckCircle size={11} /> Approve</button>
-                                        <button onClick={() => handleStatusChange(order, 'REJECTED')} className="text-[10px] bg-red-50 text-red-600 px-2 py-1 rounded hover:bg-red-100 flex items-center gap-1 whitespace-nowrap"><XCircle size={11} /> Reject</button>
-                                    </>
-                                )}
-                                {order.status === 'APPROVED' && isAdminOrManager && (
-                                    <>
-                                        <button onClick={() => generateSalesDoc(order, 'PROFORMA', false)} className="text-[10px] bg-slate-50 text-slate-600 border border-slate-200 px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-1 whitespace-nowrap"><FileText size={11} /> Proforma</button>
-                                        <button onClick={() => generateSalesDoc(order, 'CONTRACT', false)} className="text-[10px] bg-slate-50 text-slate-600 border border-slate-200 px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-1 whitespace-nowrap"><FileText size={11} /> Contract</button>
-                                        <button onClick={() => handleEmailOrder(order)} className="text-[10px] bg-slate-50 text-slate-600 border border-slate-200 px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-1 whitespace-nowrap"><Mail size={11} /> Email</button>
-                                    </>
-                                )}
-                                <button onClick={() => handleEditOrder(order)} className="text-slate-400 hover:text-blue-600 p-1" title="Edit"><Edit3 size={13} /></button>
-                                <button onClick={(e) => handleDeleteOrder(order.id, e)} className="text-slate-400 hover:text-red-600 p-1" title="Delete"><Trash2 size={13} /></button>
-                            </div>
-                        </div>
-                    </div>
-                ))}
+                                {/* Type Badges */}
+                                <td className="px-2 py-2">
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                        <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${order.orderType === 'CONTRACT' ? 'bg-purple-50 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>{order.orderType === 'CONTRACT' ? 'CNTR' : 'SPOT'}</span>
+                                        <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${order.saleType === 'EXPORT' ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'}`}>{order.saleType === 'EXPORT' ? 'EXP' : 'LOC'}</span>
+                                    </div>
+                                </td>
+
+                                {/* Customer */}
+                                <td className="px-2 py-2">
+                                    <span className="text-xs font-medium text-slate-700 block" title={order.customerName}>{(order.customerName || '').split(/\s+/).slice(0, 2).join(' ')}</span>
+                                </td>
+
+                                {/* Delivery / Incoterm */}
+                                <td className="px-2 py-2">
+                                    {(order.deliveryMethod || order.incoterm) ? (
+                                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                                            <Truck size={10} className="text-slate-400 shrink-0" />
+                                            {order.incoterm && <span className="font-bold bg-slate-100 px-1 rounded text-slate-600">{order.incoterm}</span>}
+                                        </div>
+                                    ) : <span className="text-[10px] text-slate-300">—</span>}
+                                </td>
+
+                                {/* POD */}
+                                <td className="px-2 py-2">
+                                    {order.pod ? (
+                                        <span className="text-[10px] text-slate-600 truncate block" title={order.pod}>{order.pod}</span>
+                                    ) : <span className="text-[10px] text-slate-300">—</span>}
+                                </td>
+
+                                {/* Items */}
+                                <td className="px-2 py-2 text-center">
+                                    <span className="text-[10px] text-slate-400">{order.items.length}</span>
+                                </td>
+
+                                {/* Date */}
+                                <td className="px-2 py-2">
+                                    <span className="text-[10px] text-slate-500">{new Date(order.orderDate).toLocaleDateString()}</span>
+                                </td>
+
+                                {/* Amount */}
+                                <td className="px-2 py-2 text-right">
+                                    <span className="text-xs font-bold text-slate-800 whitespace-nowrap">{order.currency} {order.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                </td>
+
+                                {/* Actions */}
+                                <td className="px-2 py-2 text-right">
+                                    <div className="flex items-center justify-end gap-1 flex-wrap">
+                                        {order.status === 'PENDING' && isAdminOrManager && (
+                                            <>
+                                                <button onClick={() => handleStatusChange(order, 'APPROVED')} className="text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded hover:bg-emerald-700 flex items-center gap-1 whitespace-nowrap"><CheckCircle size={10} /> Approve</button>
+                                                <button onClick={() => handleStatusChange(order, 'REJECTED')} className="text-[10px] bg-red-50 text-red-600 px-2 py-0.5 rounded hover:bg-red-100 flex items-center gap-1 whitespace-nowrap"><XCircle size={10} /> Reject</button>
+                                            </>
+                                        )}
+                                        {order.status === 'APPROVED' && isAdminOrManager && (
+                                            <>
+                                                <button onClick={() => generateSalesDoc(order, 'PROFORMA', false)} className="text-[10px] bg-slate-50 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded hover:bg-slate-100 flex items-center gap-0.5 whitespace-nowrap"><FileText size={10} /> Proforma</button>
+                                                <button onClick={() => generateSalesDoc(order, 'CONTRACT', false)} className="text-[10px] bg-slate-50 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded hover:bg-slate-100 flex items-center gap-0.5 whitespace-nowrap"><FileText size={10} /> Contract</button>
+                                                <button onClick={() => handleEmailOrder(order)} className="text-[10px] bg-slate-50 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded hover:bg-slate-100 flex items-center gap-0.5 whitespace-nowrap"><Mail size={10} /></button>
+                                            </>
+                                        )}
+                                        <button onClick={() => handleEditOrder(order)} className="text-slate-400 hover:text-blue-600 p-0.5" title="Edit"><Edit3 size={12} /></button>
+                                        <button onClick={(e) => handleDeleteOrder(order.id, e)} className="text-slate-400 hover:text-red-600 p-0.5" title="Delete"><Trash2 size={12} /></button>
+                                    </div>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
                 {filteredOrders.length === 0 && (
-                    <div className="text-center py-12 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                    <div className="text-center py-12 text-slate-400 bg-slate-50 border-dashed border-slate-200">
                         <ClipboardList size={48} className="mx-auto mb-2 opacity-20" />
                         <p>No orders in {activeTab.toLowerCase()}.</p>
                     </div>
@@ -1937,7 +1989,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                                             >
                                                 <option value="">Select Location to Add...</option>
                                                 <option value="_ADD_NEW_" className="font-bold text-blue-600 bg-blue-50">+ Add New Location</option>
-                                                {locations.map(l => <option key={l.id} value={`${l.address}, ${l.city}, ${l.state}`}>{`${l.name} - ${l.city}`}</option>)}
+                                                {[...locations].sort((a, b) => a.name.localeCompare(b.name)).map(l => <option key={l.id} value={`${l.address}, ${l.city}, ${l.state}`}>{`${l.name} - ${l.city}`}</option>)}
                                             </select>
                                             <button
                                                 type="button"
@@ -1988,7 +2040,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                                         >
                                             <option value="">Select Port...</option>
                                             <option value="_ADD_NEW_" className="font-bold text-blue-600 bg-blue-50">+ Add New Port</option>
-                                            {ports.map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
+                                            {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
                                         </select>
                                     </div>
                                     <div>
@@ -2007,7 +2059,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                                         >
                                             <option value="">Select Port...</option>
                                             <option value="_ADD_NEW_" className="font-bold text-blue-600 bg-blue-50">+ Add New Port</option>
-                                            {ports.map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
+                                            {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
                                         </select>
                                     </div>
                                 </div>

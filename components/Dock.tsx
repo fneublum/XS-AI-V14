@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     LayoutDashboard, FileText, Container, ClipboardList, Mail, MessageCircleQuestion,
     Database, Wifi, Package, Anchor, Truck, Ship, MapPin, Building, ShoppingCart,
-    Tag, FileQuestion, Users, TrendingUp, PieChart, Bot, List, Calculator, Globe,
+    Tag, FileQuestion, Users, TrendingUp, PieChart, Bot, List, Calculator,
     Plane, Table, History, User, Sparkles, Receipt, Warehouse, PenTool, LayoutTemplate,
     Target, DollarSign, FileSpreadsheet, Plus, X, Search, Minus,
-    Factory, Building2, ScanText, FileSearch, CalendarCheck, UserCog, Brain,
-    CircuitBoard, FileStack, BookOpen, GraduationCap, Gavel, Scan, Sliders
+    Factory, Building2, ScanText, FileSearch, CalendarCheck, UserCog, UserCheck, Phone,
+    CircuitBoard, FileStack, BookOpen, GraduationCap, Gavel, Scan, Sliders, Settings
 } from 'lucide-react';
+
 
 const BRFlag = ({ size = 16, className = "" }: { size?: number | string, className?: string }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
@@ -30,43 +31,64 @@ export interface Task {
 }
 
 // Full list of available tasks
-// Mapped from App.tsx structures
+// Mapped from config/navigation.ts and App.tsx module routing
 export const AVAILABLE_TASKS: Task[] = [
-    // BUY
-    { id: 'BUY_AI', label: 'Buy - AI', icon: Brain, module: 'BUY', subModule: 'AI', color: 'red' },
+    // DASHBOARD
+    { id: 'DASHBOARD', label: 'Dashboard', icon: LayoutDashboard, module: 'DASHBOARD', subModule: '' },
+
+    // CONNECTIONS
+    { id: 'CONNECTIONS', label: 'Connections', icon: Mail, module: 'CONNECTIONS', subModule: '', color: 'red' },
+
+    // BUY (Purchase)
     { id: 'SUPPLIERS', label: 'Suppliers', icon: Factory, module: 'BUY', subModule: '' },
     { id: 'OFFERS', label: 'Supplier Quotes', icon: Tag, module: 'BUY', subModule: 'OFFERS' },
     { id: 'PO', label: 'Purchase Orders', icon: ShoppingCart, module: 'BUY', subModule: 'PO' },
+    { id: 'INVENTORY', label: 'Inventory', icon: Warehouse, module: 'BUY', subModule: 'STOCK' },
+    { id: 'COST', label: 'Cost', icon: Calculator, module: 'BUY', subModule: 'COST' },
+    { id: 'SAVED_COSTS', label: 'Saved Costs', icon: History, module: 'BUY', subModule: 'HISTORY' },
 
-    // SELL
-    { id: 'SELL_AI', label: 'Sell - AI', icon: Brain, module: 'SELL', subModule: 'AI', color: 'red' },
-    { id: 'SMAIL', label: 'SMAIL Assistant', icon: Sparkles, module: 'SELL', subModule: 'SMAIL', color: 'blue' },
-    { id: 'ICRM', label: 'iCRM', icon: Target, module: 'SELL', subModule: 'ICRM', color: 'blue' },
-    { id: 'CUSTOMERS', label: 'Customers', icon: Users, module: 'SELL', subModule: '' },
-    { id: 'PIPELINE', label: 'Pipeline', icon: TrendingUp, module: 'SELL', subModule: 'PIPELINE' },
-    { id: 'CUST_STATUS', label: 'Customer 360', icon: PieChart, module: 'SELL', subModule: 'STATUS' },
-    { id: 'PRICELIST', label: 'Price List', icon: List, module: 'SELL', subModule: 'PRICELIST' },
-    { id: 'SALES_ORDERS', label: 'Sales Orders', icon: ClipboardList, module: 'SELL', subModule: 'ORDERS' },
-    { id: 'SALE_BRAZIL', label: 'Sale Brazil', icon: BRFlag, module: 'SELL', subModule: 'SALE_BRAZIL', color: 'green' },
+    // COST_PROFIT_AI (Order-Sale)
+    { id: 'COST_PROFIT_AI', label: 'Order-Sale', icon: Sparkles, module: 'COST_PROFIT_AI', subModule: '', color: 'rose' },
+    { id: 'ORDER_SALE', label: 'Order-Sale Engine', icon: Sparkles, module: 'COST_PROFIT_AI', subModule: 'ORDER_SALE' },
+    { id: 'ICRM', label: 'iCRM', icon: Target, module: 'COST_PROFIT_AI', subModule: 'ICRM', color: 'blue' },
+    { id: 'CUSTOMERS', label: 'Customers', icon: Users, module: 'COST_PROFIT_AI', subModule: 'CUSTOMERS' },
+    { id: 'PIPELINE', label: 'Pipeline', icon: TrendingUp, module: 'COST_PROFIT_AI', subModule: 'PIPELINE' },
+    { id: 'CUST_STATUS', label: 'Customer 360', icon: PieChart, module: 'COST_PROFIT_AI', subModule: 'STATUS' },
+    { id: 'PRICELIST', label: 'Price List', icon: List, module: 'COST_PROFIT_AI', subModule: 'PRICELIST' },
+    { id: 'SALES_ORDERS', label: 'Sales Orders', icon: ClipboardList, module: 'COST_PROFIT_AI', subModule: 'ORDERS' },
+    { id: 'SALE_BRAZIL', label: 'Sale Brazil', icon: BRFlag, module: 'COST_PROFIT_AI', subModule: 'SALE_BRAZIL', color: 'green' },
 
-    // CALCULATOR
-    { id: 'CALC_AI', label: 'Calc - AI', icon: Brain, module: 'CALCULATOR', subModule: 'AI', color: 'red' },
-    { id: 'IMPORT', label: 'Import Calc', icon: Globe, module: 'CALCULATOR', subModule: '' },
-    { id: 'EXPORT', label: 'Export Calc', icon: Plane, module: 'CALCULATOR', subModule: 'EXPORT' },
-    { id: 'LOCAL', label: 'Local Freight', icon: Truck, module: 'CALCULATOR', subModule: 'LOCAL' },
-    { id: 'SAVED_COSTS', label: 'Saved Costs', icon: History, module: 'CALCULATOR', subModule: 'HISTORY' },
-    { id: 'COST_SHEET', label: 'Cost Sheet', icon: Table, module: 'CALCULATOR', subModule: 'SHEET' },
+    // PAPERWORK
+    { id: 'PL_INVOICE_ENGINE', label: 'Paperwork', icon: FileStack, module: 'PAPERWORK', subModule: '', color: 'green' },
+
+    // SALES HUB
+    { id: 'SALES_HUB', label: 'Sales Hub', icon: Target, module: 'SALES_HUB', subModule: '', color: 'rose' },
+
+    // SALES FORCE (Sales role exclusive)
+    { id: 'SF_CUSTOMERS', label: 'Customers', icon: Users, module: 'SALES_FORCE', subModule: 'CUSTOMERS' },
+    { id: 'SF_ORDERS', label: 'Sales Orders', icon: ClipboardList, module: 'SALES_FORCE', subModule: 'ORDERS' },
+    { id: 'SF_PIPELINE', label: 'Pipeline', icon: TrendingUp, module: 'SALES_FORCE', subModule: 'PIPELINE' },
+    { id: 'SF_PRICELIST', label: 'Price List', icon: List, module: 'SALES_FORCE', subModule: 'PRICELIST' },
+    { id: 'SF_ICRM', label: 'iCRM', icon: Target, module: 'SALES_FORCE', subModule: 'ICRM', color: 'blue' },
+
+    // COMMISSIONS
+    { id: 'COMMISSIONS', label: 'Commissions', icon: DollarSign, module: 'COMMISSIONS', subModule: '', color: 'orange' },
 
     // LOGISTICS
-    { id: 'LOG_AI', label: 'Logistics - AI', icon: Brain, module: 'LOGISTICS', subModule: 'AI', color: 'red' },
-    { id: 'LOGISTICS_MANAGER', label: 'Logistic Manager', icon: Sliders, module: 'LOGISTICS', subModule: 'LOGISTICS_MANAGE' },
-    { id: 'INVENTORY', label: 'Inventory', icon: Warehouse, module: 'LOGISTICS', subModule: 'STOCK' },
+    { id: 'LOGISTICS_AI', label: 'Logistics AI', icon: CircuitBoard, module: 'LOGISTICS', subModule: 'LOGISTICS_AI', color: 'blue' },
+    { id: 'LOGISTICS_MANAGE', label: 'Logistics Manage', icon: Truck, module: 'LOGISTICS', subModule: 'LOGISTICS_MANAGE' },
     { id: 'BL', label: 'Bill of Ladings', icon: FileText, module: 'LOGISTICS', subModule: 'BL' },
     { id: 'BOOKINGS', label: 'Bookings', icon: CalendarCheck, module: 'LOGISTICS', subModule: 'BOOKINGS' },
     { id: 'FREIGHT_QUOTES', label: 'Freight Quotes', icon: Ship, module: 'LOGISTICS', subModule: 'FREIGHT' },
+    { id: 'LOGISTICS_AGENTS', label: 'Cargo Agents', icon: UserCog, module: 'LOGISTICS', subModule: 'AGENTS' },
+    { id: 'LOGISTICS_STOCK', label: 'Inventory (Log)', icon: Warehouse, module: 'LOGISTICS', subModule: 'STOCK' },
+
+    // FINANCE
+    { id: 'FINANCE_PAYABLES', label: 'Payables', icon: Receipt, module: 'FINANCE', subModule: '' },
+    { id: 'FINANCE_RECEIVABLES', label: 'Receivables', icon: Receipt, module: 'FINANCE', subModule: 'RECEIVABLES' },
 
     // DATA
-    { id: 'DATA_AI', label: 'Data - AI', icon: Brain, module: 'DATA', subModule: 'AI', color: 'red' },
+    { id: 'BANKS', label: 'Banks', icon: Building, module: 'DATA', subModule: 'BANKS' },
     { id: 'AGENTS', label: 'Cargo Agents', icon: UserCog, module: 'DATA', subModule: 'AGENTS' },
     { id: 'CARRIERS', label: 'Carriers', icon: Ship, module: 'DATA', subModule: 'CARRIERS' },
     { id: 'DATA_CUSTOMERS', label: 'Data - Customers', icon: Users, module: 'DATA', subModule: 'CUSTOMERS' },
@@ -75,17 +97,21 @@ export const AVAILABLE_TASKS: Task[] = [
     { id: 'PORTS', label: 'Ports', icon: Anchor, module: 'DATA', subModule: 'PORTS' },
     { id: 'PRODUCTS', label: 'Products', icon: Package, module: 'DATA', subModule: 'PRODUCTS' },
     { id: 'DATA_SUPPLIERS', label: 'Data - Suppliers', icon: Building, module: 'DATA', subModule: 'SUPPLIERS' },
+    { id: 'DOC_OCR', label: 'Doc OCR', icon: ScanText, module: 'DATA', subModule: 'INVOICE' },
 
-    // AUTOMATION (AI_UPLOAD)
-    { id: 'DOC_OCR', label: 'Doc OCR', icon: ScanText, module: 'AI_UPLOAD', subModule: 'DOCS' },
-    { id: 'INBOX_SCANNER', label: 'Inbox Scanner', icon: Mail, module: 'AI_UPLOAD', subModule: 'SCANNER', color: 'red' },
-    { id: 'LOGISTICS_AI', label: 'Logistics AI', icon: CircuitBoard, module: 'AI_UPLOAD', subModule: 'LOGISTICS_AI', color: 'blue' },
-    { id: 'PL_INVOICE_ENGINE', label: 'PL/Invoice Engine', icon: FileStack, module: 'AI_UPLOAD', subModule: 'PL_ENGINE', color: 'green' },
-    { id: 'COMMISSIONS', label: 'Commissions', icon: DollarSign, module: 'AI_UPLOAD', subModule: 'COMMISSIONS', color: 'orange' },
+    // AI_UPLOAD
+    { id: 'INBOX_SCANNER', label: 'Inbox Scanner', icon: Mail, module: 'AI_UPLOAD', subModule: 'INBOX_SCANNER', color: 'red' },
+    { id: 'PROPOSAL_ENGINE', label: 'Proposal Engine', icon: FileQuestion, module: 'AI_UPLOAD', subModule: 'PROPOSAL_ENGINE', color: 'purple' },
+
+    // CUSTOMER PORTAL
+    { id: 'CUSTOMER_PORTAL', label: 'Client Portal', icon: UserCheck, module: 'CUSTOMER_PORTAL', subModule: '' },
 
     // SETTINGS
+    { id: 'ADMIN_USERS', label: 'Users', icon: Users, module: 'SETTINGS', subModule: 'USERS' },
     { id: 'COMPANIES', label: 'Companies', icon: Building2, module: 'SETTINGS', subModule: 'COMPANIES' },
-    { id: 'FORM_BUILDER', label: 'Form Builder', icon: PenTool, module: 'SETTINGS', subModule: 'FORMS' },
+    { id: 'ADMIN_DB', label: 'Database Config', icon: Database, module: 'SETTINGS', subModule: 'DB' },
+    { id: 'ADMIN_BRANDING', label: 'Branding & Logo', icon: PenTool, module: 'SETTINGS', subModule: 'BRANDING' },
+    { id: 'ADMIN_INTEGRATIONS', label: 'Email Integration', icon: Mail, module: 'SETTINGS', subModule: 'INTEGRATIONS' },
 ];
 
 const SPACER_TASK: Task = {
@@ -109,7 +135,7 @@ interface DockProps {
 
 const Dock: React.FC<DockProps> = ({ activeModule, subModule, setActiveModule, setSubModule, currentUser, onUpdateUser, onToggleHelp }) => {
     // Default items
-    const DEFAULT_DOCK_IDS = ['LOGISTICS_AI', 'PORTS', 'COST_SHEET'];
+    const DEFAULT_DOCK_IDS = ['LOGISTICS_AI', 'PORTS', 'COST'];
 
     const [dockItems, setDockItems] = useState<Task[]>([]);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -124,12 +150,20 @@ const Dock: React.FC<DockProps> = ({ activeModule, subModule, setActiveModule, s
         return ids.map((id, index) => {
             if (id.startsWith('SPACER')) return { ...SPACER_TASK, id: `SPACER_${index}_${Date.now()}` };
 
-            // Migration for old consolidated icons
-            if (id === 'PL_ENGINE' || id === 'INVOICE_ENGINE') {
-                return AVAILABLE_TASKS.find(t => t.id === 'PL_INVOICE_ENGINE');
-            }
+            // Migration for old/renamed icons
+            const MIGRATION_MAP: Record<string, string> = {
+                'PL_ENGINE': 'PL_INVOICE_ENGINE',
+                'INVOICE_ENGINE': 'PL_INVOICE_ENGINE',
+                'COST_SHEET': 'COST',
+                'FINANCE': 'FINANCE_PAYABLES',
+                'SMAIL': '', // removed, skip
+            };
 
-            return AVAILABLE_TASKS.find(t => t.id === id);
+            const migratedId = MIGRATION_MAP[id];
+            if (migratedId === '') return null; // skip removed items
+            const lookupId = migratedId || id;
+
+            return AVAILABLE_TASKS.find(t => t.id === lookupId);
         }).filter(Boolean) as Task[];
     };
 
@@ -137,7 +171,10 @@ const Dock: React.FC<DockProps> = ({ activeModule, subModule, setActiveModule, s
         // Hydration Logic: User Profile > Local Storage > Default
         let itemsToLoad: Task[] = [];
 
-        if (currentUser && currentUser.role === 'Cargo Agent') {
+        if (currentUser && currentUser.role === 'Sales') {
+            // FIXED DOCK FOR SALES
+            itemsToLoad = reconstructTasks(['SALES_HUB', 'SPACER', 'SF_CUSTOMERS', 'SPACER', 'SF_ORDERS', 'SPACER', 'COMMISSIONS']);
+        } else if (currentUser && currentUser.role === 'Cargo Agent') {
             // FIXED DOCK FOR CARGO AGENT
             itemsToLoad = reconstructTasks(['FREIGHT_QUOTES', 'SPACER', 'BOOKINGS', 'SPACER', 'BL']);
         } else if (currentUser && currentUser.dock_config && currentUser.dock_config.length > 0) {
@@ -385,7 +422,7 @@ const Dock: React.FC<DockProps> = ({ activeModule, subModule, setActiveModule, s
                             </button>
                         )}
 
-                        {currentUser?.role !== 'Cargo Agent' && (
+                        {currentUser?.role !== 'Cargo Agent' && currentUser?.role !== 'Sales' && (
                             <button
                                 onClick={(e) => removeFromDock(e, item.id)}
                                 className="absolute -top-3 -right-1 bg-slate-200 text-slate-500 rounded-full p-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 transition-opacity scale-75 z-10"
@@ -402,7 +439,7 @@ const Dock: React.FC<DockProps> = ({ activeModule, subModule, setActiveModule, s
             {dockItems.length > 0 && <div className="w-px h-6 bg-slate-300 mx-1"></div>}
 
             {/* Add Button - Hidden for Cargo Agent */}
-            {currentUser?.role !== 'Cargo Agent' && (
+            {currentUser?.role !== 'Cargo Agent' && currentUser?.role !== 'Sales' && (
                 <div className="relative">
                     <button
                         onClick={() => setIsMenuOpen(!isMenuOpen)}

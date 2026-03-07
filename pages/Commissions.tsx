@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CommissionSalesOrder, CommissionItem, Customer, Supplier, User, Role, SalesOrder, Invoice, Port, Booking, BillOfLading } from '../types';
-import { DollarSign, Plus, X, Save, UploadCloud, Loader2, FileText, CheckCircle, Clock, Shield, Truck, Link, Mail, Percent, AlertCircle, Trash2, Eye, Pencil, MapPin, FileCheck, Filter, ArrowUp, ArrowDown, Search, CheckCircle2, Receipt, ClipboardList, Ship, List, FilePlus, ScanEye, Sparkles, FileSpreadsheet, Download, Wallet, Layers } from 'lucide-react';
+import { DollarSign, Plus, X, Save, UploadCloud, Loader2, FileText, CheckCircle, Clock, Shield, Truck, Link, Mail, Percent, AlertCircle, Trash2, Eye, Pencil, MapPin, FileCheck, Filter, ArrowUp, ArrowDown, Search, CheckCircle2, Receipt, ClipboardList, Ship, List, FilePlus, ScanEye, Sparkles, FileSpreadsheet, Download, Wallet, Layers, Package } from 'lucide-react';
 import { analyzeDocument } from '../services/geminiService';
 import { getSupabaseClient } from '../services/supabase';
 import { PAYMENT_TERM_OPTIONS } from '../constants';
@@ -192,7 +192,7 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
 
     // --- AutoFilter State ---
     const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
-    const [filters, setFilters] = useState<Record<string, string[]>>({ commissionPaymentStatus: ['UNPAID'] });
+    const [filters, setFilters] = useState<Record<string, string[]>>({});
     const [filterSearch, setFilterSearch] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
     const filterMenuRef = useRef<HTMLDivElement>(null);
@@ -273,7 +273,7 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
     // --- Batch Invoice Upload Handlers ---
     const handleBatchFilesSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
-            const files = Array.from(e.target.files).filter(f =>
+            const files = Array.from(e.target.files as FileList).filter((f: File) =>
                 f.type === 'application/pdf' || f.type.startsWith('image/')
             );
             if (files.length === 0) return;
@@ -481,6 +481,7 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
             if (filterMenuRef.current && !filterMenuRef.current.contains(event.target as Node)) {
                 setActiveFilterColumn(null);
                 setFilterSearch('');
+                setFilterMenuPos(null);
             }
         }
         document.addEventListener("mousedown", handleClickOutside);
@@ -686,6 +687,7 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
     };
 
     // Render Column Header with AutoFilter
+    const [filterMenuPos, setFilterMenuPos] = useState<{ top: number; left: number } | null>(null);
     const renderColumnHeader = (id: keyof CommissionSalesOrder, label: string, align: 'left' | 'right' = 'left') => {
         const uniqueValues = getUniqueValues(rawData, id as string);
         const activeValues = filters[id as string] || [];
@@ -693,7 +695,7 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
         const isSorted = sortConfig?.key === id;
 
         return (
-            <th className={`p-3 text-xs font-semibold text-slate-500 uppercase relative group ${align === 'right' ? 'text-right' : 'text-left'}`}>
+            <th className={`p-3 text-xs font-semibold text-slate-500 uppercase group ${align === 'right' ? 'text-right' : 'text-left'}`}>
                 <div className={`flex items-center gap-1 ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
                     <span className="cursor-pointer hover:text-slate-700" onClick={() => handleSort(id as string)}>
                         {label}
@@ -704,15 +706,26 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
                         </span>
                     )}
                     <button
-                        onClick={(e) => { e.stopPropagation(); setActiveFilterColumn(activeFilterColumn === id ? null : id as string); setFilterSearch(''); }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (activeFilterColumn === id) {
+                                setActiveFilterColumn(null);
+                                setFilterMenuPos(null);
+                            } else {
+                                const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                                setFilterMenuPos({ top: rect.bottom + 4, left: Math.max(8, rect.right - 192) });
+                                setActiveFilterColumn(id as string);
+                            }
+                            setFilterSearch('');
+                        }}
                         className={`p-1 rounded hover:bg-slate-200 transition-colors ${isFilterActive ? 'text-blue-600 bg-blue-50' : 'text-slate-400 opacity-0 group-hover:opacity-100'}`}
                     >
                         <Filter size={12} fill={isFilterActive ? "currentColor" : "none"} />
                     </button>
                 </div>
 
-                {activeFilterColumn === id && (
-                    <div ref={filterMenuRef} className="absolute top-full mt-1 w-48 bg-white rounded-lg shadow-xl border border-slate-200 z-50 overflow-hidden text-left font-normal normal-case right-0">
+                {activeFilterColumn === id && filterMenuPos && (
+                    <div ref={filterMenuRef} className="fixed w-48 bg-white rounded-lg shadow-xl border border-slate-200 z-[100] overflow-hidden text-left font-normal normal-case" style={{ top: filterMenuPos.top, left: filterMenuPos.left }}>
                         <div className="p-2 border-b border-slate-100">
                             <div className="relative">
                                 <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -885,7 +898,7 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
 
     const handleColorsFilesSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
-            const files = Array.from(e.target.files).filter(f =>
+            const files = Array.from(e.target.files as FileList).filter((f: File) =>
                 f.name.endsWith('.xlsx') || f.name.endsWith('.xls')
             );
             if (files.length === 0) {
@@ -1541,42 +1554,44 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
                         </div>
                     </div>
                 )}
-                <div className="flex items-center gap-3 mb-4">
-                    <div className="p-2.5 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-sm">
-                        <Wallet size={24} />
-                    </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-slate-800">Commissions</h1>
-                        <p className="text-sm text-slate-500">Track and manage commission orders and invoices</p>
-                    </div>
-                </div>
-                <div className="flex justify-between items-center">
-                    <div className="flex border-b border-slate-200">
-                        <button onClick={() => { setCommissionView('COMMISSION_ORDERS'); setFilters({}); setSortConfig(null); }} className={`px-4 py-2 text-sm font-bold border-b-2 ${commissionView === 'COMMISSION_ORDERS' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500'}`}>
-                            Orders
-                        </button>
-                        <button onClick={() => { setCommissionView('COMMISSION_INVOICES'); setFilters({}); setSortConfig(null); }} className={`px-4 py-2 text-sm font-bold border-b-2 ${commissionView === 'COMMISSION_INVOICES' ? 'border-teal-500 text-teal-600' : 'border-transparent text-slate-500'}`}>
-                            Invoices
-                        </button>
+                <div className="mb-6 flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-gradient-to-r from-amber-500 to-orange-500 rounded-xl text-white">
+                            <Wallet size={24} />
+                        </div>
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-800">Commissions</h1>
+                            <p className="text-slate-500 text-sm mt-1">Track and manage commission orders and invoices</p>
+                        </div>
                     </div>
                     <div className="flex gap-2">
-                        <button onClick={handleNewOrder} className="flex items-center gap-2 px-3 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors shadow-sm" title="New Commission Order">
+                        <button onClick={handleNewOrder} className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-all shadow-md font-medium" title="New Commission Order">
                             <FilePlus size={18} />
-                            <span className="text-xs font-medium">New Order</span>
+                            New Order
                         </button>
-                        <button onClick={handleNewInvoice} className="flex items-center gap-2 px-3 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-colors shadow-sm" title="New Commission Invoice">
+                        <button onClick={handleNewInvoice} className="flex items-center gap-2 px-5 py-2.5 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-all shadow-md font-medium" title="New Commission Invoice">
                             <FilePlus size={18} />
-                            <span className="text-xs font-medium">New Invoice</span>
+                            New Invoice
                         </button>
-                        <button onClick={() => setShowBatchInvoiceModal(true)} className="flex items-center gap-2 px-3 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors shadow-sm" title="Batch Upload Multiple Invoices">
+                        <button onClick={() => setShowBatchInvoiceModal(true)} className="flex items-center gap-2 px-5 py-2.5 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all shadow-md font-medium" title="Batch Upload Multiple Invoices">
                             <Layers size={18} />
-                            <span className="text-xs font-medium">Batch Invoices</span>
+                            Batch Invoices
                         </button>
                     </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <button onClick={() => { setCommissionView('COMMISSION_ORDERS'); setFilters({}); setSortConfig(null); }} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${commissionView === 'COMMISSION_ORDERS' ? 'bg-orange-500 text-white shadow-md shadow-orange-200' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50 hover:text-slate-700'}`}>
+                        <Package size={16} />
+                        Orders
+                    </button>
+                    <button onClick={() => { setCommissionView('COMMISSION_INVOICES'); setFilters({ commissionPaymentStatus: ['UNPAID'] }); setSortConfig(null); }} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${commissionView === 'COMMISSION_INVOICES' ? 'bg-teal-500 text-white shadow-md shadow-teal-200' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50 hover:text-slate-700'}`}>
+                        <FileText size={16} />
+                        Invoices
+                    </button>
                 </div>
 
                 {commissionView === 'COMMISSION_ORDERS' && (
-                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-slate-50 border-b border-slate-200">
                                 <tr>
@@ -1590,11 +1605,27 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
                                     {renderColumnHeader('status', 'Status')}
                                     <th className="p-3 text-right text-xs font-semibold text-slate-500 uppercase cursor-default">QTY</th>
                                     {renderColumnHeader('orderTotal', 'GRAND TOTAL', 'right')}
+                                    {renderColumnHeader('commissionRate', 'COMM %', 'right')}
+                                    {renderColumnHeader('commissionAmount', 'COMMISSION', 'right')}
                                     <th className="p-3 text-right text-xs font-semibold text-slate-500 uppercase">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 text-sm">
-                                {processedData.map(order => (
+                                {processedData.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={13} className="py-8 text-center">
+                                            <p className="text-slate-400 text-sm mb-2">No matching records found</p>
+                                            {Object.keys(filters).length > 0 && (
+                                                <button
+                                                    onClick={() => setFilters({})}
+                                                    className="text-xs text-blue-600 hover:text-blue-800 font-semibold px-3 py-1.5 rounded-full border border-blue-200 hover:bg-blue-50 transition-colors"
+                                                >
+                                                    Clear All Filters
+                                                </button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ) : processedData.map(order => (
                                     <tr key={order.id} className="hover:bg-slate-50 group">
                                         <td className="py-1.5 px-3 font-mono font-bold text-slate-700">{order.orderNumber}</td>
                                         <td className="py-1.5 px-3" title={order.sellerName}>{order.sellerName?.split(/[\s,]+/)[0] || ''}</td>
@@ -1617,6 +1648,8 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
                                             } catch { return '—'; }
                                         })()}</td>
                                         <td className="py-1.5 px-3 text-right font-mono text-slate-800">${(order.orderTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                        <td className="py-1.5 px-3 text-right font-mono text-slate-500">{order.commissionType === 'PERCENT' ? `${order.commissionRate || 0}%` : order.commissionType === 'PER_LBS' ? `$${order.commissionRate || 0}/lb` : order.commissionType === 'PER_KGS' ? `$${order.commissionRate || 0}/kg` : `${order.commissionRate || 0}%`}</td>
+                                        <td className="py-1.5 px-3 text-right font-mono font-bold text-emerald-600">${(order.commissionAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                         <td className="py-1.5 px-3 text-right">
                                             <div className="flex items-center justify-end gap-2 transition-opacity">
                                                 <button onClick={(e) => { e.stopPropagation(); setBookingOcrOrder(order); }} className="p-1 text-slate-400 hover:text-purple-600 rounded-lg hover:bg-purple-50" title="OCR Booking">
@@ -1638,507 +1671,515 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
                                     </tr>
                                 ))}
                             </tbody>
-                        </table>
-                    </div>
-                )}
-
-                {commissionView === 'COMMISSION_INVOICES' && (
-                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                        <table className="w-full text-left">
-                            <thead className="bg-slate-50 border-b border-slate-200">
-                                <tr>
-                                    {renderColumnHeader('invoiceNumber', 'Invoice #')}
-                                    {renderColumnHeader('sellerName', 'Seller')}
-                                    {renderColumnHeader('customerName', 'Customer')}
-                                    {renderColumnHeader('pod', 'POD')}
-                                    <th className="p-3 text-left text-xs font-semibold text-slate-500 uppercase">BL#</th>
-                                    <th className="p-3 text-left text-xs font-semibold text-slate-500 uppercase">ETD</th>
-                                    <th className="p-3 text-left text-xs font-semibold text-slate-500 uppercase">ETA</th>
-                                    {renderColumnHeader('orderTotal', 'Invoice Total', 'right')}
-                                    {renderColumnHeader('invoiceStatus', 'Invoice Status')}
-                                    {renderColumnHeader('commissionAmount', 'Commission', 'right')}
-                                    {renderColumnHeader('commissionPaymentStatus', 'Commission Status')}
-                                    <th className="p-3 text-right text-xs font-semibold text-slate-500 uppercase">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 text-sm">
-                                {processedData.map(invoice => (
-                                    <tr key={invoice.id} className="hover:bg-slate-50">
-                                        <td className="py-1.5 px-3 font-mono font-bold text-slate-700">{invoice.invoiceNumber || invoice.orderNumber}</td>
-                                        <td className="py-1.5 px-3" title={invoice.sellerName}>{invoice.sellerName?.split(/[\s,]+/)[0] || ''}</td>
-                                        <td className="py-1.5 px-3" title={invoice.customerName}>{invoice.customerName?.split(/[\s,]+/)[0] || ''}</td>
-                                        <td className="py-1.5 px-3 font-bold">{getDisplayPod(invoice.pod || '')}</td>
-                                        <td className="py-1.5 px-3 font-mono text-blue-600">{(invoice as any).blNumber || billOfLadings.find(bl => bl.blNumber === invoice.invoiceNumber || bl.blNumber === invoice.orderNumber || bl.bookingNumber === invoice.invoiceNumber)?.blNumber || '—'}</td>
-                                        <td className="py-1.5 px-3 text-slate-500">{(invoice as any).etd || billOfLadings.find(bl => bl.blNumber === invoice.invoiceNumber || bl.blNumber === invoice.orderNumber || bl.bookingNumber === invoice.invoiceNumber)?.shippedDate || '—'}</td>
-                                        <td className="py-1.5 px-3 text-slate-500">{(invoice as any).eta || billOfLadings.find(bl => bl.blNumber === invoice.invoiceNumber || bl.blNumber === invoice.orderNumber || bl.bookingNumber === invoice.invoiceNumber)?.eta || '—'}</td>
-                                        <td className="py-1.5 px-3 text-right font-mono text-slate-800">${(invoice.orderTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                        <td className="py-1.5 px-3">
-                                            <span className={`px-2 py-1 rounded text-xs font-bold ${invoice.invoiceStatus === 'PAID' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                                                }`}>{invoice.invoiceStatus || 'UNPAID'}</span>
-                                        </td>
-                                        <td className="py-1.5 px-3 text-right font-mono font-bold text-emerald-600">${(invoice.commissionAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                        <td className="py-1.5 px-3">
-                                            <span className={`px-2 py-1 rounded text-xs font-bold ${invoice.commissionPaymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                                                }`}>{invoice.commissionPaymentStatus || 'UNPAID'}</span>
-                                        </td>
-                                        <td className="py-1.5 px-3 text-right">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <button onClick={(e) => handleFetchDocument(invoice.id, 'BL', e)} className="p-1 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50" title="View Bill of Lading">
-                                                    {loadingDoc?.id === invoice.id && loadingDoc?.type === 'BL' ? <Loader2 className="animate-spin" size={16} /> : <Ship size={16} />}
-                                                </button>
-                                                <button onClick={(e) => handleFetchDocument(invoice.id, 'PL', e)} className="p-1 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-teal-50" title="View Packing List">
-                                                    {loadingDoc?.id === invoice.id && loadingDoc?.type === 'PL' ? <Loader2 className="animate-spin" size={16} /> : <List size={16} />}
-                                                </button>
-                                                <button onClick={(e) => handleFetchDocument(invoice.id, 'INVOICE', e)} className="p-1 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50" title="View Invoice">
-                                                    {loadingDoc?.id === invoice.id && loadingDoc?.type === 'INVOICE' ? <Loader2 className="animate-spin" size={16} /> : <Eye size={16} />}
-                                                </button>
-                                                <button onClick={(e) => handleEdit(invoice, e)} className="p-1 text-slate-400 hover:text-amber-600 rounded-lg hover:bg-amber-50" title="Edit">
-                                                    <Pencil size={16} />
-                                                </button>
-                                                <button onClick={(e) => handleDeleteClick(invoice.id, e)} className="p-1 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50" title="Delete">
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </div>
-                                        </td>
+                            {processedData.length > 0 && (
+                                <tfoot className="bg-slate-50 border-t-2 border-slate-300">
+                                    <tr>
+                                        <td colSpan={9} className="p-3 text-right text-xs font-bold text-slate-500 uppercase">Totals</td>
+                                        <td className="p-3 text-right font-mono font-bold text-slate-800">${processedData.reduce((sum, o) => sum + (o.orderTotal || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        <td className="p-3"></td>
+                                        <td className="p-3 text-right font-mono font-bold text-emerald-600">${processedData.reduce((sum, o) => sum + (o.commissionAmount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        <td className="p-3"></td>
                                     </tr>
-                                ))}
-                            </tbody>
-                            <tfoot className="bg-slate-50 border-t border-slate-200">
-                                <tr>
-                                    <td colSpan={5} className="p-3 text-right text-xs font-bold text-slate-500 uppercase">Total Unpaid Commission</td>
-                                    <td className="p-3 text-right font-mono font-bold text-red-600">${totalUnpaidCommission.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                    <td colSpan={2}></td>
-                                </tr>
-                            </tfoot>
+                                </tfoot>
+                            )}
                         </table>
                     </div>
-                )}
+                )
+                }
+
+                {
+                    commissionView === 'COMMISSION_INVOICES' && (
+                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+                            <table className="w-full text-left">
+                                <thead className="bg-slate-50 border-b border-slate-200">
+                                    <tr>
+                                        {renderColumnHeader('invoiceNumber', 'Invoice #')}
+                                        {renderColumnHeader('sellerName', 'Seller')}
+                                        {renderColumnHeader('customerName', 'Customer')}
+                                        {renderColumnHeader('pod', 'POD')}
+                                        <th className="p-3 text-left text-xs font-semibold text-slate-500 uppercase">BL#</th>
+                                        <th className="p-3 text-left text-xs font-semibold text-slate-500 uppercase">ETD</th>
+                                        <th className="p-3 text-left text-xs font-semibold text-slate-500 uppercase">ETA</th>
+                                        {renderColumnHeader('orderTotal', 'Invoice Total', 'right')}
+                                        {renderColumnHeader('invoiceStatus', 'Invoice Status')}
+                                        {renderColumnHeader('commissionAmount', 'Commission', 'right')}
+                                        {renderColumnHeader('commissionPaymentStatus', 'Commission Status')}
+                                        <th className="p-3 text-right text-xs font-semibold text-slate-500 uppercase">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 text-sm">
+                                    {processedData.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={12} className="py-8 text-center">
+                                                <p className="text-slate-400 text-sm mb-2">No matching records found</p>
+                                                {Object.keys(filters).length > 0 && (
+                                                    <button
+                                                        onClick={() => setFilters({})}
+                                                        className="text-xs text-blue-600 hover:text-blue-800 font-semibold px-3 py-1.5 rounded-full border border-blue-200 hover:bg-blue-50 transition-colors"
+                                                    >
+                                                        Clear All Filters
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ) : processedData.map(invoice => (
+                                        <tr key={invoice.id} className="hover:bg-slate-50">
+                                            <td className="py-1.5 px-3 font-mono font-bold text-slate-700">{invoice.invoiceNumber || invoice.orderNumber}</td>
+                                            <td className="py-1.5 px-3" title={invoice.sellerName}>{invoice.sellerName?.split(/[\s,]+/)[0] || ''}</td>
+                                            <td className="py-1.5 px-3" title={invoice.customerName}>{invoice.customerName?.split(/[\s,]+/)[0] || ''}</td>
+                                            <td className="py-1.5 px-3 font-bold">{getDisplayPod(invoice.pod || '')}</td>
+                                            <td className="py-1.5 px-3 font-mono text-blue-600">{(invoice as any).blNumber || billOfLadings.find(bl => bl.blNumber === invoice.invoiceNumber || bl.blNumber === invoice.orderNumber || bl.bookingNumber === invoice.invoiceNumber)?.blNumber || '—'}</td>
+                                            <td className="py-1.5 px-3 text-slate-500">{(invoice as any).etd || billOfLadings.find(bl => bl.blNumber === invoice.invoiceNumber || bl.blNumber === invoice.orderNumber || bl.bookingNumber === invoice.invoiceNumber)?.shippedDate || '—'}</td>
+                                            <td className="py-1.5 px-3 text-slate-500">{(invoice as any).eta || billOfLadings.find(bl => bl.blNumber === invoice.invoiceNumber || bl.blNumber === invoice.orderNumber || bl.bookingNumber === invoice.invoiceNumber)?.eta || '—'}</td>
+                                            <td className="py-1.5 px-3 text-right font-mono text-slate-800">${(invoice.orderTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                            <td className="py-1.5 px-3">
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${invoice.invoiceStatus === 'PAID' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                                                    }`}>{invoice.invoiceStatus || 'UNPAID'}</span>
+                                            </td>
+                                            <td className="py-1.5 px-3 text-right font-mono font-bold text-emerald-600">${(invoice.commissionAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                            <td className="py-1.5 px-3">
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${invoice.commissionPaymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                                                    }`}>{invoice.commissionPaymentStatus || 'UNPAID'}</span>
+                                            </td>
+                                            <td className="py-1.5 px-3 text-right">
+                                                <div className="flex items-center justify-end gap-2">
+                                                    <button onClick={(e) => handleFetchDocument(invoice.id, 'BL', e)} className="p-1 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50" title="View Bill of Lading">
+                                                        {loadingDoc?.id === invoice.id && loadingDoc?.type === 'BL' ? <Loader2 className="animate-spin" size={16} /> : <Ship size={16} />}
+                                                    </button>
+                                                    <button onClick={(e) => handleFetchDocument(invoice.id, 'PL', e)} className="p-1 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-teal-50" title="View Packing List">
+                                                        {loadingDoc?.id === invoice.id && loadingDoc?.type === 'PL' ? <Loader2 className="animate-spin" size={16} /> : <List size={16} />}
+                                                    </button>
+                                                    <button onClick={(e) => handleFetchDocument(invoice.id, 'INVOICE', e)} className="p-1 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50" title="View Invoice">
+                                                        {loadingDoc?.id === invoice.id && loadingDoc?.type === 'INVOICE' ? <Loader2 className="animate-spin" size={16} /> : <Eye size={16} />}
+                                                    </button>
+                                                    <button onClick={(e) => handleEdit(invoice, e)} className="p-1 text-slate-400 hover:text-amber-600 rounded-lg hover:bg-amber-50" title="Edit">
+                                                        <Pencil size={16} />
+                                                    </button>
+                                                    <button onClick={(e) => handleDeleteClick(invoice.id, e)} className="p-1 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50" title="Delete">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                                <tfoot className="bg-slate-50 border-t-2 border-slate-300">
+                                    <tr>
+                                        <td colSpan={7} className="p-3 text-right text-xs font-bold text-slate-500 uppercase">Totals</td>
+                                        <td className="p-3 text-right font-mono font-bold text-slate-800">${processedData.reduce((sum, i) => sum + (i.orderTotal || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        <td className="p-3"></td>
+                                        <td className="p-3 text-right font-mono font-bold text-emerald-600">${processedData.reduce((sum, i) => sum + (i.commissionAmount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        <td colSpan={2}></td>
+                                    </tr>
+                                    {totalUnpaidCommission > 0 && (
+                                        <tr>
+                                            <td colSpan={7} className="p-3 text-right text-xs font-bold text-red-500 uppercase">Unpaid Commission</td>
+                                            <td className="p-3"></td>
+                                            <td className="p-3"></td>
+                                            <td className="p-3 text-right font-mono font-bold text-red-600">${totalUnpaidCommission.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                            <td colSpan={2}></td>
+                                        </tr>
+                                    )}
+                                </tfoot>
+                            </table>
+                        </div>
+                    )
+                }
 
                 {/* Booking OCR Modal */}
-                {bookingOcrOrder && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md animate-in zoom-in-95">
-                            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-purple-50 to-indigo-50">
-                                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                                    <ScanEye size={20} className="text-purple-600" />
-                                    OCR Booking - {bookingOcrOrder.orderNumber}
-                                </h3>
-                                <button onClick={() => setBookingOcrOrder(null)} className="text-slate-400 hover:text-slate-600" disabled={bookingOcrProcessing}>
-                                    <X size={24} />
-                                </button>
-                            </div>
-                            <div className="p-6">
-                                <p className="text-sm text-slate-600 mb-4">
-                                    Upload a booking confirmation PDF to automatically extract the booking number, ETD, and save to Logistics AI.
-                                </p>
-                                <input
-                                    type="file"
-                                    ref={bookingFileInputRef}
-                                    accept=".pdf,image/*"
-                                    className="hidden"
-                                    onChange={(e) => {
-                                        const f = e.target.files?.[0];
-                                        if (f) handleBookingOcr(f);
-                                    }}
-                                />
-                                <div
-                                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                                    onDrop={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        const f = e.dataTransfer.files?.[0];
-                                        if (f && !bookingOcrProcessing) handleBookingOcr(f);
-                                    }}
-                                    onClick={() => !bookingOcrProcessing && bookingFileInputRef.current?.click()}
-                                    className={`w-full border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${bookingOcrProcessing
-                                        ? 'border-slate-200 bg-slate-50 cursor-wait'
-                                        : 'border-purple-300 hover:border-purple-500 hover:bg-purple-50'
-                                        }`}
-                                >
-                                    {bookingOcrProcessing ? (
-                                        <div className="flex flex-col items-center gap-3">
-                                            <Loader2 size={32} className="animate-spin text-purple-600" />
-                                            <span className="text-slate-600 font-medium">Processing booking...</span>
-                                        </div>
-                                    ) : (
-                                        <div className="flex flex-col items-center gap-3">
-                                            <UploadCloud size={32} className="text-purple-500" />
-                                            <span className="text-slate-600 font-medium">Drop PDF here or click to upload</span>
-                                            <span className="text-xs text-slate-400">Supports PDF and image files</span>
-                                        </div>
-                                    )}
+                {
+                    bookingOcrOrder && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+                            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md animate-in zoom-in-95">
+                                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-purple-50 to-indigo-50">
+                                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                        <ScanEye size={20} className="text-purple-600" />
+                                        OCR Booking - {bookingOcrOrder.orderNumber}
+                                    </h3>
+                                    <button onClick={() => setBookingOcrOrder(null)} className="text-slate-400 hover:text-slate-600" disabled={bookingOcrProcessing}>
+                                        <X size={24} />
+                                    </button>
+                                </div>
+                                <div className="p-6">
+                                    <p className="text-sm text-slate-600 mb-4">
+                                        Upload a booking confirmation PDF to automatically extract the booking number, ETD, and save to Logistics AI.
+                                    </p>
+                                    <input
+                                        type="file"
+                                        ref={bookingFileInputRef}
+                                        accept=".pdf,image/*"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                            const f = e.target.files?.[0];
+                                            if (f) handleBookingOcr(f);
+                                        }}
+                                    />
+                                    <div
+                                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                                        onDrop={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            const f = e.dataTransfer.files?.[0];
+                                            if (f && !bookingOcrProcessing) handleBookingOcr(f);
+                                        }}
+                                        onClick={() => !bookingOcrProcessing && bookingFileInputRef.current?.click()}
+                                        className={`w-full border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${bookingOcrProcessing
+                                            ? 'border-slate-200 bg-slate-50 cursor-wait'
+                                            : 'border-purple-300 hover:border-purple-500 hover:bg-purple-50'
+                                            }`}
+                                    >
+                                        {bookingOcrProcessing ? (
+                                            <div className="flex flex-col items-center gap-3">
+                                                <Loader2 size={32} className="animate-spin text-purple-600" />
+                                                <span className="text-slate-600 font-medium">Processing booking...</span>
+                                            </div>
+                                        ) : (
+                                            <div className="flex flex-col items-center gap-3">
+                                                <UploadCloud size={32} className="text-purple-500" />
+                                                <span className="text-slate-600 font-medium">Drop PDF here or click to upload</span>
+                                                <span className="text-xs text-slate-400">Supports PDF and image files</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )}
+                    )
+                }
 
                 {/* Batch Invoice Upload Modal */}
-                {showBatchInvoiceModal && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col animate-in zoom-in-95">
-                            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-indigo-50 to-blue-50 shrink-0">
-                                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                                    <Layers size={20} className="text-indigo-600" />
-                                    Batch Invoice Upload
-                                </h3>
-                                <button onClick={resetBatchModal} className="text-slate-400 hover:text-slate-600" disabled={batchProcessing}>
-                                    <X size={24} />
-                                </button>
-                            </div>
-                            <div className="p-5 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
-                                <p className="text-sm text-slate-600">
-                                    Upload a B/L first, then drop your invoice files. Set commission rate to save complete records.
-                                </p>
+                {
+                    showBatchInvoiceModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+                            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col animate-in zoom-in-95">
+                                <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-indigo-50 to-blue-50 shrink-0">
+                                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                        <Layers size={20} className="text-indigo-600" />
+                                        Batch Invoice Upload
+                                    </h3>
+                                    <button onClick={resetBatchModal} className="text-slate-400 hover:text-slate-600" disabled={batchProcessing}>
+                                        <X size={24} />
+                                    </button>
+                                </div>
+                                <div className="p-5 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
+                                    <p className="text-sm text-slate-600">
+                                        Upload a B/L first, then drop your invoice files. Set commission rate to save complete records.
+                                    </p>
 
-                                {/* Step 1: B/L Upload */}
-                                <div className="p-4 border border-slate-200 rounded-lg bg-slate-50/50 space-y-3">
-                                    <h4 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5">Step 1 — Bill of Lading</h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        {/* BL Drop Zone */}
-                                        <div
-                                            onClick={() => !batchProcessing && !batchBlProcessing && batchBlFileInputRef.current?.click()}
-                                            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                                            onDrop={(e) => {
-                                                e.preventDefault(); e.stopPropagation();
-                                                const f = e.dataTransfer.files?.[0];
-                                                if (f && !batchProcessing && !batchBlProcessing) handleBatchBlUpload(f);
-                                            }}
-                                            className={`p-4 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${batchBlProcessing ? 'border-slate-200 bg-slate-50 cursor-wait'
-                                                : batchBlFile ? 'border-emerald-400 bg-emerald-50'
-                                                    : 'border-blue-300 hover:border-blue-500 hover:bg-blue-50'
-                                                }`}
-                                        >
-                                            <input ref={batchBlFileInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden"
-                                                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBatchBlUpload(f); }} />
-                                            {batchBlProcessing ? (
-                                                <div className="flex flex-col items-center gap-2">
-                                                    <Loader2 size={24} className="animate-spin text-blue-600" />
-                                                    <span className="text-xs text-blue-600 font-medium">Analyzing B/L...</span>
-                                                </div>
-                                            ) : batchBlFile ? (
-                                                <div className="flex flex-col items-center gap-2">
-                                                    <CheckCircle size={24} className="text-emerald-500" />
-                                                    <span className="text-xs text-emerald-700 font-medium truncate max-w-full">{batchBlFile.name}</span>
-                                                    {batchBlData?.blNumber && <span className="text-xs font-bold text-slate-700">BL#: {batchBlData.blNumber}</span>}
-                                                </div>
-                                            ) : (
-                                                <div className="flex flex-col items-center gap-2">
-                                                    <Ship size={24} className="text-blue-400" />
-                                                    <span className="text-xs text-slate-600 font-medium">Drop B/L here</span>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {/* BL Info / Manual Input */}
-                                        <div className="space-y-2">
-                                            <div>
-                                                <label className="text-xs font-medium text-slate-500 mb-0.5 block">B/L Number</label>
-                                                <input type="text" value={batchBLNumber} onChange={e => setBatchBLNumber(e.target.value)}
-                                                    placeholder="Auto-filled from OCR or type manually" disabled={batchProcessing}
-                                                    className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300 outline-none" />
+                                    {/* Step 1: B/L Upload */}
+                                    <div className="p-4 border border-slate-200 rounded-lg bg-slate-50/50 space-y-3">
+                                        <h4 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5">Step 1 — Bill of Lading</h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {/* BL Drop Zone */}
+                                            <div
+                                                onClick={() => !batchProcessing && !batchBlProcessing && batchBlFileInputRef.current?.click()}
+                                                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                                                onDrop={(e) => {
+                                                    e.preventDefault(); e.stopPropagation();
+                                                    const f = e.dataTransfer.files?.[0];
+                                                    if (f && !batchProcessing && !batchBlProcessing) handleBatchBlUpload(f);
+                                                }}
+                                                className={`p-4 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${batchBlProcessing ? 'border-slate-200 bg-slate-50 cursor-wait'
+                                                    : batchBlFile ? 'border-emerald-400 bg-emerald-50'
+                                                        : 'border-blue-300 hover:border-blue-500 hover:bg-blue-50'
+                                                    }`}
+                                            >
+                                                <input ref={batchBlFileInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden"
+                                                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBatchBlUpload(f); }} />
+                                                {batchBlProcessing ? (
+                                                    <div className="flex flex-col items-center gap-2">
+                                                        <Loader2 size={24} className="animate-spin text-blue-600" />
+                                                        <span className="text-xs text-blue-600 font-medium">Analyzing B/L...</span>
+                                                    </div>
+                                                ) : batchBlFile ? (
+                                                    <div className="flex flex-col items-center gap-2">
+                                                        <CheckCircle size={24} className="text-emerald-500" />
+                                                        <span className="text-xs text-emerald-700 font-medium truncate max-w-full">{batchBlFile.name}</span>
+                                                        {batchBlData?.blNumber && <span className="text-xs font-bold text-slate-700">BL#: {batchBlData.blNumber}</span>}
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex flex-col items-center gap-2">
+                                                        <Ship size={24} className="text-blue-400" />
+                                                        <span className="text-xs text-slate-600 font-medium">Drop B/L here</span>
+                                                    </div>
+                                                )}
                                             </div>
-                                            {batchBlData && (
-                                                <div className="grid grid-cols-2 gap-1.5 text-xs">
-                                                    {batchBlData.etd && <div className="bg-white border border-slate-100 rounded px-2 py-1"><span className="text-slate-400">ETD:</span> <span className="font-medium">{batchBlData.etd}</span></div>}
-                                                    {batchBlData.eta && <div className="bg-white border border-slate-100 rounded px-2 py-1"><span className="text-slate-400">ETA:</span> <span className="font-medium">{batchBlData.eta}</span></div>}
-                                                    {batchBlData.vesselVoyage && <div className="bg-white border border-slate-100 rounded px-2 py-1 col-span-2"><span className="text-slate-400">Vessel:</span> <span className="font-medium">{batchBlData.vesselVoyage}</span></div>}
-                                                    {batchBlData.containerNumbers && <div className="bg-white border border-slate-100 rounded px-2 py-1 col-span-2 truncate"><span className="text-slate-400">Containers:</span> <span className="font-medium">{batchBlData.containerNumbers}</span></div>}
+
+                                            {/* BL Info / Manual Input */}
+                                            <div className="space-y-2">
+                                                <div>
+                                                    <label className="text-xs font-medium text-slate-500 mb-0.5 block">B/L Number</label>
+                                                    <input type="text" value={batchBLNumber} onChange={e => setBatchBLNumber(e.target.value)}
+                                                        placeholder="Auto-filled from OCR or type manually" disabled={batchProcessing}
+                                                        className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300 outline-none" />
                                                 </div>
-                                            )}
+                                                {batchBlData && (
+                                                    <div className="grid grid-cols-2 gap-1.5 text-xs">
+                                                        {batchBlData.etd && <div className="bg-white border border-slate-100 rounded px-2 py-1"><span className="text-slate-400">ETD:</span> <span className="font-medium">{batchBlData.etd}</span></div>}
+                                                        {batchBlData.eta && <div className="bg-white border border-slate-100 rounded px-2 py-1"><span className="text-slate-400">ETA:</span> <span className="font-medium">{batchBlData.eta}</span></div>}
+                                                        {batchBlData.vesselVoyage && <div className="bg-white border border-slate-100 rounded px-2 py-1 col-span-2"><span className="text-slate-400">Vessel:</span> <span className="font-medium">{batchBlData.vesselVoyage}</span></div>}
+                                                        {batchBlData.containerNumbers && <div className="bg-white border border-slate-100 rounded px-2 py-1 col-span-2 truncate"><span className="text-slate-400">Containers:</span> <span className="font-medium">{batchBlData.containerNumbers}</span></div>}
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
 
-                                {/* Step 2: Commission Config */}
-                                <div className="p-4 border border-slate-200 rounded-lg bg-slate-50/50 space-y-3">
-                                    <h4 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5">Step 2 — Commission Rate</h4>
-                                    <div className="flex items-center gap-2">
-                                        <div className="grid grid-cols-3 gap-1.5 flex-1">
-                                            <button type="button" onClick={() => setBatchCommissionType('PERCENT')}
-                                                className={`py-2 text-xs font-bold rounded-lg transition-all border ${batchCommissionType === 'PERCENT'
-                                                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'}`}>
-                                                Percentage (%)
-                                            </button>
-                                            <button type="button" onClick={() => setBatchCommissionType('PER_LBS')}
-                                                className={`py-2 text-xs font-bold rounded-lg transition-all border ${batchCommissionType === 'PER_LBS'
-                                                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'}`}>
-                                                $/LBS
-                                            </button>
-                                            <button type="button" onClick={() => setBatchCommissionType('PER_KGS')}
-                                                className={`py-2 text-xs font-bold rounded-lg transition-all border ${batchCommissionType === 'PER_KGS'
-                                                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'}`}>
-                                                $/KGS
-                                            </button>
-                                        </div>
-                                        <div className="relative w-36">
-                                            <input type="number" step="0.0001" value={batchCommissionRate || ''}
-                                                onChange={e => setBatchCommissionRate(parseFloat(e.target.value) || 0)}
-                                                placeholder="Rate" disabled={batchProcessing}
-                                                className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-blue-300 outline-none" />
-                                            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">
-                                                {batchCommissionType === 'PERCENT' ? '%' : batchCommissionType === 'PER_LBS' ? '/lb' : '/kg'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Drop Zone */}
-                                <div
-                                    onClick={() => !batchProcessing && batchFileInputRef.current?.click()}
-                                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setBatchDragActive(true); }}
-                                    onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setBatchDragActive(false); }}
-                                    onDrop={handleBatchDrop}
-                                    className={`p-6 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${batchProcessing ? 'border-slate-200 bg-slate-50 cursor-wait'
-                                        : batchDragActive ? 'border-indigo-500 bg-indigo-50'
-                                            : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50'
-                                        }`}
-                                >
-                                    <input
-                                        ref={batchFileInputRef}
-                                        type="file"
-                                        accept=".pdf,.png,.jpg,.jpeg"
-                                        multiple
-                                        onChange={handleBatchFilesSelect}
-                                        className="hidden"
-                                    />
-                                    <UploadCloud size={36} className="mx-auto text-indigo-400 mb-2" />
-                                    <p className="text-sm font-medium text-slate-700">Drop invoice files here or click to browse</p>
-                                    <p className="text-xs text-slate-400 mt-1">Supports PDF and image files — select multiple</p>
-                                </div>
-
-                                {/* File List */}
-                                {batchInvoiceFiles.length > 0 && batchInvoiceResults.length === 0 && (
-                                    <div className="space-y-1">
-                                        <p className="text-xs font-bold text-slate-500 uppercase">{batchInvoiceFiles.length} file(s) queued</p>
-                                        {batchInvoiceFiles.map((f, idx) => (
-                                            <div key={idx} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2 text-sm">
-                                                <span className="flex items-center gap-2 text-slate-700 truncate">
-                                                    <FileText size={14} className="text-indigo-500 shrink-0" />
-                                                    {f.name}
-                                                </span>
-                                                <button onClick={() => handleBatchRemoveFile(idx)} className="text-slate-400 hover:text-red-500 shrink-0 ml-2" disabled={batchProcessing}>
-                                                    <X size={14} />
+                                    {/* Step 2: Commission Config */}
+                                    <div className="p-4 border border-slate-200 rounded-lg bg-slate-50/50 space-y-3">
+                                        <h4 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5">Step 2 — Commission Rate</h4>
+                                        <div className="flex items-center gap-2">
+                                            <div className="grid grid-cols-3 gap-1.5 flex-1">
+                                                <button type="button" onClick={() => setBatchCommissionType('PERCENT')}
+                                                    className={`py-2 text-xs font-bold rounded-lg transition-all border ${batchCommissionType === 'PERCENT'
+                                                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'}`}>
+                                                    Percentage (%)
+                                                </button>
+                                                <button type="button" onClick={() => setBatchCommissionType('PER_LBS')}
+                                                    className={`py-2 text-xs font-bold rounded-lg transition-all border ${batchCommissionType === 'PER_LBS'
+                                                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'}`}>
+                                                    $/LBS
+                                                </button>
+                                                <button type="button" onClick={() => setBatchCommissionType('PER_KGS')}
+                                                    className={`py-2 text-xs font-bold rounded-lg transition-all border ${batchCommissionType === 'PER_KGS'
+                                                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'}`}>
+                                                    $/KGS
                                                 </button>
                                             </div>
-                                        ))}
-                                    </div>
-                                )}
-
-                                {/* Progress */}
-                                {batchProcessing && (
-                                    <div className="flex items-center gap-3 bg-indigo-50 rounded-lg px-4 py-3">
-                                        <Loader2 size={18} className="animate-spin text-indigo-600 shrink-0" />
-                                        <div className="flex-1">
-                                            <p className="text-sm font-medium text-indigo-700">Processing {batchProgress.current} of {batchProgress.total}...</p>
-                                            <div className="w-full bg-indigo-200 rounded-full h-1.5 mt-1">
-                                                <div className="bg-indigo-600 h-1.5 rounded-full transition-all" style={{ width: `${(batchProgress.current / batchProgress.total) * 100}%` }} />
+                                            <div className="relative w-36">
+                                                <input type="number" step="0.0001" value={batchCommissionRate || ''}
+                                                    onChange={e => setBatchCommissionRate(parseFloat(e.target.value) || 0)}
+                                                    placeholder="Rate" disabled={batchProcessing}
+                                                    className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-blue-300 outline-none" />
+                                                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+                                                    {batchCommissionType === 'PERCENT' ? '%' : batchCommissionType === 'PER_LBS' ? '/lb' : '/kg'}
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
-                                )}
 
-                                {/* Results Table */}
-                                {batchInvoiceResults.length > 0 && (
-                                    <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                        <table className="w-full text-sm">
-                                            <thead className="bg-slate-50 border-b border-slate-200">
-                                                <tr>
-                                                    <th className="p-2.5 text-left text-xs font-semibold text-slate-500 uppercase">File</th>
-                                                    <th className="p-2.5 text-left text-xs font-semibold text-slate-500 uppercase">Invoice #</th>
-                                                    <th className="p-2.5 text-left text-xs font-semibold text-slate-500 uppercase">Seller</th>
-                                                    <th className="p-2.5 text-left text-xs font-semibold text-slate-500 uppercase">Customer</th>
-                                                    <th className="p-2.5 text-right text-xs font-semibold text-slate-500 uppercase">Total</th>
-                                                    <th className="p-2.5 text-center text-xs font-semibold text-slate-500 uppercase">Status</th>
-                                                    <th className="p-2.5 text-center text-xs font-semibold text-slate-500 uppercase w-10"></th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-slate-100">
-                                                {batchInvoiceResults.map((r, idx) => (
-                                                    <tr key={idx} className={r.status === 'error' ? 'bg-red-50/50' : ''}>
-                                                        <td className="p-2.5 text-slate-600 truncate max-w-[150px]" title={r.file.name}>{r.file.name}</td>
-                                                        <td className="p-2.5 font-mono font-bold text-slate-700">{r.data.orderNumber || '—'}</td>
-                                                        <td className="p-2.5 text-slate-600" title={r.data.sellerName}>{r.data.sellerName?.split(/[\s,]+/)[0] || '—'}</td>
-                                                        <td className="p-2.5 text-slate-600" title={r.data.customerName}>{r.data.customerName?.split(/[\s,]+/)[0] || '—'}</td>
-                                                        <td className="p-2.5 text-right font-mono text-slate-800">{r.data.orderTotal ? `$${r.data.orderTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}</td>
-                                                        <td className="p-2.5 text-center">
-                                                            {r.status === 'pending' && <span className="text-slate-400 text-xs">Pending</span>}
-                                                            {r.status === 'processing' && <Loader2 size={14} className="animate-spin text-indigo-500 mx-auto" />}
-                                                            {r.status === 'done' && <CheckCircle size={14} className="text-emerald-500 mx-auto" />}
-                                                            {r.status === 'error' && <AlertCircle size={14} className="text-red-500 mx-auto" title={r.error} />}
-                                                        </td>
-                                                        <td className="p-2.5 text-center">
-                                                            {r.status !== 'processing' && (
-                                                                <button onClick={() => handleBatchRemoveResult(idx)} className="text-slate-400 hover:text-red-500" disabled={batchProcessing}>
-                                                                    <X size={14} />
-                                                                </button>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Footer Actions */}
-                            <div className="p-5 border-t border-slate-100 flex gap-3 shrink-0 bg-slate-50">
-                                <button
-                                    onClick={resetBatchModal}
-                                    className="flex-1 px-4 py-2.5 border border-slate-300 rounded-lg text-slate-600 font-medium hover:bg-slate-100 transition-colors"
-                                    disabled={batchProcessing}
-                                >
-                                    Cancel
-                                </button>
-                                {batchInvoiceResults.filter(r => r.status === 'done').length > 0 ? (
-                                    <button
-                                        onClick={handleBatchSaveAll}
-                                        disabled={batchProcessing}
-                                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold transition-all ${batchProcessing
-                                            ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                            : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 shadow-md hover:shadow-lg'
+                                    {/* Drop Zone */}
+                                    <div
+                                        onClick={() => !batchProcessing && batchFileInputRef.current?.click()}
+                                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setBatchDragActive(true); }}
+                                        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setBatchDragActive(false); }}
+                                        onDrop={handleBatchDrop}
+                                        className={`p-6 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${batchProcessing ? 'border-slate-200 bg-slate-50 cursor-wait'
+                                            : batchDragActive ? 'border-indigo-500 bg-indigo-50'
+                                                : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50'
                                             }`}
                                     >
-                                        {batchProcessing ? (
-                                            <><Loader2 size={18} className="animate-spin" /> Saving...</>
-                                        ) : (
-                                            <><Save size={18} /> Save All ({batchInvoiceResults.filter(r => r.status === 'done').length})</>
-                                        )}
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={processBatchInvoices}
-                                        disabled={batchInvoiceFiles.length === 0 || batchProcessing}
-                                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold transition-all ${batchInvoiceFiles.length === 0 || batchProcessing
-                                            ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                            : 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:from-indigo-700 hover:to-blue-700 shadow-md hover:shadow-lg'
-                                            }`}
-                                    >
-                                        {batchProcessing ? (
-                                            <><Loader2 size={18} className="animate-spin" /> Processing...</>
-                                        ) : (
-                                            <><Sparkles size={18} /> Process All ({batchInvoiceFiles.length})</>
-                                        )}
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Colors Resume XLSX Modal */}
-                {showColorsModal && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col animate-in zoom-in-95">
-                            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-purple-50 to-indigo-50">
-                                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                                    <FileSpreadsheet size={20} className="text-purple-600" />
-                                    Colors Resume - SGT Summary
-                                </h3>
-                                <button onClick={resetColorsModal} className="text-slate-400 hover:text-slate-600">
-                                    <X size={24} />
-                                </button>
-                            </div>
-                            <div className="p-6 space-y-4 overflow-y-auto flex-1">
-                                {/* File Upload Zone */}
-                                <div
-                                    onClick={() => colorsFileInputRef.current?.click()}
-                                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setColorsDragActive(true); }}
-                                    onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setColorsDragActive(false); }}
-                                    onDrop={handleColorsDrop}
-                                    className={`p-6 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${colorsDragActive ? 'border-purple-500 bg-purple-50' : 'border-slate-300 hover:border-purple-400 hover:bg-purple-50/50'
-                                        }`}
-                                >
-                                    <input
-                                        ref={colorsFileInputRef}
-                                        type="file"
-                                        accept=".xlsx,.xls"
-                                        multiple
-                                        onChange={handleColorsFilesSelect}
-                                        className="hidden"
-                                    />
-                                    <div className="space-y-2">
-                                        <FileSpreadsheet size={40} className="mx-auto text-purple-400" />
-                                        <p className="text-slate-600 font-medium">
-                                            Drag & drop Inventory XLSX files here
-                                        </p>
-                                        <p className="text-xs text-slate-400">or click to browse (supports multiple files)</p>
+                                        <input
+                                            ref={batchFileInputRef}
+                                            type="file"
+                                            accept=".pdf,.png,.jpg,.jpeg"
+                                            multiple
+                                            onChange={handleBatchFilesSelect}
+                                            className="hidden"
+                                        />
+                                        <UploadCloud size={36} className="mx-auto text-indigo-400 mb-2" />
+                                        <p className="text-sm font-medium text-slate-700">Drop invoice files here or click to browse</p>
+                                        <p className="text-xs text-slate-400 mt-1">Supports PDF and image files — select multiple</p>
                                     </div>
-                                </div>
 
-                                {/* Uploaded Files List */}
-                                {colorsFiles.length > 0 && (
-                                    <div className="space-y-2">
-                                        <p className="text-sm font-bold text-slate-600">{colorsFiles.length} file(s) selected:</p>
-                                        <div className="flex flex-wrap gap-2">
-                                            {colorsFiles.map((f, i) => (
-                                                <div key={i} className="flex items-center gap-2 bg-green-50 text-green-700 px-3 py-1.5 rounded-lg text-sm">
-                                                    <CheckCircle2 size={14} />
-                                                    {f.name}
-                                                    <button onClick={(e) => { e.stopPropagation(); setColorsFiles(prev => prev.filter((_, idx) => idx !== i)); }} className="text-red-500 hover:text-red-700 ml-1">
-                                                        <X size={12} />
+                                    {/* File List */}
+                                    {batchInvoiceFiles.length > 0 && batchInvoiceResults.length === 0 && (
+                                        <div className="space-y-1">
+                                            <p className="text-xs font-bold text-slate-500 uppercase">{batchInvoiceFiles.length} file(s) queued</p>
+                                            {batchInvoiceFiles.map((f, idx) => (
+                                                <div key={idx} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2 text-sm">
+                                                    <span className="flex items-center gap-2 text-slate-700 truncate">
+                                                        <FileText size={14} className="text-indigo-500 shrink-0" />
+                                                        {f.name}
+                                                    </span>
+                                                    <button onClick={() => handleBatchRemoveFile(idx)} className="text-slate-400 hover:text-red-500 shrink-0 ml-2" disabled={batchProcessing}>
+                                                        <X size={14} />
                                                     </button>
                                                 </div>
                                             ))}
                                         </div>
-                                    </div>
-                                )}
+                                    )}
 
-                                {colorsError && (
-                                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
-                                        <AlertCircle size={18} />
-                                        {colorsError}
-                                    </div>
-                                )}
-
-                                {/* Summary Results */}
-                                {colorsSummary && (
-                                    <div className="space-y-4">
-                                        <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm font-bold flex items-center gap-2">
-                                            <CheckCircle2 size={18} />
-                                            Summary generated! {colorsSummary.colors.length + colorsSummary.whites.length} colors found.
-                                        </div>
-
-                                        {/* Colors Table */}
-                                        <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                            <div className="bg-slate-100 p-2 font-bold text-sm text-slate-700">Colors ({colorsSummary.colors.length})</div>
-                                            <div className="max-h-48 overflow-y-auto">
-                                                <table className="w-full text-xs">
-                                                    <thead className="bg-slate-50 sticky top-0">
-                                                        <tr>
-                                                            <th className="p-2 text-left">Color</th>
-                                                            <th className="p-2 text-left">Translated</th>
-                                                            <th className="p-2 text-right">Bales</th>
-                                                            <th className="p-2 text-right">Weight (lbs)</th>
-                                                            <th className="p-2 text-right">Weight (kgs)</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-slate-100">
-                                                        {colorsSummary.colors.map((r: any, i: number) => (
-                                                            <tr key={i} className="hover:bg-slate-50">
-                                                                <td className="p-2">{r.color}</td>
-                                                                <td className="p-2 text-slate-600">{r.translated}</td>
-                                                                <td className="p-2 text-right font-mono">{r.bales}</td>
-                                                                <td className="p-2 text-right font-mono">{r.weight.toLocaleString()}</td>
-                                                                <td className="p-2 text-right font-mono">{(r.weight * 0.453592).toFixed(1)}</td>
-                                                            </tr>
-                                                        ))}
-                                                        <tr className="bg-slate-100 font-bold">
-                                                            <td className="p-2" colSpan={2}>TOTAL</td>
-                                                            <td className="p-2 text-right font-mono">{colorsSummary.totals.bales}</td>
-                                                            <td className="p-2 text-right font-mono">{colorsSummary.totals.lbs.toLocaleString()}</td>
-                                                            <td className="p-2 text-right font-mono">{colorsSummary.totals.kgs.toFixed(1)}</td>
-                                                        </tr>
-                                                    </tbody>
-                                                </table>
+                                    {/* Progress */}
+                                    {batchProcessing && (
+                                        <div className="flex items-center gap-3 bg-indigo-50 rounded-lg px-4 py-3">
+                                            <Loader2 size={18} className="animate-spin text-indigo-600 shrink-0" />
+                                            <div className="flex-1">
+                                                <p className="text-sm font-medium text-indigo-700">Processing {batchProgress.current} of {batchProgress.total}...</p>
+                                                <div className="w-full bg-indigo-200 rounded-full h-1.5 mt-1">
+                                                    <div className="bg-indigo-600 h-1.5 rounded-full transition-all" style={{ width: `${(batchProgress.current / batchProgress.total) * 100}%` }} />
+                                                </div>
                                             </div>
                                         </div>
+                                    )}
 
-                                        {/* Whites Table */}
-                                        {colorsSummary.whites.length > 0 && (
+                                    {/* Results Table */}
+                                    {batchInvoiceResults.length > 0 && (
+                                        <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                            <table className="w-full text-sm">
+                                                <thead className="bg-slate-50 border-b border-slate-200">
+                                                    <tr>
+                                                        <th className="p-2.5 text-left text-xs font-semibold text-slate-500 uppercase">File</th>
+                                                        <th className="p-2.5 text-left text-xs font-semibold text-slate-500 uppercase">Invoice #</th>
+                                                        <th className="p-2.5 text-left text-xs font-semibold text-slate-500 uppercase">Seller</th>
+                                                        <th className="p-2.5 text-left text-xs font-semibold text-slate-500 uppercase">Customer</th>
+                                                        <th className="p-2.5 text-right text-xs font-semibold text-slate-500 uppercase">Total</th>
+                                                        <th className="p-2.5 text-center text-xs font-semibold text-slate-500 uppercase">Status</th>
+                                                        <th className="p-2.5 text-center text-xs font-semibold text-slate-500 uppercase w-10"></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {batchInvoiceResults.map((r, idx) => (
+                                                        <tr key={idx} className={r.status === 'error' ? 'bg-red-50/50' : ''}>
+                                                            <td className="p-2.5 text-slate-600 truncate max-w-[150px]" title={r.file.name}>{r.file.name}</td>
+                                                            <td className="p-2.5 font-mono font-bold text-slate-700">{r.data.orderNumber || '—'}</td>
+                                                            <td className="p-2.5 text-slate-600" title={r.data.sellerName}>{r.data.sellerName?.split(/[\s,]+/)[0] || '—'}</td>
+                                                            <td className="p-2.5 text-slate-600" title={r.data.customerName}>{r.data.customerName?.split(/[\s,]+/)[0] || '—'}</td>
+                                                            <td className="p-2.5 text-right font-mono text-slate-800">{r.data.orderTotal ? `$${r.data.orderTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}</td>
+                                                            <td className="p-2.5 text-center">
+                                                                {r.status === 'pending' && <span className="text-slate-400 text-xs">Pending</span>}
+                                                                {r.status === 'processing' && <Loader2 size={14} className="animate-spin text-indigo-500 mx-auto" />}
+                                                                {r.status === 'done' && <CheckCircle size={14} className="text-emerald-500 mx-auto" />}
+                                                                {r.status === 'error' && <span title={r.error}><AlertCircle size={14} className="text-red-500 mx-auto" /></span>}
+                                                            </td>
+                                                            <td className="p-2.5 text-center">
+                                                                {r.status !== 'processing' && (
+                                                                    <button onClick={() => handleBatchRemoveResult(idx)} className="text-slate-400 hover:text-red-500" disabled={batchProcessing}>
+                                                                        <X size={14} />
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Footer Actions */}
+                                <div className="p-5 border-t border-slate-100 flex gap-3 shrink-0 bg-slate-50">
+                                    <button
+                                        onClick={resetBatchModal}
+                                        className="flex-1 px-4 py-2.5 border border-slate-300 rounded-lg text-slate-600 font-medium hover:bg-slate-100 transition-colors"
+                                        disabled={batchProcessing}
+                                    >
+                                        Cancel
+                                    </button>
+                                    {batchInvoiceResults.filter(r => r.status === 'done').length > 0 ? (
+                                        <button
+                                            onClick={handleBatchSaveAll}
+                                            disabled={batchProcessing}
+                                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold transition-all ${batchProcessing
+                                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                                : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 shadow-md hover:shadow-lg'
+                                                }`}
+                                        >
+                                            {batchProcessing ? (
+                                                <><Loader2 size={18} className="animate-spin" /> Saving...</>
+                                            ) : (
+                                                <><Save size={18} /> Save All ({batchInvoiceResults.filter(r => r.status === 'done').length})</>
+                                            )}
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={processBatchInvoices}
+                                            disabled={batchInvoiceFiles.length === 0 || batchProcessing}
+                                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold transition-all ${batchInvoiceFiles.length === 0 || batchProcessing
+                                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                                : 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white hover:from-indigo-700 hover:to-blue-700 shadow-md hover:shadow-lg'
+                                                }`}
+                                        >
+                                            {batchProcessing ? (
+                                                <><Loader2 size={18} className="animate-spin" /> Processing...</>
+                                            ) : (
+                                                <><Sparkles size={18} /> Process All ({batchInvoiceFiles.length})</>
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )
+                }
+
+                {/* Colors Resume XLSX Modal */}
+                {
+                    showColorsModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+                            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col animate-in zoom-in-95">
+                                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-purple-50 to-indigo-50">
+                                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                        <FileSpreadsheet size={20} className="text-purple-600" />
+                                        Colors Resume - SGT Summary
+                                    </h3>
+                                    <button onClick={resetColorsModal} className="text-slate-400 hover:text-slate-600">
+                                        <X size={24} />
+                                    </button>
+                                </div>
+                                <div className="p-6 space-y-4 overflow-y-auto flex-1">
+                                    {/* File Upload Zone */}
+                                    <div
+                                        onClick={() => colorsFileInputRef.current?.click()}
+                                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setColorsDragActive(true); }}
+                                        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setColorsDragActive(false); }}
+                                        onDrop={handleColorsDrop}
+                                        className={`p-6 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${colorsDragActive ? 'border-purple-500 bg-purple-50' : 'border-slate-300 hover:border-purple-400 hover:bg-purple-50/50'
+                                            }`}
+                                    >
+                                        <input
+                                            ref={colorsFileInputRef}
+                                            type="file"
+                                            accept=".xlsx,.xls"
+                                            multiple
+                                            onChange={handleColorsFilesSelect}
+                                            className="hidden"
+                                        />
+                                        <div className="space-y-2">
+                                            <FileSpreadsheet size={40} className="mx-auto text-purple-400" />
+                                            <p className="text-slate-600 font-medium">
+                                                Drag & drop Inventory XLSX files here
+                                            </p>
+                                            <p className="text-xs text-slate-400">or click to browse (supports multiple files)</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Uploaded Files List */}
+                                    {colorsFiles.length > 0 && (
+                                        <div className="space-y-2">
+                                            <p className="text-sm font-bold text-slate-600">{colorsFiles.length} file(s) selected:</p>
+                                            <div className="flex flex-wrap gap-2">
+                                                {colorsFiles.map((f, i) => (
+                                                    <div key={i} className="flex items-center gap-2 bg-green-50 text-green-700 px-3 py-1.5 rounded-lg text-sm">
+                                                        <CheckCircle2 size={14} />
+                                                        {f.name}
+                                                        <button onClick={(e) => { e.stopPropagation(); setColorsFiles(prev => prev.filter((_, idx) => idx !== i)); }} className="text-red-500 hover:text-red-700 ml-1">
+                                                            <X size={12} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {colorsError && (
+                                        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+                                            <AlertCircle size={18} />
+                                            {colorsError}
+                                        </div>
+                                    )}
+
+                                    {/* Summary Results */}
+                                    {colorsSummary && (
+                                        <div className="space-y-4">
+                                            <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm font-bold flex items-center gap-2">
+                                                <CheckCircle2 size={18} />
+                                                Summary generated! {colorsSummary.colors.length + colorsSummary.whites.length} colors found.
+                                            </div>
+
+                                            {/* Colors Table */}
                                             <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                                <div className="bg-blue-50 p-2 font-bold text-sm text-blue-700">Whites ({colorsSummary.whites.length})</div>
+                                                <div className="bg-slate-100 p-2 font-bold text-sm text-slate-700">Colors ({colorsSummary.colors.length})</div>
                                                 <div className="max-h-48 overflow-y-auto">
                                                     <table className="w-full text-xs">
                                                         <thead className="bg-slate-50 sticky top-0">
@@ -2151,7 +2192,7 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
                                                             </tr>
                                                         </thead>
                                                         <tbody className="divide-y divide-slate-100">
-                                                            {colorsSummary.whites.map((r: any, i: number) => (
+                                                            {colorsSummary.colors.map((r: any, i: number) => (
                                                                 <tr key={i} className="hover:bg-slate-50">
                                                                     <td className="p-2">{r.color}</td>
                                                                     <td className="p-2 text-slate-600">{r.translated}</td>
@@ -2160,64 +2201,101 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
                                                                     <td className="p-2 text-right font-mono">{(r.weight * 0.453592).toFixed(1)}</td>
                                                                 </tr>
                                                             ))}
-                                                            <tr className="bg-blue-50 font-bold">
-                                                                <td className="p-2" colSpan={2}>TOTAL WHITES</td>
-                                                                <td className="p-2 text-right font-mono">{colorsSummary.whitesTotals.bales}</td>
-                                                                <td className="p-2 text-right font-mono">{colorsSummary.whitesTotals.lbs.toLocaleString()}</td>
-                                                                <td className="p-2 text-right font-mono">{colorsSummary.whitesTotals.kgs.toFixed(1)}</td>
+                                                            <tr className="bg-slate-100 font-bold">
+                                                                <td className="p-2" colSpan={2}>TOTAL</td>
+                                                                <td className="p-2 text-right font-mono">{colorsSummary.totals.bales}</td>
+                                                                <td className="p-2 text-right font-mono">{colorsSummary.totals.lbs.toLocaleString()}</td>
+                                                                <td className="p-2 text-right font-mono">{colorsSummary.totals.kgs.toFixed(1)}</td>
                                                             </tr>
                                                         </tbody>
                                                     </table>
                                                 </div>
                                             </div>
+
+                                            {/* Whites Table */}
+                                            {colorsSummary.whites.length > 0 && (
+                                                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                                    <div className="bg-blue-50 p-2 font-bold text-sm text-blue-700">Whites ({colorsSummary.whites.length})</div>
+                                                    <div className="max-h-48 overflow-y-auto">
+                                                        <table className="w-full text-xs">
+                                                            <thead className="bg-slate-50 sticky top-0">
+                                                                <tr>
+                                                                    <th className="p-2 text-left">Color</th>
+                                                                    <th className="p-2 text-left">Translated</th>
+                                                                    <th className="p-2 text-right">Bales</th>
+                                                                    <th className="p-2 text-right">Weight (lbs)</th>
+                                                                    <th className="p-2 text-right">Weight (kgs)</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-slate-100">
+                                                                {colorsSummary.whites.map((r: any, i: number) => (
+                                                                    <tr key={i} className="hover:bg-slate-50">
+                                                                        <td className="p-2">{r.color}</td>
+                                                                        <td className="p-2 text-slate-600">{r.translated}</td>
+                                                                        <td className="p-2 text-right font-mono">{r.bales}</td>
+                                                                        <td className="p-2 text-right font-mono">{r.weight.toLocaleString()}</td>
+                                                                        <td className="p-2 text-right font-mono">{(r.weight * 0.453592).toFixed(1)}</td>
+                                                                    </tr>
+                                                                ))}
+                                                                <tr className="bg-blue-50 font-bold">
+                                                                    <td className="p-2" colSpan={2}>TOTAL WHITES</td>
+                                                                    <td className="p-2 text-right font-mono">{colorsSummary.whitesTotals.bales}</td>
+                                                                    <td className="p-2 text-right font-mono">{colorsSummary.whitesTotals.lbs.toLocaleString()}</td>
+                                                                    <td className="p-2 text-right font-mono">{colorsSummary.whitesTotals.kgs.toFixed(1)}</td>
+                                                                </tr>
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Actions */}
+                                    <div className="flex gap-3 pt-2">
+                                        <button
+                                            onClick={resetColorsModal}
+                                            className="flex-1 px-4 py-2.5 border border-slate-300 rounded-lg text-slate-600 font-medium hover:bg-slate-50 transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                        {!colorsSummary ? (
+                                            <button
+                                                onClick={processColorsResume}
+                                                disabled={colorsFiles.length === 0 || colorsProcessing}
+                                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold transition-all ${colorsFiles.length === 0 || colorsProcessing
+                                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                                    : 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700 shadow-md hover:shadow-lg'
+                                                    }`}
+                                            >
+                                                {colorsProcessing ? (
+                                                    <>
+                                                        <Loader2 size={18} className="animate-spin" />
+                                                        Processing...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Sparkles size={18} />
+                                                        Generate Summary
+                                                    </>
+                                                )}
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={downloadColorsXLSX}
+                                                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold bg-green-600 text-white hover:bg-green-700 transition-colors shadow-md"
+                                            >
+                                                <Download size={18} />
+                                                Download XLSX
+                                            </button>
                                         )}
                                     </div>
-                                )}
-
-                                {/* Actions */}
-                                <div className="flex gap-3 pt-2">
-                                    <button
-                                        onClick={resetColorsModal}
-                                        className="flex-1 px-4 py-2.5 border border-slate-300 rounded-lg text-slate-600 font-medium hover:bg-slate-50 transition-colors"
-                                    >
-                                        Cancel
-                                    </button>
-                                    {!colorsSummary ? (
-                                        <button
-                                            onClick={processColorsResume}
-                                            disabled={colorsFiles.length === 0 || colorsProcessing}
-                                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold transition-all ${colorsFiles.length === 0 || colorsProcessing
-                                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                                : 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700 shadow-md hover:shadow-lg'
-                                                }`}
-                                        >
-                                            {colorsProcessing ? (
-                                                <>
-                                                    <Loader2 size={18} className="animate-spin" />
-                                                    Processing...
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <Sparkles size={18} />
-                                                    Generate Summary
-                                                </>
-                                            )}
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={downloadColorsXLSX}
-                                            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold bg-green-600 text-white hover:bg-green-700 transition-colors shadow-md"
-                                        >
-                                            <Download size={18} />
-                                            Download XLSX
-                                        </button>
-                                    )}
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )}
-            </div>
+                    )
+                }
+            </div >
         );
     }
 

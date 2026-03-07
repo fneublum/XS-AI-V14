@@ -288,32 +288,36 @@ const SupplierQuotes: React.FC<SupplierQuotesProps> = ({ quotes, onAdd, onUpdate
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        <Tag className="text-blue-600" /> Supplier Quote Request
-                    </h2>
-                    <p className="text-slate-500 text-sm">Compare prices from local and international suppliers.</p>
-                </div>
-                <div className="flex gap-2">
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
-                        <button
-                            onClick={() => setViewMode('grid')}
-                            className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Grid View"
-                        >
-                            <LayoutGrid size={18} />
-                        </button>
-                        <button
-                            onClick={() => setViewMode('table')}
-                            className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Table View"
-                        >
-                            <List size={18} />
-                        </button>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-2 bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl text-white">
+                        <Tag size={24} />
                     </div>
-                    <button onClick={handleAddNew} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" title="New Request">
-                        <FilePlus size={20} />
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Supplier Quotes</h1>
+                        <p className="text-slate-500 text-sm">Compare prices from local and international suppliers.</p>
+                    </div>
+                </div>
+                <button onClick={handleAddNew} className="flex items-center gap-2 px-5 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all shadow-md font-medium">
+                    <FilePlus size={18} /> New Request
+                </button>
+            </div>
+
+            <div className="flex items-center gap-3 mb-4">
+                <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
+                    <button
+                        onClick={() => setViewMode('grid')}
+                        className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Grid View"
+                    >
+                        <LayoutGrid size={18} />
+                    </button>
+                    <button
+                        onClick={() => setViewMode('table')}
+                        className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Table View"
+                    >
+                        <List size={18} />
                     </button>
                 </div>
             </div>
@@ -396,6 +400,7 @@ const SupplierQuotes: React.FC<SupplierQuotesProps> = ({ quotes, onAdd, onUpdate
                                 <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-right">Total Amount</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Valid Until</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Status</th>
+                                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-center">Doc</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-right">Actions</th>
                             </tr>
                         </thead>
@@ -419,6 +424,15 @@ const SupplierQuotes: React.FC<SupplierQuotesProps> = ({ quotes, onAdd, onUpdate
                                             quote.status === 'Pending' ? 'bg-amber-100 text-amber-700' :
                                                 'bg-slate-100 text-slate-600'
                                             }`}>{quote.status}</span>
+                                    </td>
+                                    <td className="px-6 py-4 text-center">
+                                        {quote.originalDocument ? (
+                                            <a href={quote.originalDocument} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-500 hover:text-blue-700" title="View original document">
+                                                <FilePlus size={16} />
+                                            </a>
+                                        ) : (
+                                            <span className="text-slate-300">—</span>
+                                        )}
                                     </td>
                                     <td className="px-6 py-4 text-right">
                                         <div className="flex items-center justify-end gap-2">

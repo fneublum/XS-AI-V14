@@ -72,7 +72,7 @@ const Ports: React.FC<PortsProps> = ({ ports, onAdd, onUpdate, onDelete, current
         }
 
         return true;
-    });
+    }).sort((a, b) => a.name.localeCompare(b.name));
 
     const toggleFilter = (column: string, value: string) => {
         setFilters(prev => {
@@ -195,42 +195,48 @@ const Ports: React.FC<PortsProps> = ({ ports, onAdd, onUpdate, onDelete, current
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        <Anchor className="text-blue-600" /> Port Database
-                    </h2>
-                    <p className="text-slate-500 text-sm">Manage logistics hubs and port codes (Global)</p>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-cyan-500 to-teal-500 rounded-xl text-white">
+                        <Anchor size={24} />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Port Database</h1>
+                        <p className="text-sm text-slate-500">Manage logistics hubs and port codes (Global)</p>
+                    </div>
                 </div>
-                <div className="flex gap-2 w-full md:w-auto">
-                    <div className="relative flex-1 md:w-64">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                            type="text"
-                            placeholder="Search ports..."
-                            className="w-full pl-10 pr-4 py-2 border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
-                        <button
-                            onClick={() => setViewMode('grid')}
-                            className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Grid View"
-                        >
-                            <LayoutGrid size={18} />
-                        </button>
-                        <button
-                            onClick={() => setViewMode('table')}
-                            className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Table View"
-                        >
-                            <List size={18} />
-                        </button>
-                    </div>
-                    <button onClick={handleAddNew} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" title="Add Port">
-                        <FilePlus size={20} />
+                <div className="flex gap-2">
+                    <button onClick={handleAddNew} className="flex items-center gap-2 px-5 py-2.5 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-all shadow-md font-medium" title="Add Port">
+                        <Plus size={18} /> Add Port
+                    </button>
+                </div>
+            </div>
+
+            <div className="flex flex-col md:flex-row items-start md:items-center gap-3 mb-6">
+                <div className="relative flex-1 md:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input
+                        type="text"
+                        placeholder="Search ports..."
+                        className="w-full pl-10 pr-4 py-2 border border-slate-200 bg-white text-slate-800 placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-cyan-500 outline-none"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
+                <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
+                    <button
+                        onClick={() => setViewMode('grid')}
+                        className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Grid View"
+                    >
+                        <LayoutGrid size={18} />
+                    </button>
+                    <button
+                        onClick={() => setViewMode('table')}
+                        className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Table View"
+                    >
+                        <List size={18} />
                     </button>
                 </div>
             </div>

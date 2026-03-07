@@ -150,19 +150,19 @@ const Banks: React.FC<BanksProps> = ({
     return (
         <div className="p-6">
             {/* Header */}
-            <div className="flex items-center justify-between mb-6">
+            <div className="mb-6 flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center shadow-lg">
-                        <Building2 className="w-5 h-5 text-white" />
+                    <div className="p-2 bg-gradient-to-r from-amber-500 to-orange-500 rounded-xl text-white">
+                        <Building2 size={24} />
                     </div>
                     <div>
                         <h1 className="text-2xl font-bold text-slate-800">Banks</h1>
-                        <p className="text-sm text-slate-500">Manage bank accounts for invoicing</p>
+                        <p className="text-sm text-slate-500 mt-1">Manage bank accounts for invoicing</p>
                     </div>
                 </div>
                 <button
                     onClick={() => handleOpenModal()}
-                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg shadow-md hover:shadow-lg transition-all"
+                    className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-all shadow-md font-medium"
                 >
                     <Plus className="w-4 h-4" />
                     Add Bank

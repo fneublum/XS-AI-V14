@@ -7,6 +7,7 @@ import { QuantityInput, PriceInput } from '../components/UnitInputs';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { sendEmail } from '../services/emailService';
+import { workflowEngine } from '../services/workflowEngine';
 
 interface PurchaseOrdersProps {
     purchaseOrders: PurchaseOrder[];
@@ -235,8 +236,28 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
 
         if (editingId) {
             onUpdate(newPO);
+            // Fire workflow event if status changed to Completed (received)
+            if (newPO.status === 'Completed') {
+                workflowEngine.emit({
+                    type: 'PO_RECEIVED',
+                    entityType: 'purchase_order',
+                    entityId: newPO.id,
+                    data: newPO as any,
+                    companyId: newPO.companyId,
+                    timestamp: new Date().toISOString(),
+                });
+            }
         } else {
             onAdd(newPO);
+            // Fire workflow event for new PO
+            workflowEngine.emit({
+                type: 'PO_CREATED',
+                entityType: 'purchase_order',
+                entityId: newPO.id,
+                data: newPO as any,
+                companyId: newPO.companyId,
+                timestamp: new Date().toISOString(),
+            });
         }
         setIsAdding(false);
         setFormData(initialFormState);
@@ -457,8 +478,13 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
         setIsSendingEmail(true);
 
         try {
+            const toList = emailDraft.to
+                .split(/[;,]/)
+                .map((e: string) => e.trim())
+                .filter((e: string) => e.length > 0);
+
             await sendEmail({
-                to: [emailDraft.to],
+                to: toList,
                 subject: emailDraft.subject,
                 htmlBody: emailDraft.body
             });
@@ -474,32 +500,36 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        <ShoppingCart className="text-blue-600" /> Purchase Orders
-                    </h2>
-                    <p className="text-slate-500 text-sm">Create and manage supplier orders.</p>
-                </div>
-                <div className="flex gap-2">
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
-                        <button
-                            onClick={() => setViewMode('grid')}
-                            className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Grid View"
-                        >
-                            <LayoutGrid size={18} />
-                        </button>
-                        <button
-                            onClick={() => setViewMode('table')}
-                            className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Table View"
-                        >
-                            <List size={18} />
-                        </button>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-2 bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl text-white">
+                        <ShoppingCart size={24} />
                     </div>
-                    <button onClick={handleAddNew} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" title="New PO">
-                        <FilePlus size={20} />
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Purchase Orders</h1>
+                        <p className="text-slate-500 text-sm">Create and manage supplier orders.</p>
+                    </div>
+                </div>
+                <button onClick={handleAddNew} className="flex items-center gap-2 px-5 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all shadow-md font-medium">
+                    <FilePlus size={18} /> New PO
+                </button>
+            </div>
+
+            <div className="flex items-center gap-3 mb-4">
+                <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
+                    <button
+                        onClick={() => setViewMode('grid')}
+                        className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Grid View"
+                    >
+                        <LayoutGrid size={18} />
+                    </button>
+                    <button
+                        onClick={() => setViewMode('table')}
+                        className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Table View"
+                    >
+                        <List size={18} />
                     </button>
                 </div>
             </div>
@@ -747,7 +777,7 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
                                 <label className="block text-xs font-bold text-blue-800 uppercase mb-1">Assign to Company</label>
                                 <select required name="companyId" value={formData.companyId || ''} onChange={e => setFormData({ ...formData, companyId: e.target.value })} className="w-full border border-slate-600 bg-slate-900 text-white rounded p-2 text-sm">
                                     <option value="">Select Company...</option>
-                                    {availableCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    {[...availableCompanies].sort((a, b) => a.name.localeCompare(b.name)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
                             </div>
                         )}
@@ -767,7 +797,7 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
                             >
                                 <option value="">Select Supplier...</option>
                                 <option value="_ADD_NEW_" className="font-bold text-blue-600 bg-blue-50">+ Add New Supplier</option>
-                                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                             </select>
                             {supplierAddedMessage && <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1"><CheckCircle2 size={10} /> {supplierAddedMessage}</p>}
                         </div>
@@ -809,7 +839,7 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
                                 >
                                     <option value="">Select Product...</option>
                                     <option value="_ADD_NEW_" className="font-bold text-blue-600 bg-blue-50">+ Add New Product</option>
-                                    {products.map(p => <option key={p.id} value={p.name}>{p.name} ({p.grade})</option>)}
+                                    {[...products].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={p.name}>{p.name} ({p.grade})</option>)}
                                 </select>
                                 {productAddedMessage && <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1"><CheckCircle2 size={10} /> {productAddedMessage}</p>}
                             </div>

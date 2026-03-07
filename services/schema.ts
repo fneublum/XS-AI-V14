@@ -9,7 +9,9 @@ create table if not exists companies (
   "city" text,
   "state" text,
   "zip" text,
-  "country" text
+  "country" text,
+  "ein" text,
+  "phone" text
 );
 
 create table if not exists users (
@@ -128,6 +130,8 @@ create table if not exists products (
   "id" text primary key,
   "companyId" text,
   "name" text,
+  "supplierProductName" text,
+  "description" text,
   "sku" text,
   "category" text,
   "grade" text,
@@ -196,6 +200,7 @@ create table if not exists cargo_agents (
   "name" text,
   "contact" text,
   "email" text,
+  "email2" text,
   "phone" text,
   "country" text
 );
@@ -246,6 +251,15 @@ create table if not exists freight_quotes (
   "oceanCost" numeric,
   "deliveryCost" numeric,
   "portFees" numeric,
+  "deconsolidation" numeric,
+  "containerReturn" numeric,
+  "blRelease" numeric,
+  "thc" numeric,
+  "isps" numeric,
+  "trs" numeric,
+  "securityFee" numeric,
+  "observation" text,
+  "originalDocument" text,
   "status" text
 );
 
@@ -467,7 +481,8 @@ create table if not exists packing_lists (
   "scheduledShipDate" text,
   "items" text,
   "originalDocument" text,
-  "soNumber" text
+  "soNumber" text,
+  "status" text
 );
 
 create table if not exists packing_lists_suppliers (
@@ -508,7 +523,8 @@ create table if not exists supplier_quotes (
   "validUntil" text,
   "paymentTerms" text,
   "status" text,
-  "notes" text
+  "notes" text,
+  "originalDocument" text
 );
 
 create table if not exists supplier_offers (
@@ -575,6 +591,7 @@ create table if not exists cost_calculations (
   "salesCarrierId" text,
   "salesCarrierName" text,
   "supplierName" text,
+  "quoteNumber" text,
   "poa" text,
   "pod" text,
   "customerName" text
@@ -611,6 +628,32 @@ create table if not exists costumer_description (
     primary key ("customer_id", "original_description")
 );
 
+-- 8. WhatsApp / Twilio
+create table if not exists wa_conversations (
+  "id" text primary key,
+  "companyId" text,
+  "twilioNumber" text,
+  "phoneNumber" text,
+  "contactName" text default '',
+  "status" text default 'active',
+  "unreadCount" integer default 0,
+  "lastMessagePreview" text default '',
+  "lastMessageAt" text,
+  "createdAt" text
+);
+
+create table if not exists wa_messages (
+  "id" text primary key,
+  "conversationId" text,
+  "content" text,
+  "direction" text,
+  "messageType" text default 'text',
+  "status" text default 'sent',
+  "twilioSid" text default '',
+  "metadata" jsonb default '{}',
+  "createdAt" text
+);
+
 create table if not exists commission_sales_orders (
   "id" text primary key,
   "companyId" text,
@@ -638,5 +681,56 @@ create table if not exists commission_sales_orders (
   "invoiceNumber" text,
   "createdAt" text,
   "approvedBy" text
+);
+
+-- 9. AI Assistant Memory
+create table if not exists ai_conversations (
+  "id" text primary key,
+  "userId" text not null,
+  "companyId" text default 'ALL',
+  "title" text default '',
+  "lastMessageAt" text,
+  "messageCount" integer default 0,
+  "createdAt" text
+);
+
+create table if not exists ai_messages (
+  "id" text primary key,
+  "conversationId" text not null,
+  "role" text not null,
+  "content" text not null,
+  "actionType" text,
+  "actionData" jsonb default '{}',
+  "createdAt" text
+);
+
+create table if not exists ai_learned_tasks (
+  "id" text primary key,
+  "userId" text not null,
+  "companyId" text default 'ALL',
+  "trigger" text not null,
+  "instruction" text not null,
+  "parameters" jsonb default '{}',
+  "createdAt" text
+);
+
+-- 10. Activity Logging (AI-Trainable)
+create table if not exists activity_logs (
+  "id" text primary key,
+  "timestamp" timestamptz default now(),
+  "session_id" text not null,
+  "user_id" text,
+  "user_role" text,
+  "company_id" text,
+  "event_category" text not null,
+  "event_action" text not null,
+  "module" text,
+  "sub_module" text,
+  "entity_type" text,
+  "entity_id" text,
+  "details" jsonb default '{}',
+  "duration_ms" integer,
+  "error" text,
+  "result_status" text default 'SUCCESS'
 );
 `;

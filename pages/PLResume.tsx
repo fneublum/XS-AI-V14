@@ -530,12 +530,13 @@ const PLResume: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col p-6 space-y-6 overflow-y-auto custom-scrollbar bg-slate-50 relative">
-            <div className="flex justify-between items-start">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        <FileText className="text-indigo-600" /> Add loading documents
-                    </h2>
-                    <p className="text-slate-500 text-sm">Upload Packing Lists (PDF, Images)</p>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-rose-500 to-pink-500 rounded-xl text-white"><FileText size={24} /></div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Add Loading Documents</h1>
+                        <p className="text-slate-500 text-sm mt-1">Upload Packing Lists (PDF, Images)</p>
+                    </div>
                 </div>
             </div>
 

@@ -265,64 +265,25 @@ const AiLogistics: React.FC<AiLogisticsProps> = ({ shipments, bookings, billOfLa
             let token = '';
             let senderEmail = '';
 
-            // 1. Try MSAL Automation Account
+            // Use MSAL Interactive Account
             const msalAccount = getAccountFor('automation');
             if (msalAccount) {
                 try {
                     token = await getTokenFor('automation', ['Mail.Send']);
                     senderEmail = msalAccount.username;
                 } catch (e) {
-                    console.warn("MSAL token fetch failed, falling back...", e);
-                }
-            }
-
-            // 2. Fallback to Legacy/Manual Storage if no MSAL token
-            if (!token) {
-                const storedAccounts = localStorage.getItem('ai_email_accounts');
-                const accounts = storedAccounts ? JSON.parse(storedAccounts) : [];
-                // Just grab the first available account, prioritizing OUTLOOK then GMAIL
-                const legacyAccount = accounts.find((a: any) => a.provider === 'OUTLOOK') || accounts.find((a: any) => a.provider === 'GMAIL');
-
-                if (legacyAccount && legacyAccount.provider === 'OUTLOOK') {
-                    senderEmail = legacyAccount.email;
-                    const config = JSON.parse(legacyAccount.refreshToken || '{}');
-                    if (config.tenantId && config.clientId) {
-                        const originalEndpoint = `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/token`;
-                        const bodyParams = new URLSearchParams({
-                            client_id: config.clientId,
-                            scope: 'https://graph.microsoft.com/.default',
-                            client_secret: legacyAccount.password,
-                            grant_type: 'client_credentials'
-                        });
-
-                        // Try direct call first, fall back to CORS proxy
-                        let tokenResp;
-                        try {
-                            tokenResp = await fetch(originalEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: bodyParams });
-                        } catch {
-                            const proxyEndpoint = `https://api.allorigins.win/raw?url=${encodeURIComponent(originalEndpoint)}`;
-                            tokenResp = await fetch(proxyEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: bodyParams });
-                        }
-
-                        if (!tokenResp.ok) throw new Error("Legacy Auth failed");
-                        const tokenData = await tokenResp.json();
-                        token = tokenData.access_token;
-                    }
-                } else if (legacyAccount && legacyAccount.provider === 'GMAIL') {
-                    // Not implementing Gmail send for this specific flow in this turn, assuming Outlook dominance based on previous context
-                    // But if we were, it would be here.
-                    throw new Error("Only Outlook accounts are fully supported for this action currently.");
+                    console.warn("MSAL token fetch failed", e);
                 }
             }
 
             if (!token || !senderEmail) {
-                alert(`No email account connected. Please connect an account in the Automation section.`);
+                alert(`No email account connected. Please sign in via Settings → Email Integration.`);
                 setIsSendingEmail(false);
                 return;
             }
 
             // Send Mail via Graph
-            await fetch(`https://graph.microsoft.com/v1.0/users/${senderEmail}/sendMail`, {
+            await fetch(`https://graph.microsoft.com/v1.0/me/sendMail`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,

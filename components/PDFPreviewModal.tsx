@@ -32,6 +32,12 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
             document.body.style.overflow = 'hidden';
             setIsLoading(true);
             setHasError(false);
+            // Fallback: auto-hide loading after 2s in case onLoad doesn't fire for blob URLs
+            const timer = setTimeout(() => setIsLoading(false), 2000);
+            return () => {
+                clearTimeout(timer);
+                document.body.style.overflow = 'unset';
+            };
         } else {
             document.body.style.overflow = 'unset';
         }
@@ -203,7 +209,7 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
 
                     {/* Use iframe for PDF display - more reliable than embed */}
                     <iframe
-                        src={`${pdfUrl}#toolbar=1&navpanes=0&scrollbar=1&view=FitH`}
+                        src={pdfUrl.startsWith('blob:') ? pdfUrl : `${pdfUrl}#toolbar=1&navpanes=0&scrollbar=1&view=FitH`}
                         className="w-full h-full border-none"
                         title="PDF Preview"
                         onLoad={handleIframeLoad}

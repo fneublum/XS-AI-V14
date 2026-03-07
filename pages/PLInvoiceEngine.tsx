@@ -6,7 +6,7 @@ import {
     Ship, Truck, Calendar, Building, Users, DollarSign, CreditCard,
     Printer, Mail, Link2, RefreshCw, MoreVertical, ExternalLink, Filter, Send
 } from 'lucide-react';
-import { PackingList, Invoice, Customer, Company, SalesOrder, Booking, BillOfLading, Port, CompanyImage } from '../types';
+import { PackingList, Invoice, Customer, Company, SalesOrder, Booking, BillOfLading, Port, Bank, CompanyImage } from '../types';
 import { getSupabaseClient } from '../services/supabase';
 import { useSupabase } from '../hooks/useSupabase';
 import { analyzeDocument } from '../services/geminiService';
@@ -115,6 +115,7 @@ interface PLInvoiceEngineProps {
     currentCompanyId: string;
     availableCompanies: Company[];
     onRefreshData?: () => Promise<void>;
+    banks?: Bank[];
 }
 
 // ============================================================================
@@ -134,7 +135,8 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
     onDeleteInvoice,
     currentCompanyId,
     availableCompanies,
-    onRefreshData
+    onRefreshData,
+    banks: banksProp = []
 }) => {
     // ========================================================================
     // WIZARD STATE
@@ -215,6 +217,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
 
     // Email Documents State
     const [sendingEmail, setSendingEmail] = useState(false);
+    const [brMode, setBrMode] = useState(false);
     const [emailStatus, setEmailStatus] = useState<{ show: boolean; success: boolean; message: string }>({ show: false, success: false, message: '' });
 
     // Email Preview Modal State
@@ -222,10 +225,11 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
     const [emailDraft, setEmailDraft] = useState<{
         invoice: Invoice | null;
         to: string;
+        cc: string;
         subject: string;
         htmlBody: string;
         attachments: { name: string; contentBytes: string; contentType: string }[];
-    }>({ invoice: null, to: '', subject: '', htmlBody: '', attachments: [] });
+    }>({ invoice: null, to: '', cc: '', subject: '', htmlBody: '', attachments: [] });
 
     // Upload PL Modal State
     const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -233,6 +237,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
 
     // Logo (fetched from imagens table in fetchData)
     const [logoUrl, setLogoUrl] = useState<string | null>(null);
+    const [stampUrl, setStampUrl] = useState<string | null>(null);
 
     // PDF Preview Modal State
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -277,6 +282,47 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             console.log('[PLInvoiceEngine] Synced allBookings from prop:', bookings.length, 'items');
         }
     }, [bookings]);
+
+    // Save a new booking to the bookings table with status AVAILABLE
+    const saveNewBooking = async (newBookingNumber: string) => {
+        const client = getSupabaseClient();
+        if (!client || !newBookingNumber.trim()) return;
+
+        // Check if this booking already exists with AVAILABLE status
+        const existingAvailable = allBookings.find((b: any) => b.bookingNumber === newBookingNumber && b.status !== 'SHIPPED');
+        if (existingAvailable) {
+            console.log('[saveNewBooking] AVAILABLE booking already exists:', newBookingNumber);
+            return;
+        }
+
+        try {
+            const newBooking = {
+                id: `BK${Date.now()}`,
+                companyId: currentCompanyId,
+                bookingNumber: newBookingNumber.trim(),
+                customer: consignee || 'TBD',
+                vesselVoyage: '',
+                pol: '',
+                pod: '',
+                equipment: '',
+                etd: '',
+                eta: '',
+                status: 'AVAILABLE',
+                createdAt: new Date().toISOString()
+            };
+
+            const { error } = await client.from('bookings').insert(newBooking);
+            if (error) {
+                console.error('[saveNewBooking] Error:', error);
+                return;
+            }
+
+            console.log('[saveNewBooking] Saved new booking:', newBookingNumber);
+            setAllBookings((prev: any) => [newBooking, ...prev]);
+        } catch (err) {
+            console.error('[saveNewBooking] Exception:', err);
+        }
+    };
 
     // Fetch Logo (dedicated effect - mimics InvoiceEngine.tsx)
     // DEBUG: Log incoming invoices to verify memo is being passed
@@ -341,6 +387,22 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             }
         };
         fetchLogo();
+
+        // Load EC4 stamp image
+        const loadStamp = async () => {
+            try {
+                const resp = await fetch('/ec4_stamp.png');
+                if (resp.ok) {
+                    const blob = await resp.blob();
+                    const reader = new FileReader();
+                    reader.onload = () => setStampUrl(reader.result as string);
+                    reader.readAsDataURL(blob);
+                }
+            } catch (e) {
+                console.warn('[PLInvoiceEngine] Could not load stamp:', e);
+            }
+        };
+        loadStamp();
     }, [currentCompanyId]);
 
     useEffect(() => {
@@ -365,11 +427,9 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
         } catch (e) { console.error('Error fetching suppliers:', e); }
 
         try {
-            // Fetch banks (table may not exist for all accounts)
-            const { data: banksData } = await client.from('banks').select('*').eq('company_id', currentCompanyId);
-            if (banksData && banksData.length > 0) {
-                // Map database fields to BankProfile format
-                const mappedBanks: BankProfile[] = banksData.map((b: any) => ({
+            // Use banks from prop instead of fetching
+            if (banksProp && banksProp.length > 0) {
+                const mappedBanks: BankProfile[] = banksProp.map((b: any) => ({
                     id: b.id,
                     bankName: b.name || '',
                     bankAddress: [b.address_line1, b.address_line2, b.city, b.state, b.zip_code, b.country].filter(Boolean).join(', '),
@@ -379,7 +439,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                 }));
                 setBanks(mappedBanks);
             }
-        } catch (e) { console.error('Error fetching banks:', e); }
+        } catch (e) { console.error('Error mapping banks:', e); }
 
         try {
             // Fetch saved PLs - prefer larger dataset (prop vs internal fetch)
@@ -399,9 +459,9 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
 
         try {
             // Fetch ALL bookings (no company filter to ensure dropdown is populated)
-            const { data: bookingsData, error: bookingsError } = await client.from('bookings').select('id, bookingNumber, salesOrderId, customer, status').order('createdAt', { ascending: false });
+            const { data: bookingsData, error: bookingsError } = await client.from('bookings').select('id, bookingNumber, salesOrderId, customer, status, pol').order('createdAt', { ascending: false });
             console.log('[PLInvoiceEngine] Fetched bookings:', bookingsData?.length || 0, 'error:', bookingsError);
-            if (bookingsData && bookingsData.length > 0) setAllBookings(bookingsData);
+            if (bookingsData && bookingsData.length > 0) setAllBookings(bookingsData as any);
         } catch (e) { console.error('Error fetching bookings:', e); }
         // Logo is fetched in dedicated useEffect above
     };
@@ -694,7 +754,11 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             const plId = editingPLId || `PL${Date.now()}`;
             const customer = customers.find(c => c.id === selectedCustomerId);
             const companyId = customer ? customer.companyId : currentCompanyId;
-            const primaryDoc = pendingFiles.find(f => f.status === 'completed')?.base64 || '';
+            const primaryDoc = pendingFiles.find(f => f.status === 'completed')?.base64 || undefined;
+
+            // Close custom booking input mode if open - bookingNumber is already set via state
+            if (isAddingNewBooking) setIsAddingNewBooking(false);
+            console.log('[saveToDatabase] bookingNumber at save time:', JSON.stringify(bookingNumber));
 
             const packingList: PackingList = {
                 id: plId,
@@ -715,18 +779,29 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                     const productName = product ? (product.grade ? `${product.name} (${product.grade})` : product.name) : '';
                     return { ...rest, productName, productGrade: product ? product.grade : '' };
                 })),
-                originalDocument: primaryDoc,
                 blNumber: bookingNumber,
                 soNumber: soNumber,
-                containers: JSON.stringify(containers)
+                containers: JSON.stringify(containers),
+                status: editingPLId ? (savedPLs.find(p => p.id === editingPLId)?.status || 'AVAILABLE') : 'AVAILABLE'
             } as any;
 
+            // Only include originalDocument if we have a new one (avoid overwriting existing with empty)
+            if (primaryDoc) {
+                (packingList as any).originalDocument = primaryDoc;
+            }
+
             if (editingPLId) {
-                const { error } = await client.from('packing_lists').update(packingList).eq('id', editingPLId);
+                // Strip originalDocument from update if we don't have a new one
+                const { id: _id, createdAt: _ca, ...updatePayload } = packingList as any;
+                if (!primaryDoc) delete updatePayload.originalDocument;
+                console.log('[saveToDatabase] UPDATE payload blNumber:', JSON.stringify(updatePayload.blNumber));
+                const { data: updatedPL, error } = await client.from('packing_lists').update(updatePayload).eq('id', editingPLId).select('id, plNumber, blNumber').single();
                 if (error) throw error;
+                console.log('[saveToDatabase] UPDATE result:', JSON.stringify(updatedPL));
             } else {
-                const { error } = await client.from('packing_lists').insert(packingList);
+                const { data: insertedPL, error } = await client.from('packing_lists').insert(packingList).select('id, plNumber, blNumber').single();
                 if (error) throw error;
+                console.log('[saveToDatabase] INSERT result:', JSON.stringify(insertedPL));
             }
 
             // Refresh saved PLs list
@@ -747,19 +822,30 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
 
     // Delete PL (only for Available PLs - not invoiced)
     const handleDeletePL = async (pl: any) => {
-        if (!confirm(`Delete PL ${pl.plNumber}? This action cannot be undone.`)) return;
+        console.log('[handleDeletePL] Called for PL:', pl.plNumber, 'id:', pl.id);
+        if (!window.confirm(`Delete PL ${pl.plNumber}? This action cannot be undone.`)) {
+            console.log('[handleDeletePL] User cancelled');
+            return;
+        }
         const client = getSupabaseClient();
-        if (!client) return;
+        if (!client) {
+            console.error('[handleDeletePL] No Supabase client!');
+            alert('Database connection not available. Please refresh.');
+            return;
+        }
         try {
             const { error } = await client.from('packing_lists').delete().eq('id', pl.id);
             if (error) throw error;
+            console.log('[handleDeletePL] Deleted successfully from DB');
             // Remove the deleted PL from local state directly (don't refetch, to avoid prop/DB mismatch)
             setSavedPLs(prev => prev.filter(p => p.id !== pl.id));
             setStatusMessage('PL deleted successfully!');
             setTimeout(() => setStatusMessage(''), 2000);
+            // Also refresh parent data
+            if (onRefreshData) await onRefreshData();
         } catch (error: any) {
-            console.error('Delete PL Error:', error);
-            alert(`Failed to delete: ${error.message}`);
+            console.error('[handleDeletePL] Delete PL Error:', error);
+            alert(`Failed to delete PL: ${error.message}`);
         }
     };
 
@@ -790,8 +876,8 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             item.sealNo || '',
             (item.grossLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
             (item.netLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (item.grossKg || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (item.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            (item.grossKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (item.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             item.volumes || 0,
             item.supplier || '',
             item.blNumber || ''
@@ -801,8 +887,8 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             'TOTALS', '', '',
             totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
             totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totals.volumes.toLocaleString(),
             '', ''
         ]);
@@ -838,8 +924,8 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             c.sealNo || '',
             (c.grossLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
             (c.netLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (c.grossKg || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (c.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            (c.grossKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (c.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             c.volumes || 0
         ]);
 
@@ -847,8 +933,8 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             'TOTALS', '',
             totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
             totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totals.volumes.toLocaleString()
         ]);
 
@@ -1101,6 +1187,30 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                 setEditingInvoiceId(invId);
             }
 
+            // Auto-mark linked PL as INVOICED
+            if (plNumber) {
+                const linkedPL = savedPLs.find(p => p.plNumber === plNumber);
+                if (linkedPL && (linkedPL as any).status !== 'INVOICED') {
+                    try {
+                        await client.from('packing_lists').update({ status: 'INVOICED' }).eq('id', linkedPL.id);
+                        setSavedPLs(prev => prev.map(p => p.id === linkedPL.id ? { ...p, status: 'INVOICED' as any } : p));
+                        console.log(`[PLInvoiceEngine] Auto-marked PL ${plNumber} as INVOICED`);
+                    } catch (err) { console.error('Failed to update PL status:', err); }
+                }
+            }
+
+            // Auto-mark linked booking as SHIPPED
+            if (bookingNumber) {
+                const linkedBooking = allBookings.find((b: any) => b.bookingNumber === bookingNumber && b.status === 'AVAILABLE');
+                if (linkedBooking) {
+                    try {
+                        await client.from('bookings').update({ status: 'SHIPPED' }).eq('id', linkedBooking.id);
+                        setAllBookings((prev: any) => prev.map((b: any) => b.id === linkedBooking.id ? { ...b, status: 'SHIPPED' } : b));
+                        console.log(`[PLInvoiceEngine] Auto-marked booking ${bookingNumber} as SHIPPED`);
+                    } catch (err) { console.error('Failed to update booking status:', err); }
+                }
+            }
+
             setStatusMessage('Invoice saved successfully!');
             setTimeout(() => setStatusMessage(''), 2000);
         } catch (error: any) {
@@ -1202,7 +1312,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                     setPlItems(Array.isArray(plItemsData) ? plItemsData : []);
 
                     // Convert PL items to invoice items format with hsCode lookup
-                    const invoiceItemsFromPL = (Array.isArray(plItemsData) ? plItemsData : []).map((item: PLItem) => {
+                    const invoiceItemsFromPL = (Array.isArray(plItemsData) ? plItemsData : []).map((item: any) => {
                         let hsCode = item.hsCode || '';
                         if (!hsCode && item.productId && products.length > 0) {
                             const prod = products.find((p: any) => p.id === item.productId);
@@ -1212,6 +1322,9 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                             ...item,
                             plItemId: item.id,
                             unitPrice: item.unitPrice || 0,
+                            unit: item.unit || 'LBS',
+                            unitPriceLbs: item.unitPriceLbs || 0,
+                            unitPriceKg: item.unitPriceKg || 0,
                             amount: (item.quantity || 0) * (item.unitPrice || 0),
                             customerDescription: item.customerDescription || item.description || '',
                             hsCode
@@ -1399,16 +1512,60 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
         try {
             // Get customer email
             const customer = customers.find(c => c.name === (inv.billToName || inv.soldTo));
-            const toEmail = customer?.email || '';
+            const toEmails = brMode ? 'felipe@ec4.enterprises' : [customer?.email, customer?.email2].filter(Boolean).join('; ');
+            const ccEmail = brMode ? '' : (customer?.brokerEmail || '');
 
-            console.log('[Email] Preparing email draft for', inv.invoiceNumber);
+            console.log('[Email] Preparing email draft for', inv.invoiceNumber, brMode ? '(BR MODE)' : '');
+
 
             // Build attachments array
             const attachments: { name: string; contentBytes: string; contentType: string }[] = [];
 
+            // BR MODE: Create price-adjusted copy of invoice (never save to DB)
+            let pdfInv = inv;
+            if (brMode && inv.items) {
+                const customerName = (inv.billToName || inv.soldTo || '').toUpperCase();
+                let parsedItems: any[] = [];
+                try {
+                    parsedItems = typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items;
+                } catch { parsedItems = []; }
+
+                const isBeatriz = customerName.includes('BEATRIZ');
+                const isPatex = customerName.includes('PATEX') || customerName.includes('PATAMUTE');
+
+                if (isBeatriz || isPatex) {
+                    const adjustedItems = parsedItems.map((item: any) => {
+                        const adjusted = { ...item };
+                        if (isBeatriz) {
+                            // Fixed $0.28/kg → convert to $/lb for unitPriceLbs
+                            adjusted.unitPriceKg = 0.28;
+                            adjusted.unitPriceLbs = Number((0.28 * 0.453592).toFixed(4)); // ~$0.127/lb
+                            adjusted.unitPrice = adjusted.unitPriceLbs;
+                        } else if (isPatex) {
+                            // 50% of original unit price
+                            adjusted.unitPrice = Number(((item.unitPrice || 0) * 0.5).toFixed(4));
+                            adjusted.unitPriceLbs = Number(((item.unitPriceLbs || item.unitPrice || 0) * 0.5).toFixed(4));
+                            adjusted.unitPriceKg = Number(((item.unitPriceKg || 0) * 0.5).toFixed(4));
+                        }
+                        // Recalculate amount
+                        adjusted.amount = Number(((adjusted.netLbs || adjusted.quantity || 0) * (adjusted.unitPriceLbs || adjusted.unitPrice || 0)).toFixed(2));
+                        return adjusted;
+                    });
+
+                    const newSubtotal = adjustedItems.reduce((sum: number, it: any) => sum + (it.amount || 0), 0);
+                    pdfInv = {
+                        ...inv,
+                        items: JSON.stringify(adjustedItems),
+                        subtotal: newSubtotal,
+                        totalAmount: newSubtotal
+                    };
+                    console.log('[Email][BR] Price-adjusted invoice for', customerName, '- new total:', newSubtotal);
+                }
+            }
+
             // 1. Generate Invoice PDF
             try {
-                const invoiceDoc = await generateInvoicePDF(inv, false);
+                const invoiceDoc = await generateInvoicePDF(pdfInv, false);
                 const invoiceBase64 = invoiceDoc.output('datauristring').split(',')[1];
                 attachments.push({
                     name: `Invoice_${inv.invoiceNumber || 'unknown'}.pdf`,
@@ -1422,7 +1579,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
 
             // 2. Generate Packing List PDF
             try {
-                const plDoc = generatePackingListPDF(inv, false);
+                const plDoc = generatePackingListPDF(pdfInv, false);
                 const plBase64 = plDoc.output('datauristring').split(',')[1];
                 attachments.push({
                     name: `PackingList_${inv.plNumber || inv.invoiceNumber || 'unknown'}.pdf`,
@@ -1434,23 +1591,25 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                 console.error('[Email] Failed to generate Packing List PDF:', e);
             }
 
-            // 3. Generate SLI PDF
-            try {
-                const sliDoc = generateSLIPreview(inv);
-                const sliBase64 = sliDoc.output('datauristring').split(',')[1];
-                attachments.push({
-                    name: `SLI_${inv.invoiceNumber || 'unknown'}.pdf`,
-                    contentBytes: sliBase64,
-                    contentType: 'application/pdf'
-                });
-                console.log('[Email] SLI PDF generated');
-            } catch (e) {
-                console.error('[Email] Failed to generate SLI PDF:', e);
+            // 3. Generate SLI PDF (skip in BR mode)
+            if (!brMode) {
+                try {
+                    const sliDoc = generateSLIPreview(inv);
+                    const sliBase64 = sliDoc.output('datauristring').split(',')[1];
+                    attachments.push({
+                        name: `SLI_${inv.invoiceNumber || 'unknown'}.pdf`,
+                        contentBytes: sliBase64,
+                        contentType: 'application/pdf'
+                    });
+                    console.log('[Email] SLI PDF generated');
+                } catch (e) {
+                    console.error('[Email] Failed to generate SLI PDF:', e);
+                }
             }
 
-            // 4. Add BOL if available
+            // 4. Add BOL if available (skip in BR mode)
             const bolUrl = (inv as any).bolUrl || (inv as any).bolurl;
-            if (bolUrl && bolUrl.startsWith('data:')) {
+            if (!brMode && bolUrl && bolUrl.startsWith('data:')) {
                 try {
                     const bolBase64 = bolUrl.split(',')[1];
                     const mimeMatch = bolUrl.match(/data:([^;]+);/);
@@ -1477,7 +1636,19 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             const companyName = company?.name || 'X-Solution';
 
             // Build email content
-            const emailBody = `Dear ${customer?.name || 'Customer'},
+            const emailBody = brMode
+                ? `Dear Partner,
+
+Please find attached the documents for order:
+
+• Commercial Invoice: ${inv.invoiceNumber}
+• Packing List: ${inv.plNumber || 'N/A'}
+
+Total Amount: $${Number(pdfInv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+
+Best regards,
+${companyName}`
+                : `Dear ${customer?.name || 'Customer'},
 
 Please find attached the shipping documents for your order:
 
@@ -1492,11 +1663,17 @@ If you have any questions, please don't hesitate to contact us.
 Best regards,
 ${companyName}`;
 
+            // Build subject with booking number if available
+            const bookingRef = (inv as any).bookingNumber || inv.transportRef || '';
+            const subjectParts = [brMode ? `BR Documents - Invoice #${inv.invoiceNumber}` : `Shipping Documents - Invoice #${inv.invoiceNumber}`];
+            if (bookingRef) subjectParts.push(`Booking #${bookingRef}`);
+
             // Set draft and open modal
             setEmailDraft({
                 invoice: inv,
-                to: toEmail,
-                subject: `Shipping Documents - Invoice #${inv.invoiceNumber}`,
+                to: toEmails,
+                cc: ccEmail,
+                subject: subjectParts.join(' | '),
                 htmlBody: emailBody,
                 attachments
             });
@@ -1521,20 +1698,50 @@ ${companyName}`;
         setSendingEmail(true);
         try {
             // Convert plain text to HTML
-            const htmlBody = `
+            const htmlBody = brMode
+                ? `<div style="font-family: Arial, sans-serif; text-align: left; line-height: 1.6;">${emailDraft.htmlBody.replace(/\n/g, '<br>')}</div>`
+                : `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                     <h2 style="color: #4F46E5;">${emailDraft.subject}</h2>
                     <div style="white-space: pre-wrap; line-height: 1.6;">${emailDraft.htmlBody}</div>
                 </div>
             `;
 
-            console.log('[Email] Sending email to', emailDraft.to, 'with', emailDraft.attachments.length, 'attachments');
-            const result = await sendEmail({
-                to: [emailDraft.to],
-                subject: emailDraft.subject,
-                htmlBody: htmlBody,
-                attachments: emailDraft.attachments
-            });
+            // Parse CC field (comma-separated emails)
+            const ccList = emailDraft.cc
+                ? emailDraft.cc.split(',').map(e => e.trim()).filter(e => e.length > 0)
+                : [];
+
+            console.log('[Email] Sending email to', emailDraft.to, 'CC:', ccList, 'with', emailDraft.attachments.length, 'attachments');
+
+            // Parse TO field (semicolon or comma-separated emails)
+            const toList = emailDraft.to
+                .split(/[;,]/)
+                .map(e => e.trim())
+                .filter(e => e.length > 0);
+
+            if (toList.length === 0) {
+                setEmailStatus({ show: true, success: false, message: 'Please enter a valid recipient email address.' });
+                setSendingEmail(false);
+                return;
+            }
+
+            let result: { success: boolean; provider: string; message: string };
+            try {
+                result = await sendEmail({
+                    to: toList,
+                    cc: ccList.length > 0 ? ccList : undefined,
+                    subject: emailDraft.subject,
+                    htmlBody: htmlBody,
+                    attachments: emailDraft.attachments
+                });
+            } catch (sendError: any) {
+                // Catch MSAL redirect or auth errors that could crash the app
+                console.error('[Email] sendEmail threw:', sendError);
+                setEmailStatus({ show: true, success: false, message: `Email service error: ${sendError?.message || 'Unknown error. Please check your email integration settings.'}` });
+                setSendingEmail(false);
+                return;
+            }
 
             if (result.success) {
                 setEmailStatus({ show: true, success: true, message: `Email sent successfully via ${result.provider}` });
@@ -1546,7 +1753,7 @@ ${companyName}`;
             }
         } catch (error: any) {
             console.error('[Email] Error:', error);
-            setEmailStatus({ show: true, success: false, message: `Failed to send email: ${error.message}` });
+            setEmailStatus({ show: true, success: false, message: `Failed to send email: ${error?.message || 'Unknown error'}` });
         } finally {
             setSendingEmail(false);
             setTimeout(() => setEmailStatus(prev => ({ ...prev, show: false })), 5000);
@@ -1612,6 +1819,83 @@ ${companyName}`;
         const companyName = company?.name || 'EC4 ENTERPRISES LLC';
         const companyAddress = company?.address || '112 Bartran Oaks Walk #600010';
         const companyCity = `${company?.city || 'St Johns'}, ${company?.state || 'FL'} ${company?.zip || '32260'}`;
+        const companyEIN = (company as any)?.ein || '';
+        const companyPhone = (company as any)?.phone || '';
+        const companyState = company?.state || 'FL';
+        const companyCountry = company?.country || 'US';
+
+        // Get customer info for consignee
+        const consigneeName = (inv as any).consignee || inv.billToName || '';
+        const customer = customers.find(c => c.name === consigneeName || c.name === inv.billToName);
+        const customerCountry = customer?.country || '';
+        const customerAddress = customer ? [customer.location, customer.city, customer.state, customer.zip, customer.country].filter(Boolean).join(', ') : '';
+
+        // Parse items first (needed for supplier fallback)
+        const items = typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items || [];
+
+        // Get supplier info for freight origin state (Field 4)
+        // Try: 1) linkedPL.supplier, 2) linkedPL.shipper, 3) inv.supplier, 4) inv.shipper, 5) first item's supplier
+        const plSupplierName = linkedPL?.supplier || linkedPL?.shipper || '';
+        const invSupplierName = (inv as any).supplier || (inv as any).shipperName || (inv as any).shipper || '';
+        const itemSupplier = items.length > 0 ? (items[0].supplier || '') : '';
+        const effectiveSupplier = plSupplierName || invSupplierName || itemSupplier;
+
+        console.log('[SLI] Supplier lookup:', {
+            plSupplier: linkedPL?.supplier,
+            plShipper: linkedPL?.shipper,
+            invSupplier: (inv as any).supplier,
+            invShipper: (inv as any).shipper,
+            itemSupplier,
+            effectiveSupplier,
+            suppliersCount: suppliers?.length
+        });
+
+        let supplierObj: any = null;
+        // Helper to normalize names: strip punctuation, lowercase, collapse whitespace
+        const normalizeName = (n: string) => (n || '').toLowerCase().replace(/[.,\-\/\\()]/g, '').replace(/\s+/g, ' ').trim();
+        if (effectiveSupplier && suppliers?.length > 0) {
+            const normalizedEffective = normalizeName(effectiveSupplier);
+            // Exact match first
+            supplierObj = suppliers.find((s: any) => s.name === effectiveSupplier);
+            // Normalized match (ignoring punctuation)
+            if (!supplierObj) {
+                supplierObj = suppliers.find((s: any) => normalizeName(s.name) === normalizedEffective);
+            }
+            // Partial/fuzzy match
+            if (!supplierObj) {
+                supplierObj = suppliers.find((s: any) =>
+                    normalizeName(s.nickname || '') === normalizedEffective ||
+                    normalizedEffective.includes(normalizeName(s.name)) ||
+                    normalizeName(s.name).includes(normalizedEffective)
+                );
+            }
+        }
+        const freightOriginState = supplierObj?.state || (inv as any).originState || companyState;
+
+        console.log('[SLI] Field 4 result:', { supplierObj: supplierObj?.name, supplierState: supplierObj?.state, freightOriginState });
+
+        // Get POD for Field 15 (Port of Export)
+        // Try: 1) inv.pod, 2) inv.poa, 3) booking.pol
+        let poaValue = (inv as any).pod || inv.pod || (inv as any).poa || inv.poa || '';
+        if (!poaValue && inv.bookingNumber) {
+            const linkedBooking = allBookings.find((b: any) => b.bookingNumber === inv.bookingNumber);
+            if (linkedBooking) {
+                poaValue = (linkedBooking as any).pol || '';
+                console.log('[SLI] Field 15 from booking:', { bookingNumber: inv.bookingNumber, pol: poaValue });
+            }
+        }
+        // Also try linkedPL's shippingPoint as another fallback
+        if (!poaValue && linkedPL?.shippingPoint) {
+            poaValue = linkedPL.shippingPoint;
+        }
+        console.log('[SLI] Field 15 POD:', { invPod: (inv as any).pod, invPoa: (inv as any).poa, poaValue });
+
+        // Calculate totals
+        const totalNetLbs = items.reduce((sum: number, item: any) => sum + Number(item.netLbs || item.quantity || 0), 0);
+        const totalNetKg = totalNetLbs * 0.453592;
+        const totalGrossLbs = items.reduce((sum: number, item: any) => sum + Number(item.grossLbs || 0), 0);
+        const totalGrossKg = totalGrossLbs > 0 ? totalGrossLbs * 0.453592 : totalNetKg * 1.02;
+        const totalVolumes = items.reduce((sum: number, item: any) => sum + Number(item.volumes || 0), 0);
 
         // --- HEADER (matching Invoice/PL style) ---
         // Logo on left side
@@ -1650,71 +1934,248 @@ ${companyName}`;
         doc.text(companyAddress, 196, 21, { align: 'right' });
         doc.text(companyCity, 196, 26, { align: 'right' });
 
-        let y = 45;
-
-        // --- CONSIGNEE SECTION ---
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(darkGray);
-        doc.text('CONSIGNEE:', 14, y);
-
-        doc.setFont('helvetica', 'normal');
-        y += 5;
-        const consigneeName = (inv as any).consignee || inv.billToName || '';
-        const consigneeLines = doc.splitTextToSize(consigneeName, 100);
-        doc.text(consigneeLines, 14, y);
-        y += consigneeLines.length * 4;
-
-        // Customer address
-        const customer = customers.find(c => c.name === consigneeName || c.name === inv.billToName);
-        if (customer) {
-            const addrParts = [customer.location, customer.city, customer.state, customer.zip, customer.country].filter(Boolean);
-            const customerAddress = addrParts.join(', ');
-            if (customerAddress) {
-                const addrLines = doc.splitTextToSize(customerAddress, 100);
-                doc.text(addrLines, 14, y);
-                y += addrLines.length * 4 + 2;
-            }
-        }
-        y += 8;
+        let y = 40;
 
         // --- SHIPPER'S LETTER OF INSTRUCTION TITLE ---
-        doc.setFontSize(16);
+        doc.setFontSize(14);
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(darkGray);
+        doc.setTextColor(cyanColor);
         doc.text("SHIPPER'S LETTER OF INSTRUCTION", 105, y, { align: 'center' });
-        y += 12;
+        y += 10;
 
-        // --- INVOICE DETAILS SECTION (2 columns) ---
+        // ============================================================
+        // STANDARD SLI/EEI FIELDS
+        // ============================================================
         const leftCol = 14;
-        const leftValCol = 50;
         const rightCol = 110;
-        const rightValCol = 145;
-        const lineHeight = 6;
+        const fieldLabelWidth = 90;
+        const lineHeight = 5;
 
+        const drawFieldLabel = (fieldNum: string, label: string, x: number, yPos: number) => {
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor('#888888');
+            doc.text(`${fieldNum}. ${label}`, x, yPos);
+        };
+
+        const drawFieldValue = (value: string, x: number, yPos: number, maxWidth = 85) => {
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(darkGray);
+            const lines = doc.splitTextToSize(value || '-', maxWidth);
+            doc.text(lines, x, yPos);
+            return lines.length * 4;
+        };
+
+        // ---- ROW 1: USPPI / DATE / TRANSPORT REF ----
+        doc.setDrawColor('#cccccc');
+        doc.setLineWidth(0.3);
+
+        // Field 1a: USPPI Name & Address
+        drawFieldLabel('1a', 'U.S. PRINCIPAL PARTY IN INTEREST (USPPI)', leftCol, y);
+        y += 4;
         doc.setFontSize(9);
         doc.setFont('helvetica', 'bold');
-        doc.text('Invoice Number:', leftCol, y);
+        doc.setTextColor(darkGray);
+        doc.text(companyName, leftCol, y);
+        y += 4;
         doc.setFont('helvetica', 'normal');
-        doc.text(inv.invoiceNumber || '', leftValCol, y);
+        doc.text(companyAddress, leftCol, y);
+        y += 4;
+        doc.text(companyCity, leftCol, y);
+        if (companyPhone) {
+            y += 4;
+            doc.text(`Tel: ${companyPhone}`, leftCol, y);
+        }
+
+        // Field 1b: USPPI EIN
+        y += 6;
+        drawFieldLabel('1b', 'USPPI EIN (IRS) NO.', leftCol, y);
+        y += 4;
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(darkGray);
+        doc.text(companyEIN ? `EIN: ${companyEIN}` : 'EIN: ______________', leftCol, y);
+
+        // Fields 2 & 3 on the right side (same vertical area)
+        let rightY = y - 22;
+        drawFieldLabel('2', 'DATE OF EXPORTATION', rightCol, rightY);
+        rightY += 4;
+        drawFieldValue(new Date(inv.date || inv.invoiceDate || new Date()).toISOString().split('T')[0], rightCol, rightY);
+        rightY += 8;
+
+        drawFieldLabel('3', 'TRANSPORTATION REFERENCE NO.', rightCol, rightY);
+        rightY += 4;
+        drawFieldValue((inv as any).bookingNumber || inv.transportRef || '-', rightCol, rightY);
+
+        y += 8;
+        doc.line(leftCol, y, 196, y);
+        y += 4;
+
+        // ---- ROW 2: POINT OF ORIGIN / CONSIGNEE ----
+        // Field 4: Point (State) of Origin
+        drawFieldLabel('4', 'POINT (STATE) OF ORIGIN OR FTZ NO.', leftCol, y);
+        y += 4;
+        drawFieldValue(freightOriginState, leftCol, y);
+
+        // Field 5 on right: FPPI / Ultimate Consignee
+        drawFieldLabel('5', 'ULTIMATE CONSIGNEE', rightCol, y - 4);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(darkGray);
+        const consigneeLines = doc.splitTextToSize(consigneeName, 82);
+        doc.text(consigneeLines, rightCol, y);
+        let consigneeEndY = y + consigneeLines.length * 4;
+        if (customerAddress) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(8);
+            const addrLines = doc.splitTextToSize(customerAddress, 82);
+            doc.text(addrLines, rightCol, consigneeEndY);
+            consigneeEndY += addrLines.length * 3.5;
+        }
+
+        y = Math.max(y + 8, consigneeEndY + 4);
+        doc.line(leftCol, y, 196, y);
+        y += 4;
+
+        // ---- ROW 3: COUNTRY / PARTIES / MODE / PORT ----
+        // Field 7: Country of Ultimate Destination
+        drawFieldLabel('7', 'COUNTRY OF ULTIMATE DESTINATION', leftCol, y);
+        y += 4;
+        drawFieldValue(customerCountry || 'N/A', leftCol, y);
+
+        // Field 8: Parties to Transaction
+        drawFieldLabel('8', 'PARTIES TO TRANSACTION', rightCol, y - 4);
+        drawFieldValue('Non-Related', rightCol, y);
+
+        y += 8;
+        doc.line(leftCol, y, 196, y);
+        y += 4;
+
+        // Field 11: Mode of Transport
+        drawFieldLabel('11', 'MODE OF TRANSPORT', leftCol, y);
+        y += 4;
+        drawFieldValue('VESSEL (Ocean)', leftCol, y);
+
+        // Field 15: Port of Export
+        drawFieldLabel('15', 'PORT OF EXPORT', rightCol, y - 4);
+        let portOfExportDisplay = poaValue;
+        if (poaValue && ports.length > 0) {
+            const portObj = ports.find((p: any) => p.code === poaValue || p.name === poaValue);
+            if (portObj) {
+                portOfExportDisplay = `${portObj.name} (${portObj.code})`;
+            }
+        }
+        drawFieldValue(portOfExportDisplay, rightCol, y);
+
+        y += 8;
+        doc.line(leftCol, y, 196, y);
+        y += 4;
+
+        // ============================================================
+        // GOODS TABLE (Fields 18-27)
+        // ============================================================
+        doc.setFillColor(232, 244, 245);
+        doc.rect(leftCol, y - 2, 182, 7, 'F');
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor('#555555');
+        // Column headers
+        doc.text('18. D/F', leftCol + 1, y + 2);
+        doc.text('19. SCHEDULE B DESCRIPTION', leftCol + 14, y + 2);
+        doc.text('20. QTY', leftCol + 95, y + 2);
+        doc.text('22. SHIP WT (KG)', leftCol + 113, y + 2);
+        doc.text('23. ECCN', leftCol + 140, y + 2);
+        doc.text('26. VALUE ($)', leftCol + 160, y + 2);
+        y += 8;
+
+        // Item rows
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(darkGray);
+
+        if (items.length > 0) {
+            items.forEach((item: any, idx: number) => {
+                if (y > 260) return; // page overflow guard
+                // Use customerDescription first if present
+                let desc = (item.customerDescription || '').trim();
+                if (!desc && item.productId && products.length > 0) {
+                    const prod = products.find((p: any) => p.id === item.productId);
+                    if (prod) desc = prod.name;
+                }
+                if (!desc) desc = item.productDescription || item.description || '';
+                const hsCode = item.hsCode || '';
+                const descWithHS = hsCode ? `${hsCode} - ${desc}` : desc;
+                const qty = Number(item.netLbs || item.quantity || 0);
+                const qtyKg = qty * 0.453592;
+                const amount = Number(item.amount || 0);
+
+                doc.text('D', leftCol + 4, y);
+                const descLines = doc.splitTextToSize(descWithHS.substring(0, 70), 78);
+                doc.text(descLines, leftCol + 14, y);
+                doc.text(qtyKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), leftCol + 95, y);
+                doc.text(qtyKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), leftCol + 113, y);
+                doc.text('EAR99', leftCol + 140, y);
+                doc.text(`$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, leftCol + 160, y);
+
+                y += Math.max(descLines.length * 4, 5) + 1;
+            });
+        } else {
+            doc.text('No items', leftCol + 14, y);
+            y += 6;
+        }
+
+        // Totals row
+        y += 2;
+        doc.setFillColor(240, 240, 240);
+        doc.rect(leftCol, y - 3, 182, 7, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.text('TOTALS:', leftCol + 14, y);
+        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KG`, leftCol + 95, y);
+        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KG`, leftCol + 113, y);
+        doc.text(`$${Number(inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, leftCol + 160, y);
+        y += 10;
+
+        doc.line(leftCol, y - 3, 196, y - 3);
+
+        // ============================================================
+        // ADDITIONAL FIELDS (25, Containers, etc.)
+        // ============================================================
+        // Field 25: License Exception Symbol / Authorization
+        drawFieldLabel('25', 'LICENSE EXCEPTION / AUTHORIZATION', leftCol, y);
+        y += 4;
+        drawFieldValue('NLR (No License Required)', leftCol, y);
+
+        // Field 9: Routed Export Transaction
+        drawFieldLabel('9', 'ROUTED EXPORT TRANSACTION', rightCol, y - 4);
+        drawFieldValue('No', rightCol, y);
+
+        y += 10;
+
+        // --- SHIPPING DETAILS SECTION ---
+        doc.setFillColor(232, 244, 245);
+        doc.rect(14, y, 182, 7, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10);
+        doc.setTextColor(darkGray);
+        doc.text('Shipping Details', 16, y + 5);
+        y += 12;
+
+        doc.setFontSize(9);
+        const leftValCol = 50;
+        const rightValCol = 145;
 
         doc.setFont('helvetica', 'bold');
-        doc.text('Date:', rightCol, y);
+        doc.text('Carrier:', leftCol, y);
         doc.setFont('helvetica', 'normal');
-        doc.text(new Date(inv.date || inv.invoiceDate || new Date()).toISOString().split('T')[0], rightValCol, y);
-        y += lineHeight;
+        doc.text((inv as any).carrier || '', leftValCol, y);
 
         doc.setFont('helvetica', 'bold');
-        doc.text('Terms:', leftCol, y);
+        doc.text('Booking #:', rightCol, y);
         doc.setFont('helvetica', 'normal');
-        doc.text((inv as any).terms || 'Net 30', leftValCol, y);
-
-        doc.setFont('helvetica', 'bold');
-        doc.text('Due Date:', rightCol, y);
-        doc.setFont('helvetica', 'normal');
-        const dueDate = (inv as any).dueDate ? new Date((inv as any).dueDate).toISOString().split('T')[0] : '';
-        doc.text(dueDate, rightValCol, y);
-        y += lineHeight;
+        doc.text((inv as any).bookingNumber || inv.transportRef || '-', rightValCol, y);
+        y += lineHeight + 1;
 
         doc.setFont('helvetica', 'bold');
         doc.text('Incoterm:', leftCol, y);
@@ -1722,130 +2183,55 @@ ${companyName}`;
         doc.text((inv as any).incoterm || 'EX-WORKS USA', leftValCol, y);
 
         doc.setFont('helvetica', 'bold');
-        doc.text('Currency:', rightCol, y);
+        doc.text('Invoice #:', rightCol, y);
         doc.setFont('helvetica', 'normal');
-        doc.text((inv as any).currency || 'USD', rightValCol, y);
-        y += lineHeight;
-
-        doc.setFont('helvetica', 'bold');
-        doc.text('SO #:', leftCol, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text((inv as any).soNumber || inv.customerPo || '-', leftValCol, y);
-
-        doc.setFont('helvetica', 'bold');
-        doc.text('Booking #:', rightCol, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text((inv as any).bookingNumber || inv.transportRef || '-', rightValCol, y);
-        y += lineHeight;
+        doc.text(inv.invoiceNumber || '', rightValCol, y);
+        y += lineHeight + 1;
 
         doc.setFont('helvetica', 'bold');
         doc.text('Total Amount:', leftCol, y);
         doc.setFont('helvetica', 'normal');
         doc.text(`$${Number(inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, leftValCol, y);
-        y += 12;
 
-        // --- GOODS DESCRIPTION SECTION ---
-        doc.setFillColor(232, 244, 245); // Light cyan background
-        doc.rect(14, y, 182, 7, 'F');
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(10);
-        doc.text('Goods Description', 16, y + 5);
-        y += 12;
-
-        // Parse items
-        const items = typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items || [];
-
-        // Aggregate item descriptions - use customerDescription (same as invoice)
-        const descriptions = items.map((item: any) => item.customerDescription || item.description || item.productDescription || '').filter(Boolean);
-        const uniqueDescriptions = [...new Set(descriptions)];
-        const commodityText = uniqueDescriptions.length > 0 ? uniqueDescriptions.join(', ') : 'N/A';
-
-        // Calculate totals
-        const totalNetLbs = items.reduce((sum: number, item: any) => sum + Number(item.netLbs || item.quantity || 0), 0);
-        const totalNetKg = totalNetLbs * 0.453592;
-        const totalGrossLbs = items.reduce((sum: number, item: any) => sum + Number(item.grossLbs || 0), 0);
-        const totalGrossKg = totalGrossLbs > 0 ? totalGrossLbs * 0.453592 : totalNetKg * 1.02;
-        const totalVolumes = items.reduce((sum: number, item: any) => sum + Number(item.volumes || 0), 0);
-        const hsCode = items[0]?.hsCode || '';
-        const unitPrice = items[0]?.unitPrice ? `$${Number(items[0].unitPrice).toFixed(4)}/Kg` : '';
-
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Commodity:', leftCol, y);
+        doc.text('Currency:', rightCol, y);
         doc.setFont('helvetica', 'normal');
-        const commodityLines = doc.splitTextToSize(commodityText, 130);
-        doc.text(commodityLines, leftValCol, y);
-        y += Math.max(commodityLines.length * 4, 5) + 2;
-
-        doc.setFont('helvetica', 'bold');
-        doc.text('HS Code:', leftCol, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(hsCode, leftValCol, y);
-        y += lineHeight;
-
-        doc.setFont('helvetica', 'bold');
-        doc.text('Quantity:', leftCol, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kg (Net Weight)`, leftValCol, y);
-        y += lineHeight;
+        doc.text((inv as any).currency || 'USD', rightValCol, y);
+        y += lineHeight + 1;
 
         doc.setFont('helvetica', 'bold');
         doc.text('Gross Weight:', leftCol, y);
         doc.setFont('helvetica', 'normal');
-        doc.text(`${totalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kg`, leftValCol, y);
-        y += lineHeight;
+        doc.text(`${totalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG`, leftValCol, y);
 
         doc.setFont('helvetica', 'bold');
-        doc.text('Number of Bales:', leftCol, y);
+        doc.text('Net Weight:', rightCol, y);
         doc.setFont('helvetica', 'normal');
-        doc.text(totalVolumes > 0 ? totalVolumes.toString() : '-', leftValCol, y);
-        y += lineHeight;
+        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG`, rightValCol, y);
+        y += lineHeight + 1;
 
         doc.setFont('helvetica', 'bold');
         doc.text('Packaging:', leftCol, y);
         doc.setFont('helvetica', 'normal');
-        doc.text('Bales / Fardos', leftValCol, y);
-        y += lineHeight;
+        doc.text((inv as any).packaging || 'Bales / Fardos', leftValCol, y);
 
         doc.setFont('helvetica', 'bold');
-        doc.text('Unit Price:', leftCol, y);
+        doc.text('Number of Bales:', rightCol, y);
         doc.setFont('helvetica', 'normal');
-        doc.text(unitPrice || '-', leftValCol, y);
-        y += lineHeight;
+        doc.text(totalVolumes > 0 ? totalVolumes.toString() : '-', rightValCol, y);
+        y += lineHeight + 1;
 
         doc.setFont('helvetica', 'bold');
         doc.text('Country of Origin:', leftCol, y);
         doc.setFont('helvetica', 'normal');
         doc.text('USA', leftValCol, y);
-        y += 12;
-
-        // --- SHIPPING DETAILS SECTION ---
-        doc.setFillColor(232, 244, 245);
-        doc.rect(14, y, 182, 7, 'F');
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(10);
-        doc.text('Shipping Details', 16, y + 5);
-        y += 12;
-
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Carrier:', leftCol, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text((inv as any).carrier || '', leftValCol, y);
-        y += lineHeight;
-
-        doc.setFont('helvetica', 'bold');
-        doc.text('Tracking Number:', leftCol, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text((inv as any).trackingNumber || '', leftValCol, y);
-        y += lineHeight + 2;
+        y += lineHeight + 3;
 
         // Containers and Seals
         doc.setFont('helvetica', 'bold');
         doc.text('Containers and Seals:', leftCol, y);
         y += 5;
 
-        // Extract unique containers from items
         const containersMap = new Map();
         items.forEach((item: any) => {
             if (item.containerNo && item.containerNo.toLowerCase() !== 'unknown') {
@@ -1875,6 +2261,8 @@ ${companyName}`;
         // Return doc for preview (don't save)
         return doc;
     };
+
+
 
     // Wrapper for downloading SLI directly
     const generateSLI = (inv: Invoice) => {
@@ -2102,15 +2490,16 @@ ${companyName}`;
         doc.setFontSize(10);
         doc.setTextColor(darkGray);
         doc.text('TERMS', 14, y);
-        doc.text('INCOTERM', 60, y);
-        doc.text('POD', 140, y);
+        doc.text('INCOTERM', 90, y);
+        doc.text('POD', 155, y);
 
         y += 6;
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(cyanColor);
 
         // Payment Terms
-        doc.text(inv.paymentTerms || 'ADV / CAD', 14, y);
+        const termsText = inv.paymentTerms || 'ADV / CAD';
+        doc.text(termsText.length > 25 ? termsText.substring(0, 25) : termsText, 14, y);
 
         // Incoterm with name lookup
         const incotermCode = inv.incoterm || 'CFR';
@@ -2128,13 +2517,13 @@ ${companyName}`;
             'CIF': 'COST, INSURANCE AND FREIGHT'
         };
         const incotermDisplay = `${incotermCode} - ${incotermNames[incotermCode] || incotermCode}`;
-        doc.text(incotermDisplay, 60, y);
+        doc.text(incotermDisplay, 90, y);
 
         // POD with port name lookup
         const podCode = inv.pod || '';
         const podPort = ports.find((p: any) => p.code === podCode);
         const podDisplay = podPort ? `${podCode} - ${podPort.name}` : podCode || '-';
-        doc.text(podDisplay, 140, y);
+        doc.text(podDisplay, 155, y);
 
         // --- ITEMS TABLE ---
         y += 12;
@@ -2144,8 +2533,13 @@ ${companyName}`;
         console.log('[PDF] Items from invoice:', items.map((i: any) => ({ desc: i.customerDescription?.substring(0, 30), hsCode: i.hsCode })));
 
         const tableBody = items.map((item: any) => {
-            // Use only the customer description (the desired description for customer)
-            const description = `${item.customerDescription || item.description || item.productDescription || ''}`.trim();
+            // Use customerDescription first if present
+            let description = (item.customerDescription || '').trim();
+            if (!description && item.productId && products.length > 0) {
+                const prod = products.find((p: any) => p.id === item.productId);
+                if (prod) description = prod.name;
+            }
+            if (!description) description = `${item.productDescription || item.description || ''}`.trim();
 
             // Get HS Code directly from item (stored in invoice items JSON)
             const hsCode = item.hsCode || '';
@@ -2154,7 +2548,7 @@ ${companyName}`;
             // QTY - show both lbs and kgs with units
             const netLbs = item.netLbs || item.quantity || 0;
             const netKgs = netLbs / 2.20462; // Convert lbs to kg
-            const qtyDisplay = `${netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} lbs\n${netKgs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kg`;
+            const qtyDisplay = `${netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} lbs\n${netKgs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
 
             // Unit Price - show both $/lb and $/kg
             const unitPriceLbs = item.unitPriceLbs || item.unitPrice || 0;
@@ -2342,6 +2736,18 @@ ${companyName}`;
 
         // Set finalY to the max of both columns
         finalY = Math.max(leftY, rightY) + 5;
+
+        // Add EC4 stamp at bottom-right
+        if (stampUrl && companyName.toUpperCase().includes('EC4')) {
+            try {
+                const stampSize = 35;
+                const stampX = 196 - stampSize;
+                const stampY = Math.min(finalY + 5, 260);
+                doc.addImage(stampUrl, 'PNG', stampX, stampY, stampSize, stampSize);
+            } catch (e) {
+                console.warn('[Invoice PDF] Could not add stamp:', e);
+            }
+        }
 
         if (autoDownload) {
             doc.save(`Invoice_${inv.invoiceNumber || 'unknown'}.pdf`);
@@ -2538,15 +2944,16 @@ ${companyName}`;
         doc.setFontSize(10);
         doc.setTextColor(darkGray);
         doc.text('TERMS', 14, y);
-        doc.text('INCOTERM', 60, y);
-        doc.text('POD', 140, y);
+        doc.text('INCOTERM', 90, y);
+        doc.text('POD', 155, y);
 
         y += 6;
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(cyanColor);
 
         // Payment Terms
-        doc.text(inv.paymentTerms || 'ADV / CAD', 14, y);
+        const termsTextPL = inv.paymentTerms || 'ADV / CAD';
+        doc.text(termsTextPL.length > 25 ? termsTextPL.substring(0, 25) : termsTextPL, 14, y);
 
         // Incoterm with name lookup (matching Invoice)
         const incotermCode = inv.incoterm || 'CFR';
@@ -2564,13 +2971,13 @@ ${companyName}`;
             'CIF': 'COST, INSURANCE AND FREIGHT'
         };
         const incotermDisplay = `${incotermCode} - ${incotermNames[incotermCode] || incotermCode}`;
-        doc.text(incotermDisplay, 60, y);
+        doc.text(incotermDisplay, 90, y);
 
         // POD with port name lookup (matching Invoice)
         const podCode = inv.pod || '';
         const podPort = ports.find((p: any) => p.code === podCode);
         const podDisplay = podPort ? `${podCode} - ${podPort.name}` : podCode || '-';
-        doc.text(podDisplay, 140, y);
+        doc.text(podDisplay, 155, y);
 
         // --- ITEMS TABLE (Same as Invoice but without Unit Price and Amount) ---
         y += 12;
@@ -2578,8 +2985,13 @@ ${companyName}`;
 
         const tableHead = [['DESCRIPTION', 'HS CODE', 'QTY (LBS/KG)']];
         const tableBody = items.map((item: any) => {
-            // Use only the customer description (the desired description for customer)
-            const description = `${item.customerDescription || item.description || item.productDescription || ''}`.trim();
+            // Use customerDescription first if present
+            let description = (item.customerDescription || '').trim();
+            if (!description && item.productId && products.length > 0) {
+                const prod = products.find((p: any) => p.id === item.productId);
+                if (prod) description = prod.name;
+            }
+            if (!description) description = `${item.productDescription || item.description || ''}`.trim();
 
             // Get HS Code directly from item
             const hsCode = item.hsCode || '';
@@ -2587,7 +2999,7 @@ ${companyName}`;
             // QTY - show both lbs and kgs with units
             const netLbs = item.netLbs || item.quantity || 0;
             const netKgs = netLbs / 2.20462; // Convert lbs to kg
-            const qtyDisplay = `${netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} lbs\n${netKgs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kg`;
+            const qtyDisplay = `${netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} lbs\n${netKgs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
 
             return [
                 description,
@@ -2690,7 +3102,13 @@ ${companyName}`;
         // Group items by product description
         const productSummary: { [key: string]: { description: string; netLbs: number; netKg: number; grossKg: number; volumes: number } } = {};
         items.forEach((item: any) => {
-            const desc = (item.customerDescription || item.description || item.productDescription || '').trim();
+            // Use customerDescription first if present
+            let desc = (item.customerDescription || '').trim();
+            if (!desc && item.productId && products.length > 0) {
+                const prod = products.find((p: any) => p.id === item.productId);
+                if (prod) desc = prod.name;
+            }
+            if (!desc) desc = (item.productDescription || item.description || '').trim();
             const key = desc || 'Unknown Product';
             if (!productSummary[key]) {
                 productSummary[key] = {
@@ -2719,8 +3137,8 @@ ${companyName}`;
             const productTableBody = productRows.map(p => [
                 p.description.length > 60 ? p.description.substring(0, 60) + '...' : p.description,
                 p.volumes.toString(),
-                p.netKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-                p.grossKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+                p.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                p.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
             ]);
 
             // Add totals row
@@ -2756,6 +3174,19 @@ ${companyName}`;
                     3: { halign: 'right', cellWidth: 35 }
                 }
             });
+        }
+
+        // Add EC4 stamp at bottom-right
+        if (stampUrl && companyName.toUpperCase().includes('EC4')) {
+            try {
+                const lastPageHeight = (doc as any).lastAutoTable?.finalY || 200;
+                const stampSize = 35;
+                const stampX = 196 - stampSize;
+                const stampY = Math.min(lastPageHeight + 10, 260);
+                doc.addImage(stampUrl, 'PNG', stampX, stampY, stampSize, stampSize);
+            } catch (e) {
+                console.warn('[PL PDF] Could not add stamp:', e);
+            }
         }
 
         if (autoDownload) {
@@ -3094,13 +3525,15 @@ ${companyName}`;
             quantity: 0,
             unit: 'LBS',
             unitPrice: 0,
+            unitPriceLbs: 0,
+            unitPriceKg: 0,
             amount: 0
         }]);
         setCurrentStep('CREATE_INVOICE');
     };
 
     const renderUploadStep = () => (
-        <div className="space-y-6">
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
             {/* Hidden file input for Upload button in header */}
             <input
                 ref={fileInputRef}
@@ -3145,7 +3578,7 @@ ${companyName}`;
                                 <FileText size={12} className="text-slate-400" />
                                 <span className="truncate max-w-[150px]">{f.file.name}</span>
                                 {f.status === 'processing' && <Loader2 size={12} className="animate-spin text-indigo-500" />}
-                                {f.status === 'done' && <CheckCircle2 size={12} className="text-emerald-500" />}
+                                {f.status === 'completed' && <CheckCircle2 size={12} className="text-emerald-500" />}
                                 {f.status === 'error' && <AlertCircle size={12} className="text-red-500" />}
                             </div>
                         ))}
@@ -3154,9 +3587,9 @@ ${companyName}`;
             )}
 
             {/* Saved PLs and Saved Invoices - Side by Side */}
-            <div className="grid grid-cols-1 lg:grid-cols-10 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-10 gap-4 flex-1 min-h-0">
                 {/* Saved PLs - 3/10 width (30%) */}
-                <div className="lg:col-span-3 p-4 border-2 border-slate-200 rounded-2xl bg-gradient-to-br from-slate-50 to-white">
+                <div className="lg:col-span-3 p-4 border-2 border-slate-200 rounded-2xl bg-gradient-to-br from-slate-50 to-white flex flex-col overflow-hidden">
                     <div className="flex items-center gap-2 mb-2">
                         <ClipboardList size={18} className="text-slate-600" />
                         <h4 className="font-bold text-slate-700 text-sm">Saved PLs</h4>
@@ -3175,7 +3608,7 @@ ${companyName}`;
                             </button>
                         </div>
                     </div>
-                    <div className="max-h-[22rem] overflow-y-auto">
+                    <div className="flex-1 overflow-y-auto min-h-0 max-h-[calc(100vh-22rem)]">
                         {(() => {
                             // Build set of all PL numbers that have been used in invoices
                             const invoicedPLNumbers = new Set(
@@ -3186,13 +3619,11 @@ ${companyName}`;
                             console.log('[PL Filter] invoicedPLNumbers:', [...invoicedPLNumbers], 'from', savedInvoices.length, 'invoices');
                             console.log('[PL Filter] savedPLs plNumbers:', savedPLs.map(pl => pl.plNumber));
 
-                            // Filter PLs based on selected filter
+                            // Filter PLs based on DB status field only (no invoice matching fallback)
                             const filteredPLs = savedPLs.filter(pl => {
-                                const isInvoiced = invoicedPLNumbers.has(pl.plNumber);
-                                console.log('[PL Filter] pl:', pl.plNumber, 'isInvoiced:', isInvoiced);
-                                return plFilter === 'AVAILABLE' ? !isInvoiced : isInvoiced;
+                                const plStatus = (pl as any).status || 'AVAILABLE';
+                                return plFilter === 'AVAILABLE' ? plStatus !== 'INVOICED' : plStatus === 'INVOICED';
                             });
-                            console.log('[PL Filter] filter:', plFilter, 'showing', filteredPLs.length, 'of', savedPLs.length, 'PLs');
 
                             if (filteredPLs.length === 0) {
                                 return (
@@ -3209,11 +3640,12 @@ ${companyName}`;
                                             <th className="text-left px-1 py-0.5 font-semibold text-slate-500">Date</th>
                                             <th className="text-left px-1 py-0.5 font-semibold text-slate-500">PL #</th>
                                             <th className="text-left px-1 py-0.5 font-semibold text-slate-500">Supplier</th>
+                                            <th className="text-left px-1 py-0.5 font-semibold text-slate-500">Status</th>
                                             <th className="text-center px-1 py-0.5 font-semibold text-slate-500">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filteredPLs.slice(0, 12).map(pl => (
+                                        {filteredPLs.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()).slice(0, 24).map(pl => (
                                             <tr
                                                 key={pl.id}
                                                 className="hover:bg-slate-50 transition-colors border-b border-slate-100"
@@ -3221,6 +3653,24 @@ ${companyName}`;
                                                 <td className="px-1 py-0.5 text-slate-500">{pl.createdAt ? new Date(pl.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}</td>
                                                 <td className="px-1 py-0.5 font-medium text-slate-700">{pl.plNumber || '-'}</td>
                                                 <td className="px-1 py-0.5 text-slate-600 truncate max-w-[100px]">{((pl.supplier || '-').split(' ').slice(0, 2).join(' '))}</td>
+                                                <td className="px-1 py-0.5">
+                                                    <select
+                                                        value={(pl as any).status || 'AVAILABLE'}
+                                                        onChange={async (e) => {
+                                                            const newStatus = e.target.value;
+                                                            const client = getSupabaseClient();
+                                                            if (!client) return;
+                                                            try {
+                                                                await client.from('packing_lists').update({ status: newStatus }).eq('id', pl.id);
+                                                                setSavedPLs(prev => prev.map(p => p.id === pl.id ? { ...p, status: newStatus as any } : p));
+                                                            } catch (err) { console.error('Status update error:', err); }
+                                                        }}
+                                                        className={`text-[10px] px-1 py-0.5 rounded border border-slate-200 cursor-pointer ${(pl as any).status === 'INVOICED' ? 'text-blue-600 bg-blue-50' : 'text-green-600 bg-green-50'}`}
+                                                    >
+                                                        <option value="AVAILABLE">Available</option>
+                                                        <option value="INVOICED">Invoiced</option>
+                                                    </select>
+                                                </td>
                                                 <td className="px-1 py-0.5 text-center">
                                                     <div className="flex items-center justify-center gap-2">
                                                         <button
@@ -3230,15 +3680,13 @@ ${companyName}`;
                                                         >
                                                             <Edit3 size={14} />
                                                         </button>
-                                                        {plFilter === 'AVAILABLE' && (
-                                                            <button
-                                                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeletePL(pl); }}
-                                                                title="Delete PL"
-                                                                className="p-1 rounded hover:bg-red-100 text-red-500 transition-colors"
-                                                            >
-                                                                <Trash2 size={14} />
-                                                            </button>
-                                                        )}
+                                                        <button
+                                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeletePL(pl); }}
+                                                            title="Delete PL"
+                                                            className="p-1 rounded hover:bg-red-100 text-red-500 transition-colors"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -3251,13 +3699,13 @@ ${companyName}`;
                 </div>
 
                 {/* Saved Invoices - 7/10 width (70%) */}
-                <div className="lg:col-span-7 p-4 border-2 border-slate-200 rounded-2xl bg-gradient-to-br from-slate-50 to-white">
+                <div className="lg:col-span-7 p-4 border-2 border-slate-200 rounded-2xl bg-gradient-to-br from-slate-50 to-white flex flex-col overflow-hidden">
                     <div className="flex items-center gap-2 mb-2">
                         <FileText size={20} className="text-slate-600" />
                         <h4 className="font-bold text-slate-700">Saved Invoices</h4>
                         <span className="ml-auto text-xs bg-slate-200 px-2 py-0.5 rounded-full">{invoices.length}</span>
                     </div>
-                    <div className="max-h-[20rem] overflow-y-auto">
+                    <div className="flex-1 overflow-y-auto min-h-0 max-h-[calc(100vh-22rem)]">
                         <table className="w-full text-xs">
                             <thead className="sticky top-0 bg-white z-10">
                                 <tr className="border-b border-slate-200">
@@ -3299,6 +3747,7 @@ ${companyName}`;
                                             </div>
                                         )}
                                     </th>
+                                    <th className="text-left py-1 font-bold text-slate-600">Booking #</th>
                                     <th className="text-left py-1 font-bold text-slate-600 relative">
                                         <button
                                             onClick={() => setOpenFilterPopup(openFilterPopup === 'customer' ? null : 'customer')}
@@ -3346,18 +3795,19 @@ ${companyName}`;
                                     // Sort by date descending (newest first) and filter
                                     // Use savedInvoices (local state) instead of invoices prop to preserve BOL uploads
                                     const sortedInvoices = [...savedInvoices]
-                                        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+                                        .sort((a, b) => new Date(b.invoiceDate || b.createdAt || 0).getTime() - new Date(a.invoiceDate || a.createdAt || 0).getTime())
                                         .filter(inv => invoiceFilterNumber.length === 0 || invoiceFilterNumber.includes(inv.invoiceNumber))
                                         .filter(inv => invoiceFilterCustomer.length === 0 || invoiceFilterCustomer.includes(inv.billToName || inv.soldTo || ''));
 
-                                    return sortedInvoices.slice(0, 15).map(inv => (
+                                    return sortedInvoices.slice(0, 30).map(inv => (
                                         <tr
                                             key={inv.id}
                                             className="border-b border-slate-100 hover:bg-slate-50 transition-colors"
                                         >
-                                            <td className="py-0.5 text-slate-500">{inv.createdAt ? new Date(inv.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}</td>
+                                            <td className="py-0.5 text-slate-500">{(inv.invoiceDate || inv.createdAt) ? new Date(inv.invoiceDate || inv.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}</td>
                                             <td className="py-0.5 text-slate-500 truncate">{inv.soNumber || '-'}</td>
                                             <td className="py-0.5 text-slate-700 font-medium truncate">{inv.invoiceNumber}</td>
+                                            <td className="py-0.5 text-slate-500 truncate">{(inv as any).bookingNumber || inv.transportRef || '-'}</td>
                                             <td className="py-0.5 text-slate-500 truncate">{((inv.billToName || inv.soldTo || '').split(' ')[0])}</td>
                                             <td className="py-0.5 text-slate-600 text-right">{Number(inv.netWeight || inv.totalQuantity || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} / {(Number(inv.netWeight || inv.totalQuantity || 0) * 0.453592).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
                                             <td className="py-0.5 text-emerald-600 font-medium text-right">${Number(inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -3371,9 +3821,18 @@ ${companyName}`;
                                                         <Edit3 size={14} />
                                                     </button>
                                                     <button
-                                                        onClick={async () => {
-                                                            if (window.confirm('Delete this invoice?')) {
-                                                                await onDeleteInvoice(inv.id);
+                                                        onClick={async (e) => {
+                                                            e.stopPropagation();
+                                                            console.log('[DeleteInvoice] Called for invoice:', inv.invoiceNumber, 'id:', inv.id);
+                                                            if (window.confirm(`Delete invoice ${inv.invoiceNumber || inv.id}?`)) {
+                                                                try {
+                                                                    const result = await onDeleteInvoice(inv.id);
+                                                                    console.log('[DeleteInvoice] Result:', result);
+                                                                    if (onRefreshData) await onRefreshData();
+                                                                } catch (err: any) {
+                                                                    console.error('[DeleteInvoice] Error:', err);
+                                                                    alert(`Failed to delete invoice: ${err.message}`);
+                                                                }
                                                             }
                                                         }}
                                                         title="Delete Invoice"
@@ -3408,7 +3867,7 @@ ${companyName}`;
                                     ));
                                 })()}
                                 {invoices.length === 0 && (
-                                    <tr><td colSpan={8} className="text-center py-2 text-slate-400">No saved invoices</td></tr>
+                                    <tr><td colSpan={9} className="text-center py-2 text-slate-400">No saved invoices</td></tr>
                                 )}
                             </tbody>
                         </table>
@@ -3480,15 +3939,39 @@ ${companyName}`;
                                     type="text"
                                     value={bookingNumber}
                                     onChange={(e) => setBookingNumber(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            if (bookingNumber.trim()) {
+                                                saveNewBooking(bookingNumber);
+                                                setIsAddingNewBooking(false);
+                                            }
+                                        }
+                                    }}
                                     placeholder="Enter booking number"
                                     className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
                                     autoFocus
                                 />
                                 <button
-                                    onClick={() => setIsAddingNewBooking(false)}
+                                    onClick={() => {
+                                        if (bookingNumber.trim()) {
+                                            saveNewBooking(bookingNumber);
+                                            setIsAddingNewBooking(false);
+                                        }
+                                    }}
+                                    className="px-3 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 text-sm font-medium"
+                                    title="Confirm booking number"
+                                >
+                                    ✓
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setBookingNumber('');
+                                        setIsAddingNewBooking(false);
+                                    }}
                                     className="px-3 py-2 text-slate-500 hover:text-slate-700 text-sm"
                                 >
-                                    Cancel
+                                    ✕
                                 </button>
                             </div>
                         ) : (
@@ -3517,7 +4000,7 @@ ${companyName}`;
                                     {allBookings.filter((b: any) => b.status !== 'SHIPPED').map((b: any) => (
                                         <option key={b.id} value={b.bookingNumber}>{b.bookingNumber}</option>
                                     ))}
-                                    {bookingNumber && !allBookings.find((b: any) => b.bookingNumber === bookingNumber) && (
+                                    {bookingNumber && !allBookings.filter((b: any) => b.status !== 'SHIPPED').find((b: any) => b.bookingNumber === bookingNumber) && (
                                         <option value={bookingNumber}>{bookingNumber} (custom)</option>
                                     )}
                                     <option value="__ADD_NEW__">+ ADD NEW</option>
@@ -3676,24 +4159,26 @@ ${companyName}`;
                                         <td className="p-2">
                                             <input
                                                 type="number"
+                                                step="any"
                                                 value={item.grossLbs || ''}
-                                                onChange={(e) => updateItem(item.id, 'grossLbs', parseFloat(e.target.value) || 0)}
+                                                onChange={(e) => updateItem(item.id, 'grossLbs', e.target.value === '' ? 0 : Number(e.target.value))}
                                                 className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right font-mono"
                                             />
                                         </td>
                                         <td className="p-2 text-right text-slate-500 font-mono text-sm">
-                                            {(item.grossKg || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                                            {(item.grossKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </td>
                                         <td className="p-2">
                                             <input
                                                 type="number"
+                                                step="any"
                                                 value={item.netLbs || ''}
-                                                onChange={(e) => updateItem(item.id, 'netLbs', parseFloat(e.target.value) || 0)}
+                                                onChange={(e) => updateItem(item.id, 'netLbs', e.target.value === '' ? 0 : Number(e.target.value))}
                                                 className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right font-mono"
                                             />
                                         </td>
                                         <td className="p-2 text-right text-slate-500 font-mono text-sm">
-                                            {(item.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                                            {(item.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </td>
                                         <td className="p-2">
                                             <input
@@ -3716,11 +4201,11 @@ ${companyName}`;
                             </tbody>
                             <tfoot className="bg-slate-100 font-bold">
                                 <tr>
-                                    <td className="p-3" colSpan={3}>TOTALS</td>
+                                    <td className="p-3" colSpan={4}>TOTALS</td>
                                     <td className="p-3 text-right font-mono">{totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
-                                    <td className="p-3 text-right font-mono text-slate-500">{totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                                    <td className="p-3 text-right font-mono text-slate-500">{totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                     <td className="p-3 text-right font-mono">{totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
-                                    <td className="p-3 text-right font-mono text-slate-500">{totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                                    <td className="p-3 text-right font-mono text-slate-500">{totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                     <td className="p-3 text-right font-mono">{totals.volumes.toLocaleString()}</td>
                                     <td></td>
                                 </tr>
@@ -3937,7 +4422,7 @@ ${companyName}`;
                             {poa && !ports.some(p => p.code === poa || p.name === poa || `${p.name} (${p.code})` === poa) && (
                                 <option value={poa}>{poa} (from Booking)</option>
                             )}
-                            {ports.map(p => (
+                            {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => (
                                 <option key={p.id} value={p.code}>{p.name} ({p.code})</option>
                             ))}
                         </select>
@@ -3954,7 +4439,7 @@ ${companyName}`;
                             {pod && !ports.some(p => p.code === pod || p.name === pod || `${p.name} (${p.code})` === pod) && (
                                 <option value={pod}>{pod} (from Booking)</option>
                             )}
-                            {ports.map(p => (
+                            {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => (
                                 <option key={p.id} value={p.code}>{p.name} ({p.code})</option>
                             ))}
                         </select>
@@ -4050,11 +4535,12 @@ ${companyName}`;
                                 <option value="CAD - 100% CASH AGAINST DOCUMENTS">CAD - 100% CASH AGAINST DOCUMENTS</option>
                                 <option value="20% ADV / 80% CAD">20% ADV / 80% CAD</option>
                                 <option value="30% ADV / 70% CAD">30% ADV / 70% CAD</option>
+                                <option value="ADV/CAD - ADVANCED + CASH AGAINST DOCUMENTS">ADV/CAD - ADVANCED + CASH AGAINST DOCUMENTS</option>
                                 <option value="LC - LETTER OF CREDIT">LC - LETTER OF CREDIT</option>
                                 <option value="Net 30">Net 30</option>
                                 <option value="Net 60">Net 60</option>
                                 <option value="Net 90">Net 90</option>
-                                {paymentTerms && !['ADV - 100% ADVANCED', 'CAD - 100% CASH AGAINST DOCUMENTS', '20% ADV / 80% CAD', '30% ADV / 70% CAD', 'LC - LETTER OF CREDIT', 'Net 30', 'Net 60', 'Net 90'].includes(paymentTerms) && (
+                                {paymentTerms && !['ADV - 100% ADVANCED', 'CAD - 100% CASH AGAINST DOCUMENTS', '20% ADV / 80% CAD', '30% ADV / 70% CAD', 'ADV/CAD - ADVANCED + CASH AGAINST DOCUMENTS', 'LC - LETTER OF CREDIT', 'Net 30', 'Net 60', 'Net 90'].includes(paymentTerms) && (
                                     <option value={paymentTerms}>{paymentTerms} (Custom)</option>
                                 )}
                             </select>
@@ -4228,16 +4714,26 @@ ${companyName}`;
                                         <td className="p-1">
                                             <input
                                                 type="text"
-                                                value={(item.netLbs || item.quantity || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-                                                onChange={(e) => updateInvoiceItem(item.id, 'netLbs', parseFloat(e.target.value.replace(/,/g, '')) || 0)}
+                                                inputMode="decimal"
+                                                key={`netLbs-${item.id}-${item.netLbs}`}
+                                                defaultValue={item.netLbs || item.quantity || 0}
+                                                onBlur={(e) => {
+                                                    const num = parseFloat(e.target.value);
+                                                    updateInvoiceItem(item.id, 'netLbs', isNaN(num) ? 0 : num);
+                                                }}
                                                 className="w-24 px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono"
                                             />
                                         </td>
                                         <td className="p-1">
                                             <input
                                                 type="text"
-                                                value={(item.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-                                                onChange={(e) => updateInvoiceItem(item.id, 'netKg', parseFloat(e.target.value.replace(/,/g, '')) || 0)}
+                                                inputMode="decimal"
+                                                key={`netKg-${item.id}-${item.netKg}`}
+                                                defaultValue={item.netKg || 0}
+                                                onBlur={(e) => {
+                                                    const num = parseFloat(e.target.value);
+                                                    updateInvoiceItem(item.id, 'netKg', isNaN(num) ? 0 : num);
+                                                }}
                                                 className="w-24 px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono bg-slate-50"
                                             />
                                         </td>
@@ -4245,10 +4741,14 @@ ${companyName}`;
                                             <div className="flex items-center gap-1">
                                                 <span className="text-slate-400 text-xs">$</span>
                                                 <input
-                                                    type="number"
-                                                    step="0.0001"
-                                                    value={item.unitPriceLbs || item.unitPrice || ''}
-                                                    onChange={(e) => updateInvoiceItem(item.id, 'unitPriceLbs', parseFloat(e.target.value) || 0)}
+                                                    type="text"
+                                                    inputMode="decimal"
+                                                    key={`priceLbs-${item.id}-${item.unitPriceLbs}`}
+                                                    defaultValue={item.unitPriceLbs ?? item.unitPrice ?? 0}
+                                                    onBlur={(e) => {
+                                                        const num = parseFloat(e.target.value);
+                                                        updateInvoiceItem(item.id, 'unitPriceLbs', isNaN(num) ? 0 : num);
+                                                    }}
                                                     className="w-24 px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono"
                                                     placeholder="0.00"
                                                 />
@@ -4258,10 +4758,14 @@ ${companyName}`;
                                             <div className="flex items-center gap-1">
                                                 <span className="text-slate-400 text-xs">$</span>
                                                 <input
-                                                    type="number"
-                                                    step="0.0001"
-                                                    value={item.unitPriceKg || ''}
-                                                    onChange={(e) => updateInvoiceItem(item.id, 'unitPriceKg', parseFloat(e.target.value) || 0)}
+                                                    type="text"
+                                                    inputMode="decimal"
+                                                    key={`priceKg-${item.id}-${item.unitPriceKg}`}
+                                                    defaultValue={item.unitPriceKg ?? 0}
+                                                    onBlur={(e) => {
+                                                        const num = parseFloat(e.target.value);
+                                                        updateInvoiceItem(item.id, 'unitPriceKg', isNaN(num) ? 0 : num);
+                                                    }}
                                                     className="w-24 px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono bg-slate-50"
                                                     placeholder="0.00"
                                                 />
@@ -4313,18 +4817,57 @@ ${companyName}`;
                 </div>
             </div >
 
-            {/* Containers Summary */}
+            {/* Containers Summary - Editable */}
             {
                 containers.length > 0 && (
                     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
                         <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
                             <Ship size={18} className="text-slate-500" />
                             Containers ({containers.length})
+                            <button
+                                onClick={() => setContainers(prev => [...prev, { id: `cont_${Date.now()}`, container: '', seal: '' }])}
+                                className="ml-auto text-xs px-2 py-1 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 font-medium"
+                            >
+                                + Add Container
+                            </button>
                         </h4>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="space-y-2">
                             {containers.map((c, idx) => (
-                                <div key={idx} className="px-3 py-1 bg-slate-100 rounded-full text-sm font-mono">
-                                    {c.container} {c.seal && <span className="text-slate-400">| {c.seal}</span>}
+                                <div key={c.id || idx} className="flex items-center gap-2">
+                                    <div className="flex-1 flex gap-2">
+                                        <div className="flex-1">
+                                            <label className="block text-[10px] text-slate-400 uppercase mb-0.5">Container</label>
+                                            <input
+                                                type="text"
+                                                value={c.container}
+                                                onChange={(e) => {
+                                                    const val = e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+                                                    setContainers(prev => prev.map((cont, i) => i === idx ? { ...cont, container: val } : cont));
+                                                }}
+                                                className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                placeholder="XXXX0000000"
+                                            />
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="block text-[10px] text-slate-400 uppercase mb-0.5">Seal</label>
+                                            <input
+                                                type="text"
+                                                value={c.seal}
+                                                onChange={(e) => {
+                                                    setContainers(prev => prev.map((cont, i) => i === idx ? { ...cont, seal: e.target.value } : cont));
+                                                }}
+                                                className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                placeholder="Seal #"
+                                            />
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => setContainers(prev => prev.filter((_, i) => i !== idx))}
+                                        className="mt-4 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                        title="Remove container"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
                                 </div>
                             ))}
                         </div>
@@ -4368,7 +4911,7 @@ ${companyName}`;
     // MAIN RENDER
     // ========================================================================
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 p-6">
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 p-6 flex flex-col overflow-y-auto">
             {/* Header */}
             <div className="mb-6 flex items-start justify-between">
                 <div>
@@ -4408,7 +4951,7 @@ ${companyName}`;
             </div>
 
             {/* Step Content */}
-            <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200 pt-1 px-1 pb-4 shadow-xl w-full">
+            <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200 pt-1 px-1 pb-4 shadow-xl w-full flex-1 overflow-visible flex flex-col">
                 {currentStep === 'UPLOAD' && renderUploadStep()}
                 {currentStep === 'EDIT_PL' && renderEditPLStep()}
                 {currentStep === 'CREATE_INVOICE' && renderCreateInvoiceStep()}
@@ -4555,7 +5098,18 @@ ${companyName}`;
                                     <button onClick={() => previewInvoicePDF(selectedDocInvoice)} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Preview Invoice">
                                         <Eye size={16} />
                                     </button>
-                                    <button onClick={() => generateInvoicePDF(selectedDocInvoice)} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Download Invoice PDF">
+                                    <button onClick={async () => {
+                                        const doc = await generateInvoicePDF(selectedDocInvoice, false);
+                                        const blob = doc.output('blob');
+                                        const url = URL.createObjectURL(blob);
+                                        const link = document.createElement('a');
+                                        link.href = url;
+                                        link.download = `Invoice_${selectedDocInvoice.invoiceNumber || 'unknown'}.pdf`;
+                                        document.body.appendChild(link);
+                                        link.click();
+                                        document.body.removeChild(link);
+                                        URL.revokeObjectURL(url);
+                                    }} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Download Invoice PDF">
                                         <Download size={16} />
                                     </button>
                                 </div>
@@ -4574,7 +5128,18 @@ ${companyName}`;
                                     <button onClick={() => previewPackingListPDF(selectedDocInvoice)} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Preview Packing List">
                                         <Eye size={16} />
                                     </button>
-                                    <button onClick={() => generatePackingListPDF(selectedDocInvoice)} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Download Packing List PDF">
+                                    <button onClick={() => {
+                                        const doc = generatePackingListPDF(selectedDocInvoice, false);
+                                        const blob = doc.output('blob');
+                                        const url = URL.createObjectURL(blob);
+                                        const link = document.createElement('a');
+                                        link.href = url;
+                                        link.download = `PackingList_${selectedDocInvoice.plNumber || selectedDocInvoice.invoiceNumber || 'unknown'}.pdf`;
+                                        document.body.appendChild(link);
+                                        link.click();
+                                        document.body.removeChild(link);
+                                        URL.revokeObjectURL(url);
+                                    }} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Download Packing List PDF">
                                         <Download size={16} />
                                     </button>
                                 </div>
@@ -4593,7 +5158,18 @@ ${companyName}`;
                                     <button onClick={() => previewSLIPDF(selectedDocInvoice)} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Preview SLI">
                                         <Eye size={16} />
                                     </button>
-                                    <button onClick={() => generateSLI(selectedDocInvoice)} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Download SLI">
+                                    <button onClick={() => {
+                                        const doc = generateSLIPreview(selectedDocInvoice);
+                                        const blob = doc.output('blob');
+                                        const url = URL.createObjectURL(blob);
+                                        const link = document.createElement('a');
+                                        link.href = url;
+                                        link.download = `SLI_${selectedDocInvoice.invoiceNumber || 'unknown'}.pdf`;
+                                        document.body.appendChild(link);
+                                        link.click();
+                                        document.body.removeChild(link);
+                                        URL.revokeObjectURL(url);
+                                    }} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Download SLI">
                                         <Download size={16} />
                                     </button>
                                 </div>
@@ -4632,12 +5208,24 @@ ${companyName}`;
                                             </button>
                                             <button
                                                 onClick={() => {
-                                                    // Download the BOL
+                                                    // Download the BOL using blob approach
                                                     const bolData = (selectedDocInvoice as any).bolUrl || (selectedDocInvoice as any).bolurl;
+                                                    // Convert data URL to blob for safe download
+                                                    const byteString = atob(bolData.split(',')[1]);
+                                                    const mimeMatch = bolData.match(/data:([^;]+);/);
+                                                    const mimeType = mimeMatch ? mimeMatch[1] : 'application/pdf';
+                                                    const ab = new ArrayBuffer(byteString.length);
+                                                    const ia = new Uint8Array(ab);
+                                                    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+                                                    const blob = new Blob([ab], { type: mimeType });
+                                                    const url = URL.createObjectURL(blob);
                                                     const link = document.createElement('a');
-                                                    link.href = bolData;
+                                                    link.href = url;
                                                     link.download = `BOL_${selectedDocInvoice.invoiceNumber || 'document'}.pdf`;
+                                                    document.body.appendChild(link);
                                                     link.click();
+                                                    document.body.removeChild(link);
+                                                    URL.revokeObjectURL(url);
                                                 }}
                                                 className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600"
                                                 title="Download BOL"
@@ -4672,15 +5260,25 @@ ${companyName}`;
                             </div>
                         </div>
                         <div className="border-t p-4 bg-slate-50 flex justify-between items-center">
-                            {/* Email Status */}
-                            {emailStatus.show && (
-                                <div className={`flex items-center gap-2 text-sm ${emailStatus.success ? 'text-emerald-600' : 'text-red-600'}`}>
-                                    {emailStatus.success ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-                                    <span>{emailStatus.message}</span>
-                                </div>
-                            )}
-                            {!emailStatus.show && <div />}
-                            <div className="flex gap-2">
+                            <div className="flex items-center gap-3">
+                                <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Brazil Mode">
+                                    <input
+                                        type="checkbox"
+                                        checked={brMode}
+                                        onChange={(e) => setBrMode(e.target.checked)}
+                                        className="w-4 h-4 rounded border-slate-300 text-green-600 focus:ring-green-500"
+                                    />
+                                    <span className="text-sm font-bold text-green-700">BR</span>
+                                </label>
+                                {/* Email Status */}
+                                {emailStatus.show && (
+                                    <div className={`flex items-center gap-2 text-sm ${emailStatus.success ? 'text-emerald-600' : 'text-red-600'}`}>
+                                        {emailStatus.success ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                                        <span>{emailStatus.message}</span>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex gap-2 items-center">
                                 <button
                                     onClick={() => handlePrepareEmailDraft(selectedDocInvoice)}
                                     disabled={sendingEmail}
@@ -4730,6 +5328,18 @@ ${companyName}`;
                                     onChange={(e) => setEmailDraft(prev => ({ ...prev, to: e.target.value }))}
                                     className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                     placeholder="recipient@example.com"
+                                />
+                            </div>
+
+                            {/* CC */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">CC <span className="font-normal text-slate-400 normal-case">(comma-separated)</span></label>
+                                <input
+                                    type="text"
+                                    value={emailDraft.cc}
+                                    onChange={(e) => setEmailDraft(prev => ({ ...prev, cc: e.target.value }))}
+                                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    placeholder="cc1@example.com, cc2@example.com"
                                 />
                             </div>
 

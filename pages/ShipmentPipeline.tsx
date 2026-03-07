@@ -1,14 +1,16 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
     Ship, Package, FileText, ScrollText, ChevronDown, ChevronUp,
     Search, Filter, AlertTriangle, CheckCircle2, Clock, Circle,
-    ExternalLink, Brain, TrendingUp, Calendar, MapPin, User, RefreshCw, Loader2
+    ExternalLink, Brain, TrendingUp, Calendar, MapPin, User, RefreshCw, Loader2,
+    Download, Mail, X, Eye
 } from 'lucide-react';
 import {
     SalesOrder, CommissionSalesOrder, Booking, Invoice, BillOfLading, Company, Port
 } from '../types';
 import { lookupShipmentETA, ETALookupResult } from '../services/geminiService';
 import { shipsgoLookupETA } from '../services/shipsgoService';
+import { getSupabaseClient } from '../services/supabase';
 
 interface ShipmentPipelineProps {
     salesOrders: SalesOrder[];
@@ -20,6 +22,7 @@ interface ShipmentPipelineProps {
     availableCompanies: Company[];
     ports?: Port[];
     onUpdateCommission?: (id: string, updates: any) => Promise<void>;
+    onUpdateBooking?: (booking: Booking) => Promise<Booking | null>;
 }
 
 // Pipeline stage status
@@ -66,6 +69,7 @@ interface AggregatedShipment {
 }
 
 type FilterTab = 'ALL' | 'IN_PROGRESS' | 'COMPLETED' | 'ATTENTION';
+type TypeFilter = 'ALL' | 'SALES' | 'COMMISSION';
 
 const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
     salesOrders,
@@ -76,7 +80,8 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
     currentCompanyId,
     availableCompanies,
     ports = [],
-    onUpdateCommission
+    onUpdateCommission,
+    onUpdateBooking
 }) => {
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [etaLookupId, setEtaLookupId] = useState<string | null>(null);
@@ -85,6 +90,63 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
     const [activeTab, setActiveTab] = useState<FilterTab>('ALL');
     const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set());
     const [showCustomerFilter, setShowCustomerFilter] = useState(false);
+    const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
+
+    // Bulk tracking state
+    const [isBulkTracking, setIsBulkTracking] = useState(false);
+    const [bulkTrackProgress, setBulkTrackProgress] = useState({ current: 0, total: 0 });
+    const [bulkTrackResults, setBulkTrackResults] = useState<{ updated: number; failed: number; total: number } | null>(null);
+    const [updatedShipmentIds, setUpdatedShipmentIds] = useState<Set<string>>(new Set());
+
+    // Document viewer modal state
+    const [docViewer, setDocViewer] = useState<{
+        title: string; label: string; documentData?: string; identifier: string;
+        stage: 'SO' | 'BK' | 'CI' | 'BL';
+        order?: SalesOrder | CommissionSalesOrder;
+        invoice?: Invoice;
+        booking?: Booking;
+        billOfLading?: BillOfLading;
+        shipment?: AggregatedShipment;
+    } | null>(null);
+    const [docViewTab, setDocViewTab] = useState<'content' | 'pdf'>('content');
+    const [fetchedBooking, setFetchedBooking] = useState<Booking | null>(null);
+
+    // Fetch booking from supabase when modal opens for BK and no local booking data
+    useEffect(() => {
+        if (!docViewer || docViewer.stage !== 'BK') {
+            setFetchedBooking(null);
+            return;
+        }
+        const bookingNum = docViewer.shipment?.bookingNumber;
+        // Already have booking data
+        if (docViewer.booking || !bookingNum) return;
+
+        // Try to find in local bookings prop first
+        const localMatch = bookings.find(b => b.bookingNumber === bookingNum);
+        if (localMatch) {
+            setFetchedBooking(localMatch);
+            return;
+        }
+
+        // Fetch from supabase
+        const fetchBooking = async () => {
+            const client = getSupabaseClient();
+            if (!client) return;
+            console.log('[BK Modal] Fetching booking from supabase:', bookingNum);
+            const { data } = await client
+                .from('bookings')
+                .select('*')
+                .eq('bookingNumber', bookingNum)
+                .maybeSingle();
+            if (data) {
+                console.log('[BK Modal] Found booking:', data.bookingNumber);
+                setFetchedBooking(data as Booking);
+            } else {
+                console.log('[BK Modal] No booking found for:', bookingNum);
+            }
+        };
+        fetchBooking();
+    }, [docViewer?.stage, docViewer?.shipment?.bookingNumber]);
 
     // Toggle customer in multi-select
     const toggleCustomer = (customer: string) => {
@@ -157,99 +219,173 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
         return cleaned;
     };
 
+    // Shared ETA lookup core — returns { eta, etd, source, resultParts } or null
+    const lookupETACore = async (shipment: AggregatedShipment): Promise<{ eta: string | null; etd: string | null; source: string; resultParts: string[] } | null> => {
+        const containerSources: string[] = [];
+        if (shipment.billOfLading?.container) containerSources.push(shipment.billOfLading.container);
+        if (shipment.booking?.containerNumber) containerSources.push(shipment.booking.containerNumber);
+        if ((shipment.order as any)?.containerNumbers) containerSources.push(String((shipment.order as any).containerNumbers));
+
+        const allContainerStr = containerSources.join(' ');
+        const containerNumbers = allContainerStr
+            .split(/[,;|\s\/]+/)
+            .map(c => c.trim().toUpperCase())
+            .filter(c => c.length >= 7 && /^[A-Z]{3,4}[A-Z0-9]/.test(c));
+
+        const carrier = shipment.booking?.carrier || undefined;
+        const blNumber = shipment.blNumber || undefined;
+        const vesselVoyage = shipment.billOfLading?.vesselVoyage || shipment.booking?.vesselVoyage || undefined;
+
+        let eta: string | null = null;
+        let etd: string | null = null;
+        let resultParts: string[] = [];
+        let usedSource = '';
+
+        // --- Try ShipsGo first ---
+        const shipsgoResult = await shipsgoLookupETA({
+            containerNumbers: containerNumbers.length > 0 ? containerNumbers : undefined,
+            blNumber,
+            shippingLine: carrier,
+        });
+
+        if (!shipsgoResult.error && (shipsgoResult.eta || shipsgoResult.status)) {
+            eta = shipsgoResult.eta;
+            etd = shipsgoResult.etd;
+            usedSource = 'ShipsGo';
+            if (shipsgoResult.eta) resultParts.push(`ETA: ${shipsgoResult.eta}`);
+            if (shipsgoResult.etd) resultParts.push(`ETD: ${shipsgoResult.etd}`);
+            if (shipsgoResult.vesselName) resultParts.push(`Vessel: ${shipsgoResult.vesselName}`);
+            if (shipsgoResult.status) resultParts.push(`Status: ${shipsgoResult.status}`);
+            if (shipsgoResult.lastPort) resultParts.push(`Location: ${shipsgoResult.lastPort}`);
+        } else {
+            // --- Fall back to Gemini Search ---
+            const geminiResult = await lookupShipmentETA({
+                blNumber,
+                containerNumbers: containerNumbers.length > 0 ? containerNumbers : undefined,
+                vesselVoyage,
+                carrier,
+                pod: shipment.pod || undefined,
+            });
+
+            if (!geminiResult.error && (geminiResult.eta || geminiResult.status)) {
+                eta = geminiResult.eta;
+                etd = geminiResult.etd;
+                usedSource = 'Gemini Search';
+                if (geminiResult.eta) resultParts.push(`ETA: ${geminiResult.eta}`);
+                if (geminiResult.etd) resultParts.push(`ETD: ${geminiResult.etd}`);
+                if (geminiResult.vesselName) resultParts.push(`Vessel: ${geminiResult.vesselName}`);
+                if (geminiResult.status) resultParts.push(`Status: ${geminiResult.status}`);
+            } else {
+                return null; // Both failed
+            }
+        }
+
+        return { eta, etd, source: usedSource, resultParts };
+    };
+
+    // Save ETA to related records (booking + commission)
+    const saveETAToRecords = async (shipment: AggregatedShipment, eta: string | null, etd: string | null) => {
+        // Update booking record
+        if (onUpdateBooking && shipment.booking && (eta || etd)) {
+            const updatedBooking = { ...shipment.booking };
+            if (eta) updatedBooking.eta = eta;
+            if (etd) updatedBooking.etd = etd;
+            await onUpdateBooking(updatedBooking);
+        }
+        // Update commission record
+        if (onUpdateCommission && (eta || etd)) {
+            const sourceId = shipment.order?.id || shipment.invoice?.id;
+            if (sourceId) {
+                const updates: any = {};
+                if (eta) updates.eta = eta;
+                if (etd) updates.etd = etd;
+                await onUpdateCommission(sourceId, updates);
+            }
+        }
+    };
+
     // ETA Lookup handler — tries ShipsGo first, then Gemini Search fallback
     const handleETALookup = async (shipment: AggregatedShipment) => {
-        if (etaLookupId) return; // Already looking up
+        if (etaLookupId) return;
         setEtaLookupId(shipment.id);
         setEtaResult(null);
 
         try {
-            // Gather container numbers from ALL sources
-            const containerSources: string[] = [];
-            if (shipment.billOfLading?.container) containerSources.push(shipment.billOfLading.container);
-            if (shipment.booking?.containerNumber) containerSources.push(shipment.booking.containerNumber);
-            if ((shipment.order as any)?.containerNumbers) containerSources.push(String((shipment.order as any).containerNumbers));
+            console.log('[ETA Lookup] Shipment:', shipment.id, 'BL:', shipment.blNumber);
+            const result = await lookupETACore(shipment);
 
-            const allContainerStr = containerSources.join(' ');
-            const containerNumbers = allContainerStr
-                .split(/[,;|\s\/]+/)
-                .map(c => c.trim().toUpperCase())
-                .filter(c => c.length >= 7 && /^[A-Z]{3,4}[A-Z0-9]/.test(c));
-
-            const carrier = shipment.booking?.carrier || undefined;
-            const blNumber = shipment.blNumber || undefined;
-            const vesselVoyage = shipment.billOfLading?.vesselVoyage || shipment.booking?.vesselVoyage || undefined;
-
-            console.log('[ETA Lookup] Shipment:', shipment.id, 'BL:', blNumber, 'Containers:', containerNumbers, 'Carrier:', carrier);
-
-            let eta: string | null = null;
-            let etd: string | null = null;
-            let resultParts: string[] = [];
-            let usedSource = '';
-
-            // --- Try ShipsGo first ---
-            const shipsgoResult = await shipsgoLookupETA({
-                containerNumbers: containerNumbers.length > 0 ? containerNumbers : undefined,
-                blNumber,
-                shippingLine: carrier,
-            });
-
-            if (!shipsgoResult.error && (shipsgoResult.eta || shipsgoResult.status)) {
-                eta = shipsgoResult.eta;
-                etd = shipsgoResult.etd;
-                usedSource = 'ShipsGo';
-                if (shipsgoResult.eta) resultParts.push(`ETA: ${shipsgoResult.eta}`);
-                if (shipsgoResult.etd) resultParts.push(`ETD: ${shipsgoResult.etd}`);
-                if (shipsgoResult.vesselName) resultParts.push(`Vessel: ${shipsgoResult.vesselName}`);
-                if (shipsgoResult.status) resultParts.push(`Status: ${shipsgoResult.status}`);
-                if (shipsgoResult.lastPort) resultParts.push(`Location: ${shipsgoResult.lastPort}`);
-                resultParts.push(`Source: ShipsGo`);
-            } else {
-                // --- Fall back to Gemini Search ---
-                console.log('[ETA Lookup] ShipsGo failed, trying Gemini Search...', shipsgoResult.error);
-                const geminiResult = await lookupShipmentETA({
-                    blNumber,
-                    containerNumbers: containerNumbers.length > 0 ? containerNumbers : undefined,
-                    vesselVoyage,
-                    carrier,
-                    pod: shipment.pod || undefined,
-                });
-
-                if (!geminiResult.error && (geminiResult.eta || geminiResult.status)) {
-                    eta = geminiResult.eta;
-                    etd = geminiResult.etd;
-                    usedSource = 'Gemini Search';
-                    if (geminiResult.eta) resultParts.push(`ETA: ${geminiResult.eta}`);
-                    if (geminiResult.etd) resultParts.push(`ETD: ${geminiResult.etd}`);
-                    if (geminiResult.vesselName) resultParts.push(`Vessel: ${geminiResult.vesselName}`);
-                    if (geminiResult.status) resultParts.push(`Status: ${geminiResult.status}`);
-                    if (geminiResult.source) resultParts.push(`Source: ${geminiResult.source}`);
-                } else {
-                    // Both failed
-                    const errorMsg = shipsgoResult.error || geminiResult.error || 'No tracking data found';
-                    alert(`ETA Lookup: ${errorMsg}`);
-                    return;
-                }
+            if (!result) {
+                alert('ETA Lookup: No tracking data found from ShipsGo or Gemini Search.');
+                return;
             }
 
-            // Update the commission record if we got an ETA
-            if (eta && onUpdateCommission) {
-                const sourceId = shipment.order?.id || shipment.invoice?.id;
-                if (sourceId) {
-                    const updates: any = {};
-                    if (eta) updates.eta = eta;
-                    if (etd) updates.etd = etd;
-                    await onUpdateCommission(sourceId, updates);
-                }
-            }
+            // Save to DB
+            await saveETAToRecords(shipment, result.eta, result.etd);
+            setUpdatedShipmentIds(prev => new Set(prev).add(shipment.id));
 
-            alert(`🔍 ETA Lookup (${usedSource}):\n${resultParts.join('\n')}`);
+            alert(`🔍 ETA Lookup (${result.source}):\n${result.resultParts.join('\n')}`);
 
         } catch (err: any) {
             alert(`ETA Lookup failed: ${err.message || 'Unknown error'}`);
         } finally {
             setEtaLookupId(null);
         }
+    };
+
+    // Bulk Track All handler
+    const handleTrackAll = async () => {
+        if (isBulkTracking) return;
+
+        // Find trackable shipments (those with container # or BL #)
+        const trackable = filteredShipments.filter(s => {
+            const hasContainer = !!(s.billOfLading?.container || s.booking?.containerNumber || (s.order as any)?.containerNumbers);
+            const hasBL = !!s.blNumber;
+            return hasContainer || hasBL;
+        });
+
+        if (trackable.length === 0) {
+            alert('No trackable shipments found. Shipments need a container number or BL number.');
+            return;
+        }
+
+        setIsBulkTracking(true);
+        setBulkTrackProgress({ current: 0, total: trackable.length });
+        setBulkTrackResults(null);
+
+        let updated = 0;
+        let failed = 0;
+
+        for (let i = 0; i < trackable.length; i++) {
+            const shipment = trackable[i];
+            setBulkTrackProgress({ current: i + 1, total: trackable.length });
+
+            try {
+                const result = await lookupETACore(shipment);
+                if (result && (result.eta || result.etd)) {
+                    await saveETAToRecords(shipment, result.eta, result.etd);
+                    setUpdatedShipmentIds(prev => new Set(prev).add(shipment.id));
+                    updated++;
+                    console.log(`[Track All] ✅ ${i + 1}/${trackable.length} - ${shipment.orderNumber}: ETA=${result.eta}`);
+                } else {
+                    failed++;
+                    console.log(`[Track All] ❌ ${i + 1}/${trackable.length} - ${shipment.orderNumber}: No data`);
+                }
+            } catch (err) {
+                failed++;
+                console.error(`[Track All] ❌ ${i + 1}/${trackable.length} - ${shipment.orderNumber}:`, err);
+            }
+
+            // Small delay between requests to avoid rate limiting
+            if (i < trackable.length - 1) {
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
+
+        setBulkTrackResults({ updated, failed, total: trackable.length });
+        setIsBulkTracking(false);
+
+        // Auto-dismiss results after 10 seconds
+        setTimeout(() => setBulkTrackResults(null), 10000);
     };
 
     // Aggregate shipments from all data sources - OPTIMIZED APPROACH
@@ -278,6 +414,7 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
             const billOfLadingMap = new Map<string, BillOfLading>();
             const billOfLadingByBlNumberMap = new Map<string, BillOfLading>();
             const billOfLadingByInvoiceMap = new Map<string, BillOfLading>();
+            const billOfLadingByConsigneeMap = new Map<string, BillOfLading[]>();
 
             console.log('[ShipmentPipeline] Raw billOfLadings count:', (billOfLadings || []).length,
                 'after companyId filter:', (billOfLadings || []).filter(bl => bl?.companyId === currentCompanyId).length,
@@ -290,11 +427,40 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                 // Also map by invoice number/id if available
                 const invNum = (bl as any).invoiceNumber || (bl as any).invoice_number || (bl as any).invoiceId;
                 if (invNum) billOfLadingByInvoiceMap.set(invNum, bl);
+                // Map by consignee name (lowercased, first word) for customer-based matching
+                if (bl?.consignee) {
+                    const key = bl.consignee.trim().toLowerCase().split(/\s+/)[0];
+                    if (key && key.length > 2) {
+                        const existing = billOfLadingByConsigneeMap.get(key) || [];
+                        existing.push(bl);
+                        billOfLadingByConsigneeMap.set(key, existing);
+                    }
+                }
             });
 
             console.log('[ShipmentPipeline] B/L maps: byBooking:', billOfLadingMap.size,
                 'byBlNumber:', billOfLadingByBlNumberMap.size,
-                'byInvoice:', billOfLadingByInvoiceMap.size);
+                'byInvoice:', billOfLadingByInvoiceMap.size,
+                'byConsignee:', billOfLadingByConsigneeMap.size);
+
+            // Helper: find BL by customer name via consignee matching
+            const findBLByCustomer = (customerName: string | undefined, bookingNum?: string): BillOfLading | undefined => {
+                if (!customerName) return undefined;
+                const key = customerName.trim().toLowerCase().split(/\s+/)[0];
+                if (!key || key.length <= 2) return undefined;
+                const candidates = billOfLadingByConsigneeMap.get(key);
+                if (!candidates || candidates.length === 0) return undefined;
+                // If we have a booking number, try to match BL by booking's port/date for more precision
+                if (bookingNum) {
+                    const booking = bookingMap.get(bookingNum);
+                    if (booking?.pod) {
+                        const matched = candidates.find(bl => bl.portDischarge?.toLowerCase().includes(booking.pod?.toLowerCase() || ''));
+                        if (matched) return matched;
+                    }
+                }
+                // Return the most recent BL for this consignee
+                return candidates.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0];
+            };
 
 
             // Helper function to safely extract products from items (handles non-array items)
@@ -372,10 +538,12 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                     // Lookup related records using Maps (O(1))
                     const salesOrder = soNumber ? salesOrderMap.get(soNumber) : undefined;
                     const booking = invoice.bookingNumber ? bookingMap.get(invoice.bookingNumber) : undefined;
-                    const billOfLading = booking?.bookingNumber ? billOfLadingMap.get(booking.bookingNumber) :
-                        invoice.bookingNumber ? billOfLadingMap.get(invoice.bookingNumber) :
-                            invoice.bl ? billOfLadingByBlNumberMap.get(invoice.bl) :
-                                billOfLadingByInvoiceMap.get(invoice.invoiceNumber) || billOfLadingByInvoiceMap.get(invoice.id) || undefined;
+                    const billOfLading = (booking?.bookingNumber ? billOfLadingMap.get(booking.bookingNumber) : undefined) ||
+                        (invoice.bookingNumber ? billOfLadingMap.get(invoice.bookingNumber) : undefined) ||
+                        (invoice.bl ? billOfLadingByBlNumberMap.get(invoice.bl) : undefined) ||
+                        billOfLadingByInvoiceMap.get(invoice.invoiceNumber) || billOfLadingByInvoiceMap.get(invoice.id) ||
+                        findBLByCustomer(invoice.soldTo || invoice.shipTo, invoice.bookingNumber) ||
+                        undefined;
 
                     // Consider booking "linked" if invoice has bookingNumber, even without a booking record
                     const hasBookingLink = !!booking || !!invoice.bookingNumber;
@@ -421,8 +589,10 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
 
                     // Lookup related records using Maps (O(1))
                     const booking = order.bookingNumber ? bookingMap.get(order.bookingNumber) : undefined;
-                    const billOfLading = booking?.bookingNumber ? billOfLadingMap.get(booking.bookingNumber) :
-                        order.blNumber ? Array.from(billOfLadingMap.values()).find(bl => bl.blNumber === order.blNumber) : undefined;
+                    const billOfLading = (booking?.bookingNumber ? billOfLadingMap.get(booking.bookingNumber) : undefined) ||
+                        (order.blNumber ? billOfLadingByBlNumberMap.get(order.blNumber) : undefined) ||
+                        findBLByCustomer(order.customerName, order.bookingNumber) ||
+                        undefined;
 
                     const hasInvoice = !!order.invoiceNumber;
                     // Consider booking "linked" if order has bookingNumber, even without a booking record
@@ -507,10 +677,14 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                     });
                 });
 
-            // Sort by date (newest first)
-            return shipments.sort((a, b) =>
-                new Date(b.orderDate || 0).getTime() - new Date(a.orderDate || 0).getTime()
-            );
+            // Sort by date (newest first) — use best available date
+            return shipments.sort((a, b) => {
+                const getDate = (s: AggregatedShipment) => {
+                    const d = s.orderDate || (s.order as any)?.createdAt || (s.invoice as any)?.createdAt || s.etd || s.eta || '';
+                    return new Date(d || 0).getTime();
+                };
+                return getDate(b) - getDate(a);
+            });
         } catch (error) {
             console.error('ShipmentPipeline aggregation error:', error);
             return []; // Return empty array on error instead of crashing
@@ -534,6 +708,13 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                 break;
         }
 
+        // Filter by type (Invoices vs Commission)
+        if (typeFilter === 'SALES') {
+            filtered = filtered.filter(s => s.orderType === 'SALES');
+        } else if (typeFilter === 'COMMISSION') {
+            filtered = filtered.filter(s => s.orderType === 'COMMISSION');
+        }
+
         // Filter by customer (multi-select)
         if (selectedCustomers.size > 0) {
             filtered = filtered.filter(s => selectedCustomers.has(s.customerName));
@@ -553,7 +734,7 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
         }
 
         return filtered;
-    }, [aggregatedShipments, activeTab, searchQuery, selectedCustomers]);
+    }, [aggregatedShipments, activeTab, searchQuery, selectedCustomers, typeFilter]);
 
     // Unique customers for autofilter
     const uniqueCustomers = useMemo(() => {
@@ -599,17 +780,77 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
     const ShipmentRow: React.FC<{ shipment: AggregatedShipment }> = ({ shipment }) => {
         const isExpanded = expandedId === shipment.id;
 
+        // Helper: get document for a given stage
+        const getStageDocument = (stage: 'SO' | 'BK' | 'CI' | 'BL'): { doc: string | undefined; title: string; identifier: string } => {
+            switch (stage) {
+                case 'SO': {
+                    const so = shipment.order;
+                    const doc = (so as any)?.originalDocument || (so as any)?.signedDocumentUrl || (so as any)?.originalDocumentUrl;
+                    return { doc, title: 'Sales Order', identifier: shipment.orderNumber || '—' };
+                }
+                case 'BK': {
+                    const bk = shipment.booking || bookings.find(b => b.bookingNumber === shipment.bookingNumber);
+                    const doc = bk?.originalDocument || (shipment.order as any)?.bookingDocumentUrl;
+                    return { doc, title: 'Booking', identifier: shipment.bookingNumber || '—' };
+                }
+                case 'CI': {
+                    const inv = shipment.invoice;
+                    const doc = inv?.originalDocument || (shipment.order as any)?.originalDocumentUrl;
+                    return { doc, title: 'Commercial Invoice', identifier: shipment.invoiceNumber || '—' };
+                }
+                case 'BL': {
+                    const bl = shipment.billOfLading;
+                    const doc = bl?.originalDocument || (shipment.order as any)?.blDocumentUrl;
+                    return { doc, title: 'Bill of Lading', identifier: shipment.blNumber || '—' };
+                }
+            }
+        };
+
+        // Helper: open the document/content viewer for a given stage
+        const openStageViewer = (stage: 'SO' | 'BK' | 'CI' | 'BL', e?: React.MouseEvent) => {
+            if (e) e.stopPropagation();
+            const { doc, title, identifier } = getStageDocument(stage);
+            // SO, CI, and BK always open (show content view). BL only if doc exists.
+            if (stage === 'SO' || stage === 'CI' || stage === 'BK' || doc) {
+                const resolvedBooking = shipment.booking || bookings.find(b => b.bookingNumber === shipment.bookingNumber);
+                setDocViewTab(stage === 'SO' || stage === 'CI' || stage === 'BK' ? 'content' : 'pdf');
+                setDocViewer({
+                    title, label: stage, documentData: doc, identifier, stage,
+                    order: shipment.order,
+                    invoice: shipment.invoice,
+                    booking: resolvedBooking,
+                    billOfLading: shipment.billOfLading,
+                    shipment
+                });
+            }
+        };
+
+        // Check if a stage can be opened (SO, CI, and BK always if record exists; BL only if doc exists)
+        const canOpenStage = (stage: 'SO' | 'BK' | 'CI' | 'BL'): boolean => {
+            if (stage === 'SO') return shipment.orderStatus !== 'MISSING';
+            if (stage === 'CI') return shipment.invoiceStatus !== 'MISSING';
+            if (stage === 'BK') return shipment.bookingStatus !== 'MISSING';
+            return !!getStageDocument(stage).doc;
+        };
+
         // Inline mini stage indicator with text label
-        const MiniStage: React.FC<{ status: StageStatus; label: string; code: string }> = ({ status, label, code }) => (
-            <div className="flex flex-col items-center" title={label}>
-                <div className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${status === 'COMPLETE' ? 'bg-emerald-500 text-white' :
-                    status === 'PENDING' ? 'bg-amber-400 text-white' :
-                        'bg-slate-200 text-slate-400'
-                    }`}>
-                    {code}
+        const MiniStage: React.FC<{ status: StageStatus; label: string; code: string; stage: 'SO' | 'BK' | 'CI' | 'BL' }> = ({ status, label, code, stage }) => {
+            const canOpen = canOpenStage(stage);
+            return (
+                <div
+                    className={`flex flex-col items-center ${canOpen ? 'cursor-pointer' : ''}`}
+                    title={canOpen ? `View ${label}` : label}
+                    onClick={canOpen ? (e) => openStageViewer(stage, e) : undefined}
+                >
+                    <div className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${status === 'COMPLETE' ? 'bg-emerald-500 text-white' :
+                        status === 'PENDING' ? 'bg-amber-400 text-white' :
+                            'bg-slate-200 text-slate-400'
+                        } ${canOpen ? 'hover:ring-2 hover:ring-blue-400 hover:ring-offset-1 hover:scale-110' : ''}`}>
+                        {code}
+                    </div>
                 </div>
-            </div>
-        );
+            );
+        };
 
         return (
             <div className={`bg-white border-b transition-all ${shipment.needsAttention ? 'border-l-4 border-l-amber-400' : 'border-l-4 border-l-transparent'} hover:bg-slate-50`}>
@@ -627,11 +868,6 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                     {/* Customer Name - First name only with tooltip */}
                     <div className="w-32 shrink-0" title={shipment.customerName}>
                         <span className="font-medium text-slate-800 text-sm truncate block">{getFirstName(shipment.customerName)}</span>
-                    </div>
-
-                    {/* Order Number */}
-                    <div className="w-24 shrink-0">
-                        <span className="text-xs text-slate-500 font-mono">{shipment.orderNumber}</span>
                     </div>
 
                     {/* Shipper */}
@@ -663,8 +899,11 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                         {shipment.etd ? new Date(shipment.etd).toLocaleDateString() : '—'}
                     </div>
 
-                    {/* ETA + Update Button */}
+                    {/* ETA + Update Button + Updated Indicator */}
                     <div className="w-20 shrink-0 text-xs text-slate-500 flex items-center gap-1">
+                        {updatedShipmentIds.has(shipment.id) && (
+                            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" title="ETA recently updated" />
+                        )}
                         <span>{shipment.eta ? new Date(shipment.eta).toLocaleDateString() : '—'}</span>
                         {(shipment.blNumber || shipment.billOfLading?.container || shipment.booking?.containerNumber) && (
                             <button
@@ -672,7 +911,7 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                                     e.stopPropagation();
                                     handleETALookup(shipment);
                                 }}
-                                disabled={etaLookupId === shipment.id}
+                                disabled={etaLookupId === shipment.id || isBulkTracking}
                                 className="p-0.5 rounded hover:bg-blue-100 text-blue-400 hover:text-blue-600 transition-colors disabled:opacity-50"
                                 title="Look up latest ETA via AI Search"
                             >
@@ -692,13 +931,13 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
 
                     {/* Pipeline Stages - Text Labels */}
                     <div className="flex items-center gap-0.5 shrink-0">
-                        <MiniStage status={shipment.orderStatus} label="Sales Order" code="SO" />
+                        <MiniStage status={shipment.orderStatus} label="Sales Order" code="SO" stage="SO" />
                         <div className={`w-2 h-0.5 ${shipment.orderStatus === 'COMPLETE' ? 'bg-emerald-400' : 'bg-slate-200'}`} />
-                        <MiniStage status={shipment.bookingStatus} label="Booking" code="BK" />
+                        <MiniStage status={shipment.bookingStatus} label="Booking" code="BK" stage="BK" />
                         <div className={`w-2 h-0.5 ${shipment.bookingStatus === 'COMPLETE' ? 'bg-emerald-400' : 'bg-slate-200'}`} />
-                        <MiniStage status={shipment.invoiceStatus} label="Commercial Invoice" code="CI" />
+                        <MiniStage status={shipment.invoiceStatus} label="Commercial Invoice" code="CI" stage="CI" />
                         <div className={`w-2 h-0.5 ${shipment.invoiceStatus === 'COMPLETE' ? 'bg-emerald-400' : 'bg-slate-200'}`} />
-                        <MiniStage status={shipment.blStatus} label="Bill of Lading" code="BL" />
+                        <MiniStage status={shipment.blStatus} label="Bill of Lading" code="BL" stage="BL" />
                     </div>
 
                     {/* Progress % */}
@@ -728,6 +967,11 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                         )}
                     </div>
 
+                    {/* Order Number */}
+                    <div className="w-24 shrink-0">
+                        <span className="text-xs text-slate-500 font-mono">{shipment.orderNumber}</span>
+                    </div>
+
                     {/* Expand Arrow */}
                     <button className="p-1 hover:bg-slate-100 rounded shrink-0">
                         {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -739,10 +983,14 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                     <div className="border-t border-slate-100 p-4 bg-slate-50/50">
                         <div className="grid grid-cols-4 gap-4 mb-4">
                             {/* Order Card */}
-                            <div className="bg-white rounded-lg p-3 border border-slate-200">
+                            <div
+                                className={`bg-white rounded-lg p-3 border border-slate-200 transition-all ${canOpenStage('SO') ? 'cursor-pointer hover:border-blue-400 hover:shadow-md' : ''}`}
+                                onClick={() => canOpenStage('SO') && openStageViewer('SO')}
+                            >
                                 <div className="flex items-center gap-2 mb-2">
                                     <FileText size={16} className="text-blue-500" />
                                     <span className="font-medium text-sm">Order</span>
+                                    {canOpenStage('SO') && <Eye size={14} className="text-blue-400 ml-auto" />}
                                 </div>
                                 <p className="text-sm font-semibold text-slate-800">{shipment.orderNumber}</p>
                                 <div className={`inline-flex items-center gap-1 text-xs mt-1 px-2 py-0.5 rounded-full ${shipment.orderStatus === 'COMPLETE'
@@ -755,10 +1003,14 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                             </div>
 
                             {/* Booking Card */}
-                            <div className="bg-white rounded-lg p-3 border border-slate-200">
+                            <div
+                                className={`bg-white rounded-lg p-3 border border-slate-200 transition-all ${canOpenStage('BK') ? 'cursor-pointer hover:border-indigo-400 hover:shadow-md' : ''}`}
+                                onClick={() => canOpenStage('BK') && openStageViewer('BK')}
+                            >
                                 <div className="flex items-center gap-2 mb-2">
                                     <Ship size={16} className="text-indigo-500" />
                                     <span className="font-medium text-sm">Booking</span>
+                                    {canOpenStage('BK') && <Eye size={14} className="text-indigo-400 ml-auto" />}
                                 </div>
                                 <p className="text-sm font-semibold text-slate-800">
                                     {shipment.bookingNumber || '—'}
@@ -777,10 +1029,14 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                             </div>
 
                             {/* Invoice Card */}
-                            <div className="bg-white rounded-lg p-3 border border-slate-200">
+                            <div
+                                className={`bg-white rounded-lg p-3 border border-slate-200 transition-all ${canOpenStage('CI') ? 'cursor-pointer hover:border-green-400 hover:shadow-md' : ''}`}
+                                onClick={() => canOpenStage('CI') && openStageViewer('CI')}
+                            >
                                 <div className="flex items-center gap-2 mb-2">
                                     <ScrollText size={16} className="text-green-500" />
                                     <span className="font-medium text-sm">Invoice</span>
+                                    {canOpenStage('CI') && <Eye size={14} className="text-green-400 ml-auto" />}
                                 </div>
                                 <p className="text-sm font-semibold text-slate-800">
                                     {shipment.invoiceNumber || '—'}
@@ -802,10 +1058,14 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                             </div>
 
                             {/* BL Card */}
-                            <div className="bg-white rounded-lg p-3 border border-slate-200">
+                            <div
+                                className={`bg-white rounded-lg p-3 border border-slate-200 transition-all ${canOpenStage('BL') ? 'cursor-pointer hover:border-orange-400 hover:shadow-md' : ''}`}
+                                onClick={() => canOpenStage('BL') && openStageViewer('BL')}
+                            >
                                 <div className="flex items-center gap-2 mb-2">
                                     <FileText size={16} className="text-orange-500" />
                                     <span className="font-medium text-sm">Bill of Lading</span>
+                                    {canOpenStage('BL') && <Eye size={14} className="text-orange-400 ml-auto" />}
                                 </div>
                                 <p className="text-sm font-semibold text-slate-800">
                                     {shipment.blNumber || '—'}
@@ -846,17 +1106,62 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20 p-6">
             {/* Header */}
-            <div className="mb-6">
-                <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-lg">
-                        <Ship size={24} className="text-white" />
+            <div className="mb-6 flex items-start justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
+                        <div className="p-2 bg-gradient-to-r from-orange-500 to-amber-500 rounded-xl text-white">
+                            <Ship size={24} />
+                        </div>
+                        Shipment Pipeline
+                    </h1>
+                    <p className="text-slate-500 text-sm mt-1">AI-powered shipment tracking and follow-up</p>
+                </div>
+                <button
+                    onClick={handleTrackAll}
+                    disabled={isBulkTracking}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                    title="Track all shipments with container or BL numbers"
+                >
+                    {isBulkTracking ? (
+                        <><Loader2 size={18} className="animate-spin" /> Tracking {bulkTrackProgress.current}/{bulkTrackProgress.total}...</>
+                    ) : (
+                        <><RefreshCw size={18} /> Track All Vessels</>
+                    )}
+                </button>
+            </div>
+
+            {/* Bulk Tracking Progress Bar */}
+            {isBulkTracking && (
+                <div className="mb-4 bg-blue-50 rounded-lg p-3 border border-blue-200">
+                    <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-blue-700 flex items-center gap-2">
+                            <Loader2 size={14} className="animate-spin" />
+                            Tracking vessel {bulkTrackProgress.current} of {bulkTrackProgress.total}...
+                        </span>
+                        <span className="text-xs text-blue-600">{Math.round((bulkTrackProgress.current / bulkTrackProgress.total) * 100)}%</span>
                     </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-slate-800">Shipment Pipeline</h1>
-                        <p className="text-sm text-slate-500">AI-powered shipment tracking and follow-up</p>
+                    <div className="w-full bg-blue-200 rounded-full h-2">
+                        <div
+                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                            style={{ width: `${(bulkTrackProgress.current / bulkTrackProgress.total) * 100}%` }}
+                        />
                     </div>
                 </div>
-            </div>
+            )}
+
+            {/* Bulk Tracking Results Banner */}
+            {bulkTrackResults && (
+                <div className={`mb-4 rounded-lg p-3 border flex items-center justify-between ${bulkTrackResults.updated > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                    <span className={`text-sm font-medium flex items-center gap-2 ${bulkTrackResults.updated > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        {bulkTrackResults.updated > 0 ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                        ✅ {bulkTrackResults.updated}/{bulkTrackResults.total} shipments updated.
+                        {bulkTrackResults.failed > 0 && ` ${bulkTrackResults.failed} had no tracking data.`}
+                    </span>
+                    <button onClick={() => setBulkTrackResults(null)} className="text-slate-400 hover:text-slate-600 p-1">
+                        <span className="text-xs">✕</span>
+                    </button>
+                </div>
+            )}
 
             {/* Stats Cards - Compact Single Line */}
             <div className="flex gap-3 mb-6">
@@ -910,6 +1215,28 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                                 </span>
                             </button>
                         ))}
+                    </div>
+
+                    {/* Type Filter Buttons */}
+                    <div className="flex gap-1 ml-3">
+                        <button
+                            onClick={() => setTypeFilter(typeFilter === 'SALES' ? 'ALL' : 'SALES')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${typeFilter === 'SALES'
+                                ? 'bg-blue-100 border-blue-300 text-blue-700'
+                                : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                                }`}
+                        >
+                            Invoices
+                        </button>
+                        <button
+                            onClick={() => setTypeFilter(typeFilter === 'COMMISSION' ? 'ALL' : 'COMMISSION')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${typeFilter === 'COMMISSION'
+                                ? 'bg-purple-100 border-purple-300 text-purple-700'
+                                : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                                }`}
+                        >
+                            Commission
+                        </button>
                     </div>
 
                     {/* Search */}
@@ -983,7 +1310,6 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                             </div>
                         )}
                     </div>
-                    <div className="w-24 shrink-0">Order #</div>
                     <div className="w-24 shrink-0">Shipper</div>
                     <div className="w-28 shrink-0">Booking #</div>
                     <div className="w-24 shrink-0">Invoice #</div>
@@ -994,6 +1320,7 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                     <div className="w-[116px] shrink-0 text-center">Pipeline</div>
                     <div className="w-12 shrink-0 text-right">%</div>
                     <div className="w-24 shrink-0">Status</div>
+                    <div className="w-24 shrink-0">Order #</div>
                     <div className="w-6 shrink-0"></div>
                 </div>
                 {filteredShipments.length === 0 ? (
@@ -1010,6 +1337,654 @@ const ShipmentPipeline: React.FC<ShipmentPipelineProps> = ({
                     ))
                 )}
             </div>
+
+            {/* Document Viewer Modal */}
+            {docViewer && (
+                <div
+                    className="fixed inset-0 z-[9999] flex items-center justify-center"
+                    onClick={() => setDocViewer(null)}
+                >
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+
+                    {/* Modal */}
+                    <div
+                        className="relative bg-white rounded-2xl shadow-2xl w-[90vw] max-w-5xl h-[85vh] flex flex-col overflow-hidden"
+                        onClick={e => e.stopPropagation()}
+                        style={{ animation: 'fadeInScale 0.2s ease-out' }}
+                    >
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50/30">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm ${docViewer.label === 'SO' ? 'bg-blue-500' :
+                                    docViewer.label === 'BK' ? 'bg-indigo-500' :
+                                        docViewer.label === 'CI' ? 'bg-green-500' :
+                                            'bg-orange-500'
+                                    }`}>
+                                    {docViewer.label}
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-semibold text-slate-800">{docViewer.title}</h2>
+                                    <p className="text-sm text-slate-500 font-mono">{docViewer.identifier}</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {/* Content/PDF tabs for SO/CI/BK */}
+                                {(docViewer.stage === 'SO' || docViewer.stage === 'CI' || docViewer.stage === 'BK') && (
+                                    <div className="flex bg-slate-100 rounded-lg p-0.5 mr-2">
+                                        <button
+                                            onClick={() => setDocViewTab('content')}
+                                            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${docViewTab === 'content' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+                                        >
+                                            Content
+                                        </button>
+                                        {docViewer.documentData && (
+                                            <button
+                                                onClick={() => setDocViewTab('pdf')}
+                                                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${docViewTab === 'pdf' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+                                            >
+                                                PDF
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                                {/* Download */}
+                                {docViewer.documentData && (
+                                    <button
+                                        onClick={() => {
+                                            try {
+                                                const data = docViewer.documentData!;
+                                                let blob: Blob;
+                                                if (data.startsWith('data:')) {
+                                                    const [header, b64] = data.split(',');
+                                                    const mime = header.match(/data:(.*?);/)?.[1] || 'application/pdf';
+                                                    const binary = atob(b64);
+                                                    const bytes = new Uint8Array(binary.length);
+                                                    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                                                    blob = new Blob([bytes], { type: mime });
+                                                } else {
+                                                    blob = new Blob([data], { type: 'application/pdf' });
+                                                }
+                                                const url = URL.createObjectURL(blob);
+                                                const a = document.createElement('a');
+                                                a.href = url;
+                                                a.download = `${docViewer.title.replace(/\s+/g, '_')}_${docViewer.identifier}.pdf`;
+                                                a.click();
+                                                URL.revokeObjectURL(url);
+                                            } catch (err) {
+                                                alert('Download failed: ' + (err as any)?.message);
+                                            }
+                                        }}
+                                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition-all"
+                                    >
+                                        <Download size={16} />
+                                        Download
+                                    </button>
+                                )}
+                                {/* Email */}
+                                <button
+                                    onClick={() => {
+                                        const subject = encodeURIComponent(`${docViewer.title} - ${docViewer.identifier}`);
+                                        const body = encodeURIComponent(`Please find attached the ${docViewer.title} document (${docViewer.identifier}).\n\nNote: Please download the document from the platform and attach it to this email.`);
+                                        window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+                                    }}
+                                    className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-all"
+                                >
+                                    <Mail size={16} />
+                                    Email
+                                </button>
+                                {/* Close */}
+                                <button
+                                    onClick={() => setDocViewer(null)}
+                                    className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-all ml-2"
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Content Area */}
+                        <div className="flex-1 overflow-auto bg-slate-100 p-4">
+                            {/* ---- SO Content View ---- */}
+                            {docViewer.stage === 'SO' && docViewTab === 'content' && (() => {
+                                const order = docViewer.order;
+                                if (!order) return <p className="text-center text-slate-400 py-8">No order data available</p>;
+                                const isCO = docViewer.shipment?.orderType === 'COMMISSION';
+                                const co = isCO ? order as CommissionSalesOrder : null;
+                                const so = !isCO ? order as SalesOrder : null;
+                                const items = isCO ? (co?.items || []) : (so?.items || []);
+                                return (
+                                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                        {/* Order Header */}
+                                        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-slate-200">
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className="text-xl font-bold text-slate-800">{order.orderNumber || docViewer.identifier}</span>
+                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${isCO ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                                                            {isCO ? 'COMMISSION' : (so?.orderType || 'SALES')}
+                                                        </span>
+                                                        {so?.saleType && <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${so.saleType === 'EXPORT' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>{so.saleType}</span>}
+                                                    </div>
+                                                    <p className="text-sm text-slate-600">{isCO ? co?.customerName : so?.customerName}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-2xl font-bold text-slate-800">
+                                                        {so?.currency || 'USD'} {(so?.totalAmount || co?.orderTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </p>
+                                                    <p className="text-xs text-slate-500">{order.status || 'N/A'}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Order Details Grid */}
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-6 py-4 border-b border-slate-100">
+                                            <div>
+                                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Date</p>
+                                                <p className="text-sm text-slate-700 font-medium">{so?.orderDate ? new Date(so.orderDate).toLocaleDateString() : co?.createdAt ? new Date(co.createdAt).toLocaleDateString() : '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Incoterm</p>
+                                                <p className="text-sm text-slate-700 font-medium">{so?.incoterm || co?.incoterm || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Payment Terms</p>
+                                                <p className="text-sm text-slate-700 font-medium">{so?.paymentTerms || co?.paymentTerms || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Delivery</p>
+                                                <p className="text-sm text-slate-700 font-medium">{so?.deliveryMethod || co?.pod || '—'}</p>
+                                            </div>
+                                            {(so?.pod || co?.pod) && (
+                                                <div>
+                                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Destination (POD)</p>
+                                                    <p className="text-sm text-slate-700 font-medium">{so?.pod || co?.pod}</p>
+                                                </div>
+                                            )}
+                                            {isCO && co?.sellerName && (
+                                                <div>
+                                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Seller</p>
+                                                    <p className="text-sm text-slate-700 font-medium">{co.sellerName}</p>
+                                                </div>
+                                            )}
+                                            {co?.bookingNumber && (
+                                                <div>
+                                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Booking #</p>
+                                                    <p className="text-sm text-slate-700 font-mono font-medium">{co.bookingNumber}</p>
+                                                </div>
+                                            )}
+                                            {co?.blNumber && (
+                                                <div>
+                                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">B/L #</p>
+                                                    <p className="text-sm text-slate-700 font-mono font-medium">{co.blNumber}</p>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Line Items Table */}
+                                        <div className="px-6 py-4">
+                                            <h3 className="text-sm font-semibold text-slate-700 mb-3">Line Items ({items.length})</h3>
+                                            <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                                <table className="w-full text-sm">
+                                                    <thead>
+                                                        <tr className="bg-slate-50 text-left">
+                                                            <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">#</th>
+                                                            <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">Product</th>
+                                                            <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Qty</th>
+                                                            <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Unit Price</th>
+                                                            <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Amount</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {items.map((item: any, idx: number) => (
+                                                            <tr key={idx} className="border-t border-slate-100 hover:bg-slate-50">
+                                                                <td className="px-3 py-2 text-slate-400">{idx + 1}</td>
+                                                                <td className="px-3 py-2 text-slate-800 font-medium">{item.productName || item.description || '—'}</td>
+                                                                <td className="px-3 py-2 text-right text-slate-700">{(item.quantity || 0).toLocaleString()} {item.unit || item.uom || ''}</td>
+                                                                <td className="px-3 py-2 text-right text-slate-700">${(item.unitPrice || item.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                                <td className="px-3 py-2 text-right font-semibold text-slate-800">${((item.quantity || 0) * (item.unitPrice || item.price || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                    <tfoot>
+                                                        <tr className="border-t-2 border-slate-200 bg-slate-50">
+                                                            <td colSpan={4} className="px-3 py-2 text-right font-bold text-slate-700">Total</td>
+                                                            <td className="px-3 py-2 text-right font-bold text-lg text-slate-800">
+                                                                ${(so?.totalAmount || co?.orderTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            </td>
+                                                        </tr>
+                                                    </tfoot>
+                                                </table>
+                                            </div>
+                                        </div>
+
+                                        {/* Commission Info (for commission orders only) */}
+                                        {isCO && co && (
+                                            <div className="px-6 py-3 border-t border-slate-100 bg-purple-50/50">
+                                                <div className="flex items-center gap-6 text-sm">
+                                                    <span className="text-purple-700 font-medium">Commission: {co.commissionRate}% ({co.commissionType})</span>
+                                                    <span className="text-purple-800 font-bold">= ${co.commissionAmount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+
+                            {/* ---- CI Content View (matches Delivery Documents Invoice layout) ---- */}
+                            {docViewer.stage === 'CI' && docViewTab === 'content' && (() => {
+                                const inv = docViewer.invoice;
+                                const co = docViewer.shipment?.orderType === 'COMMISSION' ? docViewer.order as CommissionSalesOrder : null;
+                                const shp = docViewer.shipment;
+                                if (!inv && !co) return <p className="text-center text-slate-400 py-8">No invoice data available</p>;
+                                const invItems = inv?.items ? (typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items) : [];
+                                // Parse containers
+                                let containersList: any[] = [];
+                                try {
+                                    if (inv?.containers) {
+                                        containersList = typeof inv.containers === 'string' ? JSON.parse(inv.containers) : inv.containers;
+                                    }
+                                } catch { }
+                                // Compute weight totals from items
+                                const totalNetLbs = invItems.reduce((s: number, i: any) => s + Number(i.netLbs || i.quantity || 0), 0);
+                                const totalNetKg = invItems.reduce((s: number, i: any) => s + Number(i.netKg || (i.netLbs || i.quantity || 0) * 0.453592), 0);
+                                const totalGrossLbs = invItems.reduce((s: number, i: any) => s + Number(i.grossLbs || 0), 0);
+                                const totalGrossKg = invItems.reduce((s: number, i: any) => s + Number(i.grossKg || (i.grossLbs || 0) * 0.453592), 0);
+                                const totalVolumes = invItems.reduce((s: number, i: any) => s + Number(i.volumes || 0), 0);
+
+                                return (
+                                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden text-sm">
+
+                                        {/* ===== SHIPPER HEADER ===== */}
+                                        <div className="px-6 py-4 border-b border-slate-200 flex items-start justify-between">
+                                            <div>
+                                                <p className="font-bold text-slate-800 text-base">{inv?.shipperName || shp?.shipper || 'Shipper'}</p>
+                                                {inv?.shipperAddress && <p className="text-xs text-slate-500 mt-0.5">{inv.shipperAddress}</p>}
+                                            </div>
+                                        </div>
+
+                                        {/* ===== INVOICE TITLE ===== */}
+                                        <div className="px-6 pt-3 pb-1">
+                                            <h2 className="text-2xl font-light" style={{ color: '#00A0B0' }}>INVOICE</h2>
+                                        </div>
+
+                                        {/* ===== BILL TO / SHIP TO / INVOICE INFO (3 columns) ===== */}
+                                        <div className="grid grid-cols-3 gap-4 px-6 py-3 border-b border-slate-200">
+                                            {/* BILL TO */}
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Bill To</p>
+                                                <p className="font-bold text-slate-800">{inv?.billToName || inv?.soldTo || shp?.customerName || '—'}</p>
+                                                {inv?.billToAddress && <p className="text-xs text-slate-500 mt-0.5">{inv.billToAddress}</p>}
+                                            </div>
+
+                                            {/* SHIP TO */}
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Ship To</p>
+                                                <p className="font-bold text-slate-800">{(inv as any)?.consignee || inv?.shipTo || inv?.billToName || inv?.soldTo || '—'}</p>
+                                            </div>
+
+                                            {/* INVOICE INFO */}
+                                            <div className="space-y-1.5">
+                                                <div className="flex justify-between">
+                                                    <span className="font-bold text-slate-500 text-xs">INVOICE #</span>
+                                                    <span className="font-mono text-slate-800">{inv?.invoiceNumber || co?.invoiceNumber || docViewer.identifier}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="font-bold text-slate-500 text-xs">DATE</span>
+                                                    <span className="text-slate-800">{inv?.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '—'}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="font-bold text-slate-500 text-xs">SO #</span>
+                                                    <span className="font-mono text-slate-800">{inv?.soNumber || inv?.customerPo || '—'}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="font-bold text-slate-500 text-xs">BOOKING #</span>
+                                                    <span className="font-mono text-slate-800">{(inv as any)?.bookingNumber || inv?.transportRef || shp?.bookingNumber || '—'}</span>
+                                                </div>
+                                                {(inv?.bl || shp?.blNumber) && (
+                                                    <div className="flex justify-between">
+                                                        <span className="font-bold text-slate-500 text-xs">BL #</span>
+                                                        <span className="font-mono text-slate-800">{inv?.bl || shp?.blNumber}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* ===== TERMS / INCOTERM / POD ROW ===== */}
+                                        <div className="grid grid-cols-3 gap-4 px-6 py-3 border-b border-slate-200">
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Terms</p>
+                                                <p className="font-medium" style={{ color: '#00A0B0' }}>{inv?.paymentTerms || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Incoterm</p>
+                                                <p className="font-medium" style={{ color: '#00A0B0' }}>{inv?.incoterm || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">POD</p>
+                                                <p className="font-medium" style={{ color: '#00A0B0' }}>{(inv as any)?.pod || shp?.pod || '—'}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* ===== ITEMS TABLE (matches PDF: Description, HS Code, QTY LBS/KG, PRICE $/LB-$/KG, AMOUNT) ===== */}
+                                        {Array.isArray(invItems) && invItems.length > 0 && (
+                                            <div className="px-6 py-4">
+                                                <div className="border border-slate-200 rounded-lg overflow-x-auto">
+                                                    <table className="w-full text-sm">
+                                                        <thead>
+                                                            <tr style={{ backgroundColor: '#E8F4F5' }}>
+                                                                <th className="px-3 py-2 text-left text-[10px] font-bold uppercase" style={{ color: '#00A0B0' }}>Description</th>
+                                                                <th className="px-2 py-2 text-left text-[10px] font-bold uppercase" style={{ color: '#00A0B0' }}>HS Code</th>
+                                                                <th className="px-2 py-2 text-right text-[10px] font-bold uppercase" style={{ color: '#00A0B0' }}>QTY (LBS / KG)</th>
+                                                                <th className="px-2 py-2 text-right text-[10px] font-bold uppercase" style={{ color: '#00A0B0' }}>UNIT PRICE ($/LB - $/KG)</th>
+                                                                <th className="px-3 py-2 text-right text-[10px] font-bold uppercase" style={{ color: '#00A0B0' }}>Amount US$</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {invItems.map((item: any, idx: number) => {
+                                                                const desc = item.customerDescription || item.description || item.productName || '—';
+                                                                const hsCode = item.hsCode || '—';
+                                                                const netLbs = item.netLbs || item.quantity || 0;
+                                                                const netKg = item.netKg || (netLbs * 0.453592);
+                                                                const priceLb = item.unitPriceLbs || item.unitPrice || 0;
+                                                                const priceKg = item.unitPriceKg || (priceLb * 2.20462);
+                                                                const amount = item.amount || (netLbs * priceLb);
+                                                                return (
+                                                                    <tr key={idx} className="border-t border-slate-100 hover:bg-slate-50 align-top">
+                                                                        <td className="px-3 py-2 text-slate-800 font-medium">
+                                                                            {desc}
+                                                                            {(item.containerNo || item.sealNo) && (
+                                                                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                                                                    {item.containerNo && <span>Cntr: {item.containerNo}</span>}
+                                                                                    {item.containerNo && item.sealNo && <span className="mx-1">·</span>}
+                                                                                    {item.sealNo && <span>Seal: {item.sealNo}</span>}
+                                                                                </div>
+                                                                            )}
+                                                                        </td>
+                                                                        <td className="px-2 py-2 text-slate-600 font-mono text-xs">{hsCode}</td>
+                                                                        <td className="px-2 py-2 text-right text-slate-700 whitespace-nowrap">
+                                                                            <div>{netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} lbs</div>
+                                                                            <div className="text-slate-400">{netKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kg</div>
+                                                                        </td>
+                                                                        <td className="px-2 py-2 text-right text-slate-700 whitespace-nowrap">
+                                                                            <div>${priceLb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/lb</div>
+                                                                            <div className="text-slate-400">${priceKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kg</div>
+                                                                        </td>
+                                                                        <td className="px-3 py-2 text-right font-semibold text-slate-800">${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* ===== WEIGHT & CONTAINER INFO / TOTAL ===== */}
+                                        <div className="px-6 py-3 border-t border-slate-100 flex items-start justify-between">
+                                            {/* Left: Weight & Container info */}
+                                            <div className="space-y-1 text-xs text-slate-600">
+                                                <p>Net weight: <span className="font-medium text-slate-800">{(inv?.netWeight || totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1 }))} {inv?.netWeight ? '' : 'Kgs'}</span></p>
+                                                <p>Gross Weight: <span className="font-medium text-slate-800">{(inv?.grossWeight || totalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 1 }))} {inv?.grossWeight ? '' : 'Kgs'}</span></p>
+                                                {totalVolumes > 0 && <p>Total volumes: <span className="font-medium text-slate-800">{totalVolumes}</span></p>}
+                                                {/* Container details */}
+                                                {Array.isArray(containersList) && containersList.length > 0 && (
+                                                    <div className="mt-2 pt-2 border-t border-slate-100">
+                                                        <p className="font-bold text-slate-700 mb-1">Container No. &nbsp; Seal No. &nbsp; Volumes</p>
+                                                        {containersList.map((c: any, i: number) => {
+                                                            const contNo = c.container || c.containerNumber || c.containerNo || '—';
+                                                            const sealNo = c.seal || c.sealNumber || c.sealNo || '';
+                                                            const contItems = invItems.filter((itm: any) => itm.containerNo === contNo);
+                                                            const contVolumes = contItems.reduce((s: number, itm: any) => s + (itm.volumes || 0), 0);
+                                                            return (
+                                                                <p key={i} className="font-mono text-slate-600">
+                                                                    {contNo} &nbsp; {sealNo} &nbsp; {contVolumes || '—'}
+                                                                </p>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Right: TOTAL */}
+                                            <div className="text-right">
+                                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Total</p>
+                                                <p className="text-2xl font-bold" style={{ color: '#00A0B0' }}>
+                                                    ${(inv?.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {/* ===== BANK DETAILS ===== */}
+                                        {(inv?.bankName || inv?.accountNumber) && (
+                                            <div className="px-6 py-3 border-t border-slate-200" style={{ backgroundColor: '#E8F4F5' }}>
+                                                <h3 className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: '#00A0B0' }}>Bank Details</h3>
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                                                    {inv?.bankName && <div><span className="text-slate-500">Bank: </span><span className="font-medium text-slate-800">{inv.bankName}</span></div>}
+                                                    {inv?.bankAddress && <div><span className="text-slate-500">Address: </span><span className="font-medium text-slate-800">{inv.bankAddress}</span></div>}
+                                                    {inv?.swiftCode && <div><span className="text-slate-500">SWIFT: </span><span className="font-mono font-medium text-slate-800">{inv.swiftCode}</span></div>}
+                                                    {inv?.accountNumber && <div><span className="text-slate-500">Account: </span><span className="font-mono font-medium text-slate-800">{inv.accountNumber}</span></div>}
+                                                    {inv?.routingNumber && <div><span className="text-slate-500">Routing: </span><span className="font-mono font-medium text-slate-800">{inv.routingNumber}</span></div>}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+
+                            {/* ---- BK Content View ---- */}
+                            {docViewer.stage === 'BK' && docViewTab === 'content' && (() => {
+                                // Try docViewer.booking first, then fetchedBooking from supabase
+                                const bk = (docViewer.booking || fetchedBooking) as any;
+                                const shipment = docViewer.shipment;
+                                // If no booking record at all, show data from shipment
+                                const display = bk || {
+                                    bookingNumber: shipment?.bookingNumber,
+                                    customer: shipment?.customerName,
+                                    pol: shipment?.pol,
+                                    pod: shipment?.pod,
+                                    etd: shipment?.etd,
+                                    eta: shipment?.eta,
+                                    status: shipment?.bookingStatus,
+                                    vesselVoyage: null,
+                                    carrier: null,
+                                    equipment: null,
+                                    containerNumber: null,
+                                    blNumber: shipment?.blNumber,
+                                };
+                                return (
+                                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden max-w-3xl mx-auto">
+                                        {/* Booking Header */}
+                                        <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-4">
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <h3 className="text-lg font-bold">Booking Confirmation</h3>
+                                                    <p className="text-indigo-200 text-sm font-mono mt-0.5">{display.bookingNumber || '—'}</p>
+                                                </div>
+                                                {display.status && (
+                                                    <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${display.status === 'ACTIVE' || display.status === 'SHIPPED' || display.status === 'COMPLETE' ? 'bg-emerald-400/20 text-emerald-100' :
+                                                            display.status === 'CANCELLED' ? 'bg-red-400/20 text-red-200' :
+                                                                'bg-white/20 text-white'
+                                                        }`}>
+                                                        {display.status}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Routing: POL → POD */}
+                                        <div className="px-6 py-4 bg-gradient-to-r from-indigo-50/50 to-purple-50/50 border-b border-slate-100">
+                                            <div className="flex items-center justify-center gap-6">
+                                                <div className="text-center">
+                                                    <p className="text-[10px] text-slate-400 uppercase font-bold">Port of Loading</p>
+                                                    <p className="text-lg font-bold text-indigo-700">{display.pol || '—'}</p>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-8 h-0.5 bg-indigo-300"></div>
+                                                    <Ship size={20} className="text-indigo-500" />
+                                                    <div className="w-8 h-0.5 bg-indigo-300"></div>
+                                                </div>
+                                                <div className="text-center">
+                                                    <p className="text-[10px] text-slate-400 uppercase font-bold">Port of Discharge</p>
+                                                    <p className="text-lg font-bold text-indigo-700">{display.pod || '—'}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Details Grid */}
+                                        <div className="px-6 py-4 grid grid-cols-2 md:grid-cols-3 gap-4">
+                                            <div>
+                                                <p className="text-[10px] text-slate-400 uppercase font-bold">Customer</p>
+                                                <p className="text-sm font-semibold text-slate-800">{display.customer || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] text-slate-400 uppercase font-bold">Vessel / Voyage</p>
+                                                <p className="text-sm font-semibold text-slate-800">{display.vesselVoyage || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] text-slate-400 uppercase font-bold">Carrier</p>
+                                                <p className="text-sm font-semibold text-slate-800">{display.carrier || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] text-slate-400 uppercase font-bold">Equipment</p>
+                                                <p className="text-sm font-semibold text-slate-800">{display.equipment || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] text-slate-400 uppercase font-bold">Container #</p>
+                                                <p className="text-sm font-mono font-semibold text-slate-800">{display.containerNumber || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] text-slate-400 uppercase font-bold">B/L #</p>
+                                                <p className="text-sm font-mono font-semibold text-slate-800">{display.blNumber || '—'}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Dates */}
+                                        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50">
+                                            <h4 className="text-[10px] text-slate-400 uppercase font-bold mb-3">Schedule & Cut-Off Dates</h4>
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                                <div>
+                                                    <p className="text-[10px] text-slate-400 uppercase">ETD</p>
+                                                    <p className="text-sm font-semibold text-slate-800">{display.etd ? new Date(display.etd).toLocaleDateString() : '—'}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-[10px] text-slate-400 uppercase">ETA</p>
+                                                    <p className="text-sm font-semibold text-slate-800">{display.eta ? new Date(display.eta).toLocaleDateString() : '—'}</p>
+                                                </div>
+                                                {display.cargoCutOff && (
+                                                    <div>
+                                                        <p className="text-[10px] text-slate-400 uppercase">Cargo Cut-Off</p>
+                                                        <p className="text-sm font-semibold text-amber-700">{new Date(display.cargoCutOff).toLocaleDateString()}</p>
+                                                    </div>
+                                                )}
+                                                {display.vgmCutOff && (
+                                                    <div>
+                                                        <p className="text-[10px] text-slate-400 uppercase">VGM Cut-Off</p>
+                                                        <p className="text-sm font-semibold text-amber-700">{new Date(display.vgmCutOff).toLocaleDateString()}</p>
+                                                    </div>
+                                                )}
+                                                {display.draftCutOff && (
+                                                    <div>
+                                                        <p className="text-[10px] text-slate-400 uppercase">Draft Cut-Off</p>
+                                                        <p className="text-sm font-semibold text-amber-700">{new Date(display.draftCutOff).toLocaleDateString()}</p>
+                                                    </div>
+                                                )}
+                                                {display.freeTime && (
+                                                    <div>
+                                                        <p className="text-[10px] text-slate-400 uppercase">Free Time</p>
+                                                        <p className="text-sm font-semibold text-slate-800">{display.freeTime}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Terminal & Agent */}
+                                        {(display.terminal || display.agentName) && (
+                                            <div className="px-6 py-4 border-t border-slate-100">
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    {display.terminal && (
+                                                        <div>
+                                                            <p className="text-[10px] text-slate-400 uppercase font-bold">Terminal</p>
+                                                            <p className="text-sm font-semibold text-slate-800">{display.terminal}</p>
+                                                        </div>
+                                                    )}
+                                                    {display.agentName && (
+                                                        <div>
+                                                            <p className="text-[10px] text-slate-400 uppercase font-bold">Cargo Agent</p>
+                                                            <p className="text-sm font-semibold text-slate-800">{display.agentName}</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* No PDF notice */}
+                                        {!docViewer.documentData && !bk?.originalDocument && (
+                                            <div className="px-6 py-4 border-t border-slate-100 bg-amber-50">
+                                                <p className="text-xs text-amber-700 flex items-center gap-2">
+                                                    <AlertTriangle size={14} />
+                                                    No original PDF document uploaded for this booking.
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+
+                            {/* ---- PDF Viewer (for BL always, or SO/CI/BK when pdf tab selected) ---- */}
+                            {(docViewer.stage === 'BL' || docViewTab === 'pdf') && docViewer.documentData && (() => {
+                                const data = docViewer.documentData!;
+                                if (data.startsWith('data:application/pdf') || data.startsWith('data:application/octet-stream')) {
+                                    return (
+                                        <iframe
+                                            src={data}
+                                            className="w-full h-full rounded-lg bg-white shadow-inner"
+                                            style={{ minHeight: '100%' }}
+                                            title={docViewer.title}
+                                        />
+                                    );
+                                } else if (data.startsWith('data:image')) {
+                                    return (
+                                        <div className="flex items-center justify-center h-full">
+                                            <img
+                                                src={data}
+                                                alt={docViewer.title}
+                                                className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+                                            />
+                                        </div>
+                                    );
+                                } else if (data.startsWith('http')) {
+                                    return (
+                                        <iframe
+                                            src={data}
+                                            className="w-full h-full rounded-lg bg-white shadow-inner"
+                                            style={{ minHeight: '100%' }}
+                                            title={docViewer.title}
+                                        />
+                                    );
+                                } else {
+                                    return (
+                                        <iframe
+                                            src={`data:application/pdf;base64,${data}`}
+                                            className="w-full h-full rounded-lg bg-white shadow-inner"
+                                            style={{ minHeight: '100%' }}
+                                            title={docViewer.title}
+                                        />
+                                    );
+                                }
+                            })()}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Animation keyframes */}
+            <style>{`
+                @keyframes fadeInScale {
+                    from { opacity: 0; transform: scale(0.95); }
+                    to { opacity: 1; transform: scale(1); }
+                }
+            `}</style>
         </div>
     );
 };

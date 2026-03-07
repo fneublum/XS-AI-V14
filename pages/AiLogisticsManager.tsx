@@ -22,6 +22,7 @@ interface AiLogisticsManagerProps {
     packingLists?: PackingList[];
     suppliers?: Supplier[];
     availableCompanies?: Company[];
+    products?: any[];
     showPendingOrders?: boolean;
     ports?: any[];
     locations?: any[];
@@ -44,6 +45,7 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
     packingLists = [],
     suppliers = [],
     availableCompanies = [],
+    products = [],
     ports = [],
     locations = [],
 }) => {
@@ -530,7 +532,13 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
             doc.setFont('helvetica', 'normal');
             doc.setFontSize(8);
             items.slice(0, 10).forEach((item: any) => {
-                const desc = (item.customerDescription || item.description || item.productName || '').substring(0, 60);
+                // LIVE product lookup for system description
+                let desc = '';
+                if (item.productId && products.length > 0) {
+                    const prod = products.find((p: any) => p.id === item.productId);
+                    if (prod) desc = prod.name;
+                }
+                if (!desc) desc = (item.description || item.productName || item.customerDescription || '').substring(0, 60);
                 doc.text(desc, 16, y);
                 doc.text(String(item.quantity || item.netKg || ''), 130, y);
                 doc.text(String(item.netWeight || item.netKg || '-'), 165, y);
@@ -668,7 +676,13 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
             doc.setFont('helvetica', 'normal');
             doc.setFontSize(8);
             items.slice(0, 12).forEach((item: any) => {
-                const desc = (item.customerDescription || item.description || item.productName || '').substring(0, 55);
+                // LIVE product lookup for system description
+                let desc = '';
+                if (item.productId && products.length > 0) {
+                    const prod = products.find((p: any) => p.id === item.productId);
+                    if (prod) desc = prod.name;
+                }
+                if (!desc) desc = (item.description || item.productName || item.customerDescription || '').substring(0, 55);
                 doc.text(desc, 16, y);
                 doc.text(String(item.quantity || item.netKg || ''), 115, y);
                 doc.text(`$${(item.unitPrice || item.price || 0).toFixed(2)}`, 140, y);
@@ -701,150 +715,214 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
         return String(doc.output('bloburl'));
     };
 
-    // SLI PDF (Shipper's Letter of Instruction - matching PLInvoiceEngine)
+    // SLI PDF (Shipper's Letter of Instruction - Standard EEI Format)
     const createSLIPDF = (inv: any): string => {
         const doc = new jsPDF();
-
-        // Color scheme
+        const cyanColor = '#00A0B0';
         const darkGray = '#333333';
 
-        // Get company info
         const company = availableCompanies.find(c => c.id === currentCompanyId);
         const companyName = company?.name || 'EC4 ENTERPRISES LLC';
         const companyAddress = company?.address || '112 Bartran Oaks Walk #600010';
         const companyCity = `${company?.city || 'St Johns'}, ${company?.state || 'FL'} ${company?.zip || '32260'}`;
+        const companyEIN = (company as any)?.ein || '';
+        const companyPhone = (company as any)?.phone || '';
+        const companyState = company?.state || 'FL';
 
-        // Logo on left side
+        const consigneeName = inv.consignee || inv.billToName || inv.soldTo || '';
+        const customer = customers.find(c => c.name === consigneeName || c.name === inv.billToName);
+        const customerCountry = customer?.country || '';
+        const customerAddr = customer ? [customer.location, customer.city, customer.state, customer.zip, customer.country].filter(Boolean).join(', ') : '';
+
+        const items = typeof inv.items === 'string' ? JSON.parse(inv.items || '[]') : (inv.items || []);
+
+        // Supplier state for Field 4 (freight origin)
+        const supplierName = inv.supplier || inv.shipperName || inv.shipper || '';
+        const itemSupplier = items.length > 0 ? (items[0].supplier || '') : '';
+        const effectiveSupplier = supplierName || itemSupplier;
+        const supplierObj = suppliers?.find((s: any) =>
+            s.name === effectiveSupplier ||
+            s.nickname === effectiveSupplier ||
+            (effectiveSupplier && s.name && effectiveSupplier.toLowerCase().includes(s.name.toLowerCase())) ||
+            (effectiveSupplier && s.name && s.name.toLowerCase().includes(effectiveSupplier.toLowerCase()))
+        );
+        const freightOriginState = supplierObj?.state || inv.originState || companyState;
+
+        // POA for Field 15
+        const poaValue = inv.poa || '';
+
+        const totalNetLbs = items.reduce((sum: number, item: any) => sum + Number(item.netLbs || item.quantity || 0), 0);
+        const totalNetKg = totalNetLbs * 0.453592;
+        const totalGrossLbs = items.reduce((sum: number, item: any) => sum + Number(item.grossLbs || 0), 0);
+        const totalGrossKg = totalGrossLbs > 0 ? totalGrossLbs * 0.453592 : totalNetKg * 1.02;
+        const totalVolumes = items.reduce((sum: number, item: any) => sum + Number(item.volumes || 0), 0);
+
         if (logoUrl) {
             try {
                 let format = 'JPEG';
                 if (logoUrl.startsWith('data:image/')) {
                     const match = logoUrl.match(/data:image\/(\w+);/);
-                    if (match) {
-                        format = match[1].toUpperCase();
-                        if (format === 'JPG') format = 'JPEG';
-                    }
+                    if (match) { format = match[1].toUpperCase(); if (format === 'JPG') format = 'JPEG'; }
                 }
                 const imgProps = doc.getImageProperties(logoUrl);
-                const maxWidth = 55;
-                const maxHeight = 22;
-                let width = imgProps.width;
-                let height = imgProps.height;
-                const ratio = Math.min(maxWidth / width, maxHeight / height);
-                width *= ratio;
-                height *= ratio;
-                doc.addImage(logoUrl, format, 14, 10, width, height);
-            } catch (e) {
-                console.error('[SLI PDF] Logo load failed:', e);
-            }
+                const maxW = 55, maxH = 22;
+                let w = imgProps.width, h = imgProps.height;
+                const ratio = Math.min(maxW / w, maxH / h);
+                w *= ratio; h *= ratio;
+                doc.addImage(logoUrl, format, 14, 10, w, h);
+            } catch (e) { console.error('[SLI PDF] Logo load failed:', e); }
         }
 
-        // Company info on right side
-        doc.setFontSize(11);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(darkGray);
+        doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(darkGray);
         doc.text(companyName, 196, 15, { align: 'right' });
-
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9); doc.setFont('helvetica', 'normal');
         doc.text(companyAddress, 196, 21, { align: 'right' });
         doc.text(companyCity, 196, 26, { align: 'right' });
 
-        let y = 42;
+        let y = 40;
+        const leftCol = 14;
+        const rightCol = 110;
+        const lineHeight = 5;
 
-        // CONSIGNEE
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'bold');
-        doc.text('CONSIGNEE:', 14, y);
-        doc.setFont('helvetica', 'normal');
-        y += 5;
-        const consignee = inv.consignee || inv.billToName || inv.soldTo || '';
-        const consigneeLines = doc.splitTextToSize(consignee, 100);
-        doc.text(consigneeLines, 14, y);
-        y += consigneeLines.length * 4;
-
-        const customer = customers.find(c => c.name === consignee || c.name === inv.billToName);
-        if (customer) {
-            const addrParts = [customer.location, customer.city, customer.state, customer.zip, customer.country].filter(Boolean);
-            const customerAddress = addrParts.join(', ');
-            if (customerAddress) {
-                const addrLines = doc.splitTextToSize(customerAddress, 100);
-                doc.text(addrLines, 14, y);
-                y += addrLines.length * 4 + 2;
-            }
-        }
-        y += 8;
-
-        // SHIPPER'S LETTER OF INSTRUCTION TITLE
-        doc.setFontSize(16);
-        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(cyanColor);
         doc.text("SHIPPER'S LETTER OF INSTRUCTION", 105, y, { align: 'center' });
-        y += 12;
-
-        // Invoice Details
-        const lineHeight = 6;
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Invoice Number:', 14, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(inv.invoiceNumber || '', 50, y);
-
-        doc.setFont('helvetica', 'bold');
-        doc.text('Date:', 110, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(new Date(inv.date || inv.invoiceDate || new Date()).toISOString().split('T')[0], 130, y);
-        y += lineHeight;
-
-        doc.setFont('helvetica', 'bold');
-        doc.text('Incoterm:', 14, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(inv.incoterm || 'EX-WORKS USA', 50, y);
-
-        doc.setFont('helvetica', 'bold');
-        doc.text('P.O. REF:', 110, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(inv.customerPo || inv.transportRef || '-', 130, y);
         y += 10;
 
-        // GOODS DESCRIPTION
-        doc.setFillColor(232, 244, 245);
-        doc.rect(14, y - 3, 182, 7, 'F');
-        doc.setFont('helvetica', 'bold');
-        doc.text("GOODS DESCRIPTION", 16, y + 1);
-        y += 10;
+        const drawLabel = (n: string, l: string, x: number, yy: number) => { doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor('#888888'); doc.text(`${n}. ${l}`, x, yy); };
+        const drawVal = (v: string, x: number, yy: number, mw = 85) => { doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(darkGray); const ls = doc.splitTextToSize(v || '-', mw); doc.text(ls, x, yy); return ls.length * 4; };
 
-        const items = typeof inv.items === 'string' ? JSON.parse(inv.items || '[]') : (inv.items || []);
-        if (items.length > 0) {
-            doc.setFont('helvetica', 'normal');
-            items.slice(0, 6).forEach((item: any) => {
-                const desc = item.customerDescription || item.description || item.productName || '';
-                doc.text(`• ${desc.substring(0, 70)}`, 16, y);
-                y += 5;
-            });
-        }
+        doc.setDrawColor('#cccccc'); doc.setLineWidth(0.3);
 
-        y += 8;
-        doc.setFont('helvetica', 'bold');
-        doc.text('Gross Weight:', 14, y);
+        // 1a: USPPI
+        drawLabel('1a', 'U.S. PRINCIPAL PARTY IN INTEREST (USPPI)', leftCol, y);
+        y += 4;
+        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(darkGray);
+        doc.text(companyName, leftCol, y); y += 4;
         doc.setFont('helvetica', 'normal');
-        doc.text(inv.grossWeight || inv.gross_weight || '-', 50, y);
+        doc.text(companyAddress, leftCol, y); y += 4;
+        doc.text(companyCity, leftCol, y);
+        if (companyPhone) { y += 4; doc.text(`Tel: ${companyPhone}`, leftCol, y); }
 
-        doc.setFont('helvetica', 'bold');
-        doc.text('Net Weight:', 90, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(inv.netWeight || inv.net_weight || '-', 120, y);
+        // 1b: EIN
         y += 6;
+        drawLabel('1b', 'USPPI EIN (IRS) NO.', leftCol, y); y += 4;
+        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(darkGray);
+        doc.text(companyEIN ? `EIN: ${companyEIN}` : 'EIN: ______________', leftCol, y);
 
-        doc.setFont('helvetica', 'bold');
-        doc.text('Origin:', 14, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(inv.origin || 'USA', 50, y);
+        let rY = y - 22;
+        drawLabel('2', 'DATE OF EXPORTATION', rightCol, rY); rY += 4;
+        drawVal(new Date(inv.date || inv.invoiceDate || new Date()).toISOString().split('T')[0], rightCol, rY); rY += 8;
+        drawLabel('3', 'TRANSPORTATION REFERENCE NO.', rightCol, rY); rY += 4;
+        drawVal(inv.bookingNumber || inv.transportRef || '-', rightCol, rY);
 
-        doc.setFontSize(8);
-        doc.setTextColor(100, 100, 100);
+        y += 8; doc.line(leftCol, y, 196, y); y += 4;
+
+        // 4 & 5
+        drawLabel('4', 'POINT (STATE) OF ORIGIN OR FTZ NO.', leftCol, y); y += 4;
+        drawVal(freightOriginState, leftCol, y);
+        drawLabel('5', 'ULTIMATE CONSIGNEE', rightCol, y - 4);
+        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(darkGray);
+        const cLines = doc.splitTextToSize(consigneeName, 82);
+        doc.text(cLines, rightCol, y);
+        let consEndY = y + cLines.length * 4;
+        if (customerAddr) { doc.setFont('helvetica', 'normal'); doc.setFontSize(8); const al = doc.splitTextToSize(customerAddr, 82); doc.text(al, rightCol, consEndY); consEndY += al.length * 3.5; }
+
+        y = Math.max(y + 8, consEndY + 4); doc.line(leftCol, y, 196, y); y += 4;
+
+        // 7 & 8
+        drawLabel('7', 'COUNTRY OF ULTIMATE DESTINATION', leftCol, y); y += 4;
+        drawVal(customerCountry || 'N/A', leftCol, y);
+        drawLabel('8', 'PARTIES TO TRANSACTION', rightCol, y - 4);
+        drawVal('Non-Related', rightCol, y);
+        y += 8; doc.line(leftCol, y, 196, y); y += 4;
+
+        // 11 & 15
+        drawLabel('11', 'MODE OF TRANSPORT', leftCol, y); y += 4;
+        drawVal('VESSEL (Ocean)', leftCol, y);
+        drawLabel('15', 'PORT OF EXPORT', rightCol, y - 4);
+        drawVal(poaValue, rightCol, y);
+        y += 8; doc.line(leftCol, y, 196, y); y += 4;
+
+        // Goods Table (18-27)
+        doc.setFillColor(232, 244, 245); doc.rect(leftCol, y - 2, 182, 7, 'F');
+        doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor('#555555');
+        doc.text('18. D/F', leftCol + 1, y + 2);
+        doc.text('19. SCHEDULE B DESCRIPTION', leftCol + 14, y + 2);
+        doc.text('20. QTY', leftCol + 95, y + 2);
+        doc.text('22. SHIP WT (KG)', leftCol + 113, y + 2);
+        doc.text('23. ECCN', leftCol + 140, y + 2);
+        doc.text('26. VALUE ($)', leftCol + 160, y + 2);
+        y += 8;
+
+        doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(darkGray);
+        if (items.length > 0) {
+            items.forEach((item: any) => {
+                if (y > 260) return;
+                // LIVE product lookup for system description
+                let desc = '';
+                if (item.productId && products.length > 0) {
+                    const prod = products.find((p: any) => p.id === item.productId);
+                    if (prod) desc = prod.name;
+                }
+                if (!desc) desc = item.description || item.productDescription || item.customerDescription || '';
+                const hs = item.hsCode || '';
+                const dh = hs ? `${hs} - ${desc}` : desc;
+                const qty = Number(item.netLbs || item.quantity || 0);
+                const qk = qty * 0.453592;
+                const amt = Number(item.amount || 0);
+                doc.text('D', leftCol + 4, y);
+                const dl = doc.splitTextToSize(dh.substring(0, 70), 78);
+                doc.text(dl, leftCol + 14, y);
+                doc.text(qk.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), leftCol + 95, y);
+                doc.text(qk.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), leftCol + 113, y);
+                doc.text('EAR99', leftCol + 140, y);
+                doc.text(`$${amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, leftCol + 160, y);
+                y += Math.max(dl.length * 4, 5) + 1;
+            });
+        } else { doc.text('No items', leftCol + 14, y); y += 6; }
+
+        y += 2;
+        doc.setFillColor(240, 240, 240); doc.rect(leftCol, y - 3, 182, 7, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+        doc.text('TOTALS:', leftCol + 14, y);
+        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KG`, leftCol + 95, y);
+        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KG`, leftCol + 113, y);
+        doc.text(`$${Number(inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, leftCol + 160, y);
+        y += 10;
+        doc.line(leftCol, y - 3, 196, y - 3);
+
+        // 25 & 9
+        drawLabel('25', 'LICENSE EXCEPTION / AUTHORIZATION', leftCol, y); y += 4;
+        drawVal('NLR (No License Required)', leftCol, y);
+        drawLabel('9', 'ROUTED EXPORT TRANSACTION', rightCol, y - 4);
+        drawVal('No', rightCol, y);
+        y += 10;
+
+        // Shipping Details
+        doc.setFillColor(232, 244, 245); doc.rect(14, y, 182, 7, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(darkGray);
+        doc.text('Shipping Details', 16, y + 5); y += 12;
+
+        doc.setFontSize(9);
+        const lv = 50, rv = 145;
+        doc.setFont('helvetica', 'bold'); doc.text('Carrier:', leftCol, y); doc.setFont('helvetica', 'normal'); doc.text(inv.carrier || '', lv, y);
+        doc.setFont('helvetica', 'bold'); doc.text('Booking #:', rightCol, y); doc.setFont('helvetica', 'normal'); doc.text(inv.bookingNumber || inv.transportRef || '-', rv, y);
+        y += lineHeight + 1;
+        doc.setFont('helvetica', 'bold'); doc.text('Incoterm:', leftCol, y); doc.setFont('helvetica', 'normal'); doc.text(inv.incoterm || 'EX-WORKS USA', lv, y);
+        doc.setFont('helvetica', 'bold'); doc.text('Invoice #:', rightCol, y); doc.setFont('helvetica', 'normal'); doc.text(inv.invoiceNumber || '', rv, y);
+        y += lineHeight + 1;
+        doc.setFont('helvetica', 'bold'); doc.text('Total Amount:', leftCol, y); doc.setFont('helvetica', 'normal'); doc.text(`$${Number(inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, lv, y);
+        doc.setFont('helvetica', 'bold'); doc.text('Currency:', rightCol, y); doc.setFont('helvetica', 'normal'); doc.text(inv.currency || 'USD', rv, y);
+        y += lineHeight + 1;
+        doc.setFont('helvetica', 'bold'); doc.text('Country of Origin:', leftCol, y); doc.setFont('helvetica', 'normal'); doc.text('USA', lv, y);
+
+        doc.setFontSize(8); doc.setTextColor(100, 100, 100);
         doc.text("Generated by XSolution AI", 105, 285, { align: 'center' });
         return String(doc.output('bloburl'));
     };
+
+
+
 
     // ============ DOCUMENT VIEW HANDLER ============
 
@@ -990,12 +1068,10 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
             {/* Header */}
             <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3">
-                    <div className="p-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl">
-                        <Globe className="text-white" size={22} />
-                    </div>
+                    <div className="p-2 bg-gradient-to-r from-orange-500 to-amber-500 rounded-xl text-white"><Globe size={24} /></div>
                     <div>
-                        <h1 className="text-lg font-bold text-slate-800">LOGISTICS AI</h1>
-                        <p className="text-xs text-slate-500">Shipment Tracking • Booking Requests</p>
+                        <h1 className="text-2xl font-bold text-slate-800">Logistics AI</h1>
+                        <p className="text-slate-500 text-sm mt-1">Shipment Tracking • Booking Requests</p>
                     </div>
                 </div>
                 <div className="flex gap-6 text-xs">
@@ -1311,7 +1387,7 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
                                     onChange={e => setSearchPickup(e.target.value)}
                                 >
                                     <option value="">Any</option>
-                                    {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                                    {[...locations].sort((a, b) => a.name.localeCompare(b.name)).map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                                 </select>
                             </div>
                             <div>
@@ -1322,7 +1398,7 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
                                     onChange={e => setSearchDelivery(e.target.value)}
                                 >
                                     <option value="">Any</option>
-                                    {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                                    {[...locations].sort((a, b) => a.name.localeCompare(b.name)).map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                                 </select>
                             </div>
 
@@ -1335,7 +1411,7 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
                                     onChange={e => setSearchPol(e.target.value)}
                                 >
                                     <option value="">Any</option>
-                                    {ports.map(p => <option key={p.id} value={p.code}>{p.name} ({p.code})</option>)}
+                                    {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={p.code}>{p.name} ({p.code})</option>)}
                                 </select>
                             </div>
                             <div>
@@ -1346,7 +1422,7 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
                                     onChange={e => setSearchPod(e.target.value)}
                                 >
                                     <option value="">Any</option>
-                                    {ports.map(p => <option key={p.id} value={p.code}>{p.name} ({p.code})</option>)}
+                                    {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={p.code}>{p.name} ({p.code})</option>)}
                                 </select>
                             </div>
 
@@ -1482,7 +1558,7 @@ const AiLogisticsManager: React.FC<AiLogisticsManagerProps> = ({
                                     </button>
                                     <button
                                         onClick={() => {
-                                            const url = createPLPDF(selectedDocInvoice);
+                                            const url = createPLPDF(selectedDocInvoice as any);
                                             const link = document.createElement('a');
                                             link.href = url;
                                             link.download = `PL_${selectedDocInvoice.plNumber || selectedDocInvoice.invoiceNumber}.pdf`;

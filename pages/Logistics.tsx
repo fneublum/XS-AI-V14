@@ -864,10 +864,10 @@ X-Solution Logistics Team`);
             <div className="mb-6 flex items-start justify-between">
                 <div>
                     <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
-                        <div className="p-2 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl text-white">
+                        <div className="p-2 bg-gradient-to-r from-orange-500 to-amber-500 rounded-xl text-white">
                             <TrendingUp size={24} />
                         </div>
-                        Logistics Control Tower
+                        Logistics Manager
                     </h1>
                     <p className="text-slate-500 text-sm mt-1">Manage freight quotes, requests, and shipment tracking</p>
                 </div>
@@ -1477,7 +1477,7 @@ X-Solution Logistics Team`);
                     )}
 
                     {/* Invoice Follow-Up Table */}
-                    {(followUpTab === 'SHIPPED' || activeWindow === 'INVOICE_FOLLOW_UP') && (
+                    {followUpTab === 'SHIPPED' && (
                         <div>
                             {/* KPI Card - Shipments Arriving This Week */}
                             <div className="p-4 bg-gradient-to-r from-blue-50 to-cyan-50 border-b border-blue-100">
@@ -1629,7 +1629,7 @@ X-Solution Logistics Team`);
                                                     {inv.soNumber ? (
                                                         <button
                                                             onClick={() => {
-                                                                const so = salesOrders.find(s => s.soNumber === inv.soNumber);
+                                                                const so = salesOrders.find(s => (s.soNumber || s.orderNumber) === inv.soNumber);
                                                                 if (so) setViewSalesOrder(so);
                                                             }}
                                                             className="font-mono text-blue-600 text-sm hover:underline cursor-pointer"
@@ -2833,7 +2833,7 @@ X-Solution Logistics Team`);
                                             {inv.soNumber ? (
                                                 <button
                                                     onClick={() => {
-                                                        const so = salesOrders.find(s => s.soNumber === inv.soNumber);
+                                                        const so = salesOrders.find(s => (s.soNumber || s.orderNumber) === inv.soNumber);
                                                         if (so) setViewSalesOrder(so);
                                                     }}
                                                     className="font-mono text-indigo-600 hover:text-indigo-800 hover:underline text-sm font-medium"

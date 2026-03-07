@@ -182,40 +182,50 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, onAdd, onUpdate, onDel
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800">Cargos in Transit</h2>
-                    <p className="text-slate-500 text-sm">Manage container shipments and logistics</p>
+            {/* Header Row */}
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-2 bg-gradient-to-r from-orange-500 to-amber-500 rounded-xl text-white">
+                        <Container size={24} />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Cargos in Transit</h1>
+                        <p className="text-slate-500 text-sm">Manage container shipments and logistics</p>
+                    </div>
                 </div>
-                <div className="flex gap-2 w-full md:w-auto">
-                    <div className="relative flex-1 md:w-64">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                            type="text"
-                            placeholder="Search container or BL..."
-                            className="w-full pl-10 pr-4 py-2 border border-slate-600 bg-slate-900 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
-                        <button
-                            onClick={() => setViewMode('grid')}
-                            className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Grid View"
-                        >
-                            <LayoutGrid size={18} />
-                        </button>
-                        <button
-                            onClick={() => setViewMode('table')}
-                            className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Table View"
-                        >
-                            <List size={18} />
-                        </button>
-                    </div>
-                    <button onClick={handleAddNew} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" title="Add Cargo">
-                        <FilePlus size={20} />
+                <div className="flex items-center gap-2">
+                    <button onClick={handleAddNew} className="flex items-center gap-2 px-5 py-2.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-all shadow-md font-medium">
+                        <FilePlus size={18} /> Add Cargo
+                    </button>
+                </div>
+            </div>
+
+            {/* Search & View Toggle Row */}
+            <div className="flex items-center gap-2 mb-4">
+                <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input
+                        type="text"
+                        placeholder="Search container or BL..."
+                        className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
+                <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
+                    <button
+                        onClick={() => setViewMode('grid')}
+                        className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-orange-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Grid View"
+                    >
+                        <LayoutGrid size={18} />
+                    </button>
+                    <button
+                        onClick={() => setViewMode('table')}
+                        className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-orange-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Table View"
+                    >
+                        <List size={18} />
                     </button>
                 </div>
             </div>
@@ -405,7 +415,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, onAdd, onUpdate, onDel
                                         <label className="block text-xs font-bold text-blue-800 uppercase mb-1">Assign to Company</label>
                                         <select required name="companyId" value={formData.companyId || ''} onChange={handleInputChange} className="w-full border border-slate-600 bg-slate-900 text-white rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
                                             <option value="">Select Company...</option>
-                                            {availableCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                            {[...availableCompanies].sort((a, b) => a.name.localeCompare(b.name)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                         </select>
                                     </div>
                                 )}
@@ -489,7 +499,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, onAdd, onUpdate, onDel
                                         >
                                             <option value="">Select Port...</option>
                                             <option value="_ADD_NEW_" className="font-bold text-blue-600 bg-blue-50">+ Add Port</option>
-                                            {ports.map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
+                                            {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
                                         </select>
                                     </div>
                                     <div>
@@ -508,7 +518,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, onAdd, onUpdate, onDel
                                         >
                                             <option value="">Select Port...</option>
                                             <option value="_ADD_NEW_" className="font-bold text-blue-600 bg-blue-50">+ Add Port</option>
-                                            {ports.map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
+                                            {[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}
                                         </select>
                                     </div>
                                 </div>

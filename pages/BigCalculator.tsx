@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Supplier, SupplierOffer, Port, CostCalculation, SupplierQuote, Company, Carrier, FreightQuote, SavedLocation, SalesOrder } from '../types';
+import { Product, Supplier, SupplierOffer, Port, CostCalculation, SupplierQuote, Company, Carrier, FreightQuote, SavedLocation, SalesOrder, PriceList } from '../types';
 import {
     Calculator, DollarSign, RefreshCw, Save, TrendingUp,
     Ship, Truck, Globe, Percent, Wand2, FilePlus, FolderOpen,
-    Briefcase, Lock, Truck as TruckIcon, ArrowRight, Package, MapPin, Anchor, X, CheckCircle2, Loader2, FileText, Download, Plus, Pencil, Building2, History, Tag, AlertTriangle, LayoutGrid, List, Search, Trash2, Plane, ShoppingBag, Table, ShieldCheck, Landmark, Receipt
+    Briefcase, Lock, Truck as TruckIcon, ArrowRight, Package, MapPin, Anchor, X, CheckCircle2, Loader2, FileText, Download, Plus, Pencil, Building2, History, Tag, AlertTriangle, LayoutGrid, List, Search, Trash2, Plane, ShoppingBag, Table, ShieldCheck, Landmark, Receipt, ChevronDown
 } from 'lucide-react';
 import { QuantityInput, PriceInput, FormattedInput } from '../components/UnitInputs';
 import { getGeminiInsight, lookupLocation } from '../services/geminiService';
@@ -41,6 +41,11 @@ interface BigCalculatorProps {
     loadCalculationId?: string | null;
     onLoadCalculation?: (id: string) => void;
     allowMargin?: boolean;
+    priceLists?: PriceList[];
+    onSavePriceList?: (p: PriceList) => void;
+    onUpdatePriceList?: (p: PriceList) => void;
+    readOnly?: boolean;
+    currentUser?: any;
 }
 
 const TapeRow = ({ label, amount, quantity, totalForPercent, icon: Icon, isTotal = false }: { label: string, amount: number, quantity: number, totalForPercent?: number, icon: any, isTotal?: boolean }) => {
@@ -79,7 +84,9 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
     onSave, onUpdate, onDelete, onAddProduct, onAddPort, onAddSupplier, currentCompanyId, availableCompanies = [],
     carriers = [], onAddCarrier, locations, onAddLocation,
     initialViewMode = 'grid', initialHistoryOnly = false, initialMode = 'IMPORT',
-    onSwitchToCalculator, loadCalculationId, onLoadCalculation, allowMargin = true
+    onSwitchToCalculator, loadCalculationId, onLoadCalculation, allowMargin = true,
+    priceLists = [], onSavePriceList, onUpdatePriceList,
+    readOnly = false, currentUser
 }) => {
 
     const [isHistoryMode, setIsHistoryMode] = useState(initialHistoryOnly);
@@ -193,9 +200,9 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
             loadedMode = 'LOCAL';
             setOriginPort('');
             setDestinationPort('');
-        } else if (calc.origin.startsWith('Export: ')) {
+        } else if ((calc.origin || '').startsWith('Export: ')) {
             loadedMode = 'EXPORT';
-            const cleanOrigin = calc.origin.replace('Export: ', '');
+            const cleanOrigin = (calc.origin || '').replace('Export: ', '');
             const parts = cleanOrigin.split(' -> ');
             setOriginPort(parts[0] || '');
             setDestinationPort(parts[1] || calc.destination);
@@ -203,7 +210,7 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
             setIncoterm('EXW');
         } else {
             loadedMode = 'IMPORT';
-            const parts = calc.origin.split(' -> ');
+            const parts = (calc.origin || '').split(' -> ');
             setOriginPort(parts[0] || calc.origin);
             setDestinationPort(parts[1] || calc.destination);
         }
@@ -289,21 +296,67 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
 
     const currentView = isHistoryMode ? 'HISTORY' : mode;
 
+    // Merge marginPercent from priceLists into savedCalculations when in PRICE_LIST mode
+    const calculationsWithMargin = React.useMemo(() => {
+        if (mode !== 'PRICE_LIST' || !priceLists || priceLists.length === 0) {
+            return savedCalculations;
+        }
+
+        const priceListMap = new Map(priceLists.map(pl => [pl.id, pl.marginPercent || 0]));
+
+        return savedCalculations.map(calc => {
+            const priceListMargin = priceListMap.get(calc.id);
+            if (priceListMargin !== undefined) {
+                return { ...calc, marginPercent: priceListMargin };
+            }
+            return calc;
+        });
+    }, [savedCalculations, priceLists, mode]);
+
+    // Wrap onUpdate to also save/update marginPercent to priceLists
+    const handleCalculationUpdate = React.useCallback(async (calc: CostCalculation) => {
+        // Always update cost_calculations
+        if (onUpdate) {
+            onUpdate(calc);
+        }
+
+        // Additionally save to price_lists when in PRICE_LIST mode using direct upsert
+        if (mode === 'PRICE_LIST') {
+            try {
+                const { getSupabaseClient } = await import('../services/supabase');
+                const client = getSupabaseClient();
+
+                const priceListEntry = {
+                    id: calc.id,
+                    companyId: calc.companyId,
+                    marginPercent: calc.marginPercent
+                };
+
+                await client.from('price_lists').upsert(priceListEntry, { onConflict: 'id' });
+            } catch (error) {
+                console.error('Failed to sync margin to price_lists:', error);
+            }
+        }
+    }, [onUpdate, mode]);
+
     if (mode === 'SHEET' || mode === 'PRICE_LIST') {
         return (
             <div className="flex flex-col h-full">
                 <CalculationSheet
-                    calculations={savedCalculations}
+                    calculations={calculationsWithMargin}
                     products={products}
                     supplierOffers={supplierOffers}
                     freightQuotes={freightQuotes}
+                    ports={ports}
                     onSave={onSave}
-                    onUpdate={onUpdate!}
+                    onUpdate={handleCalculationUpdate}
                     onDelete={onDelete!}
                     currentCompanyId={currentCompanyId}
                     availableCompanies={availableCompanies!}
                     isPriceList={mode === 'PRICE_LIST'}
                     allowMargin={allowMargin}
+                    readOnly={readOnly}
+                    currentUser={currentUser}
                 />
             </div>
         );
@@ -362,7 +415,7 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
     const filteredCalculations = savedCalculations.filter(c =>
         c.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         c.calculationNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.origin.toLowerCase().includes(searchTerm.toLowerCase())
+        (c.origin || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     const getCalculationData = (id: string): CostCalculation => {
@@ -420,6 +473,7 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
     };
 
     const handleNew = () => {
+        setIsHistoryMode(false);
         setProductName('');
         setSupplierName('');
         setQuoteNumber('');
@@ -430,6 +484,18 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
         setOriginPort('');
         setDestinationPort('');
         setIncoterm('FOB');
+        setCostPickup(0);
+        setCostOcean(0);
+        setDeliveryCost(0);
+        setInsuranceCost(0);
+        setDutyPercent(0);
+        setClearanceCost(0);
+        setAllInFreight(0);
+        setUseAllInFreight(false);
+        setFreightUnitCost(0);
+        setCommissionPercent(0);
+        setSalesFreightCost(0);
+        setAiInsight('');
         setActionMessage('New Calculation Started');
         setTimeout(() => setActionMessage(''), 2000);
     };
@@ -705,57 +771,41 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
         <div className="h-[calc(100vh-6rem)] overflow-y-auto custom-scrollbar pb-12 relative">
             <div className="max-w-[1600px] mx-auto space-y-6">
 
-                <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-                    <div className="flex items-center gap-3">
-                        <div className="bg-blue-100 p-2 rounded-lg text-blue-600">
+                <div className="mb-6 flex items-start justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="p-2 bg-gradient-to-r from-violet-500 to-purple-500 rounded-xl text-white">
                             <Calculator size={24} />
                         </div>
                         <div>
-                            <h1 className="text-xl font-bold text-slate-800">Cost Calculation</h1>
-                            <p className="text-xs text-slate-500">Global Logistics & Pricing Engine</p>
+                            <h1 className="text-2xl font-bold text-slate-800">Cost Calculation</h1>
+                            <p className="text-slate-500 text-sm mt-1">Global Logistics & Pricing Engine</p>
                         </div>
                     </div>
 
-                    {/* Mode Buttons - IMPORT / EXPORT / LOCAL */}
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => handleViewChange('IMPORT')}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${mode === 'IMPORT'
-                                ? 'bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/30'
-                                : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200'
-                                }`}
-                        >
-                            <Globe size={16} />
-                            Import
+                    <div className="flex items-center gap-3">
+                        <div className="relative">
+                            <FolderOpen size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-violet-300 pointer-events-none" />
+                            <select
+                                className="appearance-none pl-9 pr-8 py-2.5 bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-all shadow-md font-medium text-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-violet-400 min-w-[140px]"
+                                value={selectedCalcId}
+                                onChange={(e) => handleLoadHistory(e.target.value)}
+                            >
+                                <option value="" className="text-slate-700 bg-white">Load Saved</option>
+                                {eligibleCalculations.map(c => (
+                                    <option key={c.id} value={c.id} className="text-slate-700 bg-white text-xs">
+                                        [{new Date(c.date).toLocaleDateString()}] {c.productName} — ${c.unitLandedCost.toFixed(3)}/lb
+                                    </option>
+                                ))}
+                            </select>
+                            <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-violet-300 pointer-events-none" />
+                        </div>
+                        <button onClick={handleNew} className="flex items-center gap-2 px-5 py-2.5 bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-all shadow-md font-medium">
+                            <FilePlus size={18} />
+                            New
                         </button>
-                        <button
-                            onClick={() => handleViewChange('EXPORT')}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${mode === 'EXPORT'
-                                ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/30'
-                                : 'bg-orange-100 text-orange-600 hover:bg-orange-200'
-                                }`}
-                        >
-                            <Plane size={16} />
-                            Export
-                        </button>
-                        <button
-                            onClick={() => handleViewChange('LOCAL')}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${mode === 'LOCAL'
-                                ? 'bg-gradient-to-r from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/30'
-                                : 'bg-teal-100 text-teal-600 hover:bg-teal-200'
-                                }`}
-                        >
-                            <Truck size={16} />
-                            Local
-                        </button>
-                    </div>
-
-                    <div className="flex gap-2">
-                        <button onClick={handleNew} className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors" title="New Calculation">
-                            <FilePlus size={20} />
-                        </button>
-                        <button onClick={() => handleViewChange('HISTORY')} className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors" title="Open Saved">
-                            <FolderOpen size={20} />
+                        <button onClick={() => handleViewChange('HISTORY')} className="flex items-center gap-2 px-5 py-2.5 bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-all shadow-md font-medium">
+                            <History size={18} />
+                            History
                         </button>
                         {selectedCalcId && onUpdate && (
                             <button onClick={handleUpdate} className="p-2 text-amber-600 hover:bg-amber-50 rounded-md transition-colors" title="Update Current">
@@ -839,29 +889,50 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-sm font-bold text-slate-800 uppercase flex items-center gap-2"><Package size={16} /> Sourcing</h3>
                                     <div className="flex gap-2">
-                                        <button onClick={() => setShowLoadOfferModal(true)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="Load Offer"><Download size={16} /></button>
-                                        <button onClick={() => setShowQuickAddModal(true)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded" title="New Product"><FilePlus size={16} /></button>
-                                        <button onClick={() => { setProductName(''); setSupplierName(''); setBasePrice(0); }} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded" title="Clear"><RefreshCw size={16} /></button>
+                                        <button onClick={() => setShowLoadOfferModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors">
+                                            <Download size={14} /> Load Offer
+                                        </button>
+                                        <button onClick={() => setShowQuickAddModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors">
+                                            <FilePlus size={14} /> New Product
+                                        </button>
+                                        <button onClick={() => { setProductName(''); setSupplierName(''); setBasePrice(0); }} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-500 bg-slate-50 hover:bg-red-50 hover:text-red-500 rounded-lg transition-colors">
+                                            <RefreshCw size={14} /> Clear
+                                        </button>
                                     </div>
                                 </div>
+                                {/* Mode Buttons - IMPORT / EXPORT / LOCAL */}
+                                <div className="flex items-center gap-2 mb-4">
+                                    <button
+                                        onClick={() => handleViewChange('IMPORT')}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${mode === 'IMPORT'
+                                            ? 'bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/30'
+                                            : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200'
+                                            }`}
+                                    >
+                                        <Globe size={16} /> Import
+                                    </button>
+                                    <button
+                                        onClick={() => handleViewChange('EXPORT')}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${mode === 'EXPORT'
+                                            ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/30'
+                                            : 'bg-orange-100 text-orange-600 hover:bg-orange-200'
+                                            }`}
+                                    >
+                                        <Plane size={16} /> Export
+                                    </button>
+                                    <button
+                                        onClick={() => handleViewChange('LOCAL')}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-all ${mode === 'LOCAL'
+                                            ? 'bg-gradient-to-r from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/30'
+                                            : 'bg-teal-100 text-teal-600 hover:bg-teal-200'
+                                            }`}
+                                    >
+                                        <Truck size={16} /> Local
+                                    </button>
+                                </div>
                                 <div className="space-y-4">
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Select Source Cost</label>
-                                        <select
-                                            className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none"
-                                            value={selectedCalcId}
-                                            onChange={(e) => handleLoadHistory(e.target.value)}
-                                        >
-                                            <option value="">-- Select Imported Product --</option>
-                                            {eligibleCalculations.map(c => (
-                                                <option key={c.id} value={c.id}>
-                                                    [{new Date(c.date).toLocaleDateString()}] {c.productName} ({c.quantity.toLocaleString()}) | {c.origin} | Base: ${c.fobPrice.toFixed(3)} → Landed: ${c.unitLandedCost.toFixed(3)}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
                                     <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Product</label><input value={productName} onChange={e => setProductName(e.target.value)} className="w-full border-b border-slate-200 bg-transparent py-1 text-sm font-medium focus:border-blue-500 outline-none" placeholder="Product Name" /></div>
-                                    <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Supplier</label><select value={supplierName} onChange={e => { if (e.target.value === '_ADD_NEW_') setShowQuickAddSupplier(true); else setSupplierName(e.target.value); }} className="w-full border-b border-slate-200 bg-transparent py-1 text-sm font-medium focus:border-blue-500 outline-none appearance-none"><option value="">Select Supplier...</option><option value="_ADD_NEW_">+ Add New Supplier</option>{suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}</select></div>
+                                    <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Supplier</label><select value={supplierName} onChange={e => { if (e.target.value === '_ADD_NEW_') setShowQuickAddSupplier(true); else setSupplierName(e.target.value); }} className="w-full border-b border-slate-200 bg-transparent py-1 text-sm font-medium focus:border-blue-500 outline-none appearance-none"><option value="">Select Supplier...</option><option value="_ADD_NEW_">+ Add New Supplier</option>{[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}</select></div>
                                     <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-2">Purchase Incoterm</label><div className="flex gap-1 flex-wrap">{['EXW', 'FOB', 'CFR', 'CIF', 'DDP'].map(term => (<button key={term} onClick={() => setIncoterm(term as Incoterm)} className={`flex-1 py-1.5 text-xs font-bold rounded border ${incoterm === term ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}`}>{term}</button>))}</div></div>
                                     <div className="grid grid-cols-2 gap-4"><QuantityInput value={quantity} onChange={setQuantity} label="Volume" /><PriceInput value={basePrice} onChange={setBasePrice} label={`Base Price (${currency})`} /></div>
                                 </div>
@@ -877,14 +948,14 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
                                     <div className="space-y-2">
                                         {(mode === 'IMPORT' || mode === 'EXPORT') && (
                                             <>
-                                                <div><label className="block text-[10px] font-bold text-slate-400 uppercase">Origin Port</label><select className="w-full text-sm border-b border-slate-200 py-1 focus:border-blue-500 outline-none bg-transparent" value={originPort} onChange={e => e.target.value === '_ADD_NEW_' ? (setTargetPortField('origin'), setShowQuickAddPort(true)) : setOriginPort(e.target.value)}><option value="">Select...</option><option value="_ADD_NEW_">+ Add Port</option>{ports.map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}</select></div>
-                                                <div><label className="block text-[10px] font-bold text-slate-400 uppercase">Dest Port</label><select className="w-full text-sm border-b border-slate-200 py-1 focus:border-blue-500 outline-none bg-transparent" value={destinationPort} onChange={e => e.target.value === '_ADD_NEW_' ? (setTargetPortField('destination'), setShowQuickAddPort(true)) : setDestinationPort(e.target.value)}><option value="">Select...</option><option value="_ADD_NEW_">+ Add Port</option>{ports.map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}</select></div>
+                                                <div><label className="block text-[10px] font-bold text-slate-400 uppercase">Origin Port</label><select className="w-full text-sm border-b border-slate-200 py-1 focus:border-blue-500 outline-none bg-transparent" value={originPort} onChange={e => e.target.value === '_ADD_NEW_' ? (setTargetPortField('origin'), setShowQuickAddPort(true)) : setOriginPort(e.target.value)}><option value="">Select...</option><option value="_ADD_NEW_">+ Add Port</option>{[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}</select></div>
+                                                <div><label className="block text-[10px] font-bold text-slate-400 uppercase">Dest Port</label><select className="w-full text-sm border-b border-slate-200 py-1 focus:border-blue-500 outline-none bg-transparent" value={destinationPort} onChange={e => e.target.value === '_ADD_NEW_' ? (setTargetPortField('destination'), setShowQuickAddPort(true)) : setDestinationPort(e.target.value)}><option value="">Select...</option><option value="_ADD_NEW_">+ Add Port</option>{[...ports].sort((a, b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={`${p.name} (${p.code})`}>{p.name} ({p.code})</option>)}</select></div>
 
                                                 {/* CONDITIONAL RENDER: Only show delivery location if NOT Exporting CFR/CIF */}
                                                 {(mode === 'IMPORT' || (mode === 'EXPORT' && !['CFR', 'CIF'].includes(saleIncoterm))) && (
                                                     <div className="pt-3 mt-3 border-t border-slate-100">
                                                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Final Delivery Location</label>
-                                                        <div className="mb-2"><select className="w-full text-sm border-b border-slate-200 py-1 focus:border-blue-500 outline-none bg-transparent font-medium text-slate-700" onChange={(e) => { if (e.target.value === '_ADD_NEW_') { setTargetLocationField('delivery'); setShowQuickAddLocation(true); } else { const loc = locations.find(l => l.id === e.target.value); if (loc) { setDeliveryCity(`${loc.address}, ${loc.city}, ${loc.state}`); setDeliveryZip(loc.zip); } } }} defaultValue=""><option value="">Select Saved Location...</option><option value="_ADD_NEW_">+ Add New Location</option>{locations.filter(l => l.companyId === currentCompanyId || l.companyId === 'ALL').map(l => (<option key={l.id} value={l.id}>{l.name} - {l.city}</option>))}</select></div>
+                                                        <div className="mb-2"><select className="w-full text-sm border-b border-slate-200 py-1 focus:border-blue-500 outline-none bg-transparent font-medium text-slate-700" onChange={(e) => { if (e.target.value === '_ADD_NEW_') { setTargetLocationField('delivery'); setShowQuickAddLocation(true); } else { const loc = locations.find(l => l.id === e.target.value); if (loc) { setDeliveryCity(`${loc.address}, ${loc.city}, ${loc.state}`); setDeliveryZip(loc.zip); } } }} defaultValue=""><option value="">Select Saved Location...</option><option value="_ADD_NEW_">+ Add New Location</option>{locations.filter(l => l.companyId === currentCompanyId || l.companyId === 'ALL').sort((a, b) => a.name.localeCompare(b.name)).map(l => (<option key={l.id} value={l.id}>{l.name} - {l.city}</option>))}</select></div>
                                                         <div className="flex gap-4">
                                                             <div className="relative flex-grow"><input className="w-full text-sm border-b border-slate-200 py-1 focus:border-blue-500 outline-none bg-transparent placeholder-slate-400 truncate" placeholder="Address, City, State" value={deliveryCity} onChange={e => setDeliveryCity(e.target.value)} title={deliveryCity} /></div>
                                                             <div className="w-24 shrink-0"><input className="w-full text-sm border-b border-slate-200 py-1 focus:border-blue-500 outline-none bg-transparent placeholder-slate-400" placeholder="Zip Code" value={deliveryZip} onChange={e => setDeliveryZip(e.target.value)} /></div>
@@ -936,23 +1007,10 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
                         {/* RIGHT COLUMN: OUTPUTS (Tape) */}
                         <div className="xl:col-span-1 w-full">
                             <div className="sticky top-4 space-y-4">
-                                {/* Sales Strategy */}
-                                <div className="bg-emerald-50 rounded-xl shadow-sm border border-emerald-200 p-5 mb-4">
-                                    <h3 className="text-xs font-bold text-emerald-800 uppercase mb-3 flex items-center gap-2"><TrendingUp size={14} className="text-emerald-600" /> Sales Pricing Strategy</h3>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div><label className="block text-[10px] font-bold text-emerald-700 uppercase mb-1">Target Margin (%)</label><FormattedInput value={marginPercent} onChange={setMarginPercent} className="w-full border border-emerald-200 bg-white text-emerald-900 rounded p-2 text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="0" /></div>
-                                        <div><label className="block text-[10px] font-bold text-emerald-700 uppercase mb-1">Commission (%)</label><FormattedInput value={commissionPercent} onChange={setCommissionPercent} className="w-full border border-emerald-200 bg-white text-emerald-900 rounded p-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="0" /></div>
-                                        <div className="col-span-2 pt-2 border-t border-emerald-100">
-                                            <div className="flex items-center justify-between mb-1"><label className="block text-[10px] font-bold text-emerald-700 uppercase">Sales Freight ($/LB)</label>{salesDeliveryMethod === 'PICKUP' && mode !== 'EXPORT' && (<span className="text-[10px] text-emerald-600/50 italic">Pickup Mode</span>)}</div>
-                                            <PriceInput value={salesFreightUnitCost} onChange={(val) => { setSalesFreightUnitCost(val); setSalesFreightInputMode('UNIT'); if (val > 0 && salesDeliveryMethod === 'PICKUP' && mode !== 'EXPORT') { setSalesDeliveryMethod('DELIVERY'); } }} label="" />
-                                        </div>
-                                    </div>
-                                </div>
-
                                 {/* Financial Tape */}
                                 <div className="bg-slate-900 rounded-xl border border-slate-800 p-6 text-white font-mono flex flex-col justify-between shadow-2xl">
                                     <div>
-                                        <div className="flex justify-between items-center mb-6 pb-2 border-b border-white/10"><span className="font-bold text-white uppercase tracking-widest text-sm">FINANCIAL TAPE</span><span className="text-sm bg-white/10 px-3 py-1 rounded text-emerald-400 font-bold">PROFIT: ${profitTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></div>
+                                        <div className="flex justify-between items-center mb-6 pb-2 border-b border-white/10"><span className="font-bold text-white uppercase tracking-widest text-sm">FINANCIAL TAPE</span></div>
                                         <div className="flex justify-between items-center text-xs text-white/60 uppercase font-bold border-b border-white/10 pb-2 mb-2 px-3 -mx-3"><span className="flex-1">Item</span><div className="flex items-center justify-end gap-2 text-right"><span className="w-28">Total ($)</span><span className="w-20 hidden sm:block">$/LB</span><span className="w-20 hidden md:block">$/KG</span><span className="w-12">%</span></div></div>
                                         <div className="flex flex-col gap-1">
                                             <div className="space-y-0.5">
@@ -972,11 +1030,6 @@ const BigCalculator: React.FC<BigCalculatorProps> = ({
                                                 {commissionAmount > 0 && <TapeRow label="Commission" amount={commissionAmount} quantity={quantity} totalForPercent={costPlusComm} icon={Briefcase} />}
                                                 {salesFreight > 0 && <TapeRow label="Sales Freight" amount={salesFreight} quantity={quantity} totalForPercent={costPlusComm} icon={Truck} />}
                                                 <TapeRow label="FINAL COST" amount={costPlusComm} quantity={quantity} totalForPercent={costPlusComm} isTotal icon={Anchor} />
-                                            </div>
-                                            <div className="border-t border-white/10 border-dashed my-4 mx-3"></div>
-                                            <div className="space-y-0.5">
-                                                <TapeRow label={`Margin (${marginPercent}%)`} amount={profitTotal} quantity={quantity} totalForPercent={sellingPriceTotal} icon={TrendingUp} />
-                                                <TapeRow label="SALE PRICE" amount={sellingPriceTotal} quantity={quantity} totalForPercent={sellingPriceTotal} isTotal icon={Receipt} />
                                             </div>
                                         </div>
                                     </div>

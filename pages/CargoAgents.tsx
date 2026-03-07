@@ -39,6 +39,7 @@ const CargoAgents: React.FC<CargoAgentsProps> = ({ agents, onAdd, onUpdate, onDe
         code: '',
         contact: '',
         email: '',
+        email2: '',
         phone: '',
         country: '',
         companyId: 'ALL' // Default to global
@@ -138,6 +139,7 @@ const CargoAgents: React.FC<CargoAgentsProps> = ({ agents, onAdd, onUpdate, onDe
                 name: formData.name,
                 contact: formData.contact,
                 email: formData.email,
+                email2: formData.email2,
                 phone: formData.phone,
                 country: formData.country
             };
@@ -205,42 +207,46 @@ const CargoAgents: React.FC<CargoAgentsProps> = ({ agents, onAdd, onUpdate, onDe
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        <Truck className="text-blue-600" /> Cargo Agents
-                    </h2>
-                    <p className="text-slate-500 text-sm">Manage freight forwarders and logistics partners (Shared Database).</p>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-2 bg-gradient-to-r from-cyan-500 to-teal-500 rounded-xl text-white">
+                        <Truck size={24} />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Cargo Agents</h1>
+                        <p className="text-slate-500 text-sm">Manage freight forwarders and logistics partners (Shared Database).</p>
+                    </div>
                 </div>
-                <div className="flex gap-2">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                            type="text"
-                            placeholder="Search agents..."
-                            className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
-                        <button
-                            onClick={() => setViewMode('grid')}
-                            className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Grid View"
-                        >
-                            <LayoutGrid size={18} />
-                        </button>
-                        <button
-                            onClick={() => setViewMode('table')}
-                            className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            title="Table View"
-                        >
-                            <List size={18} />
-                        </button>
-                    </div>
-                    <button onClick={handleAddNew} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" title="Add Agent">
-                        <FilePlus size={20} />
+                <button onClick={handleAddNew} className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-all shadow-md font-medium">
+                    <FilePlus size={18} /> Add Agent
+                </button>
+            </div>
+
+            <div className="flex items-center gap-2 mb-4">
+                <div className="relative flex-1 max-w-sm">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input
+                        type="text"
+                        placeholder="Search agents..."
+                        className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 outline-none"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
+                <div className="bg-white border border-slate-200 rounded-lg p-1 flex gap-1">
+                    <button
+                        onClick={() => setViewMode('grid')}
+                        className={`p-2 rounded transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Grid View"
+                    >
+                        <LayoutGrid size={18} />
+                    </button>
+                    <button
+                        onClick={() => setViewMode('table')}
+                        className={`p-2 rounded transition-all ${viewMode === 'table' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        title="Table View"
+                    >
+                        <List size={18} />
                     </button>
                 </div>
             </div>
@@ -262,6 +268,7 @@ const CargoAgents: React.FC<CargoAgentsProps> = ({ agents, onAdd, onUpdate, onDe
                             <div className="space-y-2 text-sm text-slate-600 mt-3">
                                 {agent.contact && <div className="flex items-center gap-2"><User size={14} className="text-slate-400" /> {agent.contact}</div>}
                                 {agent.email && <div className="flex items-center gap-2"><Mail size={14} className="text-slate-400" /> {agent.email}</div>}
+                                {agent.email2 && <div className="flex items-center gap-2"><Mail size={14} className="text-blue-400" /> {agent.email2}</div>}
                                 {agent.phone && <div className="flex items-center gap-2"><Phone size={14} className="text-slate-400" /> {agent.phone}</div>}
                                 {agent.country && <div className="flex items-center gap-2"><Globe size={14} className="text-slate-400" /> {agent.country}</div>}
                             </div>
@@ -277,6 +284,7 @@ const CargoAgents: React.FC<CargoAgentsProps> = ({ agents, onAdd, onUpdate, onDe
                                 {renderColumnHeader('name', 'Agent Name')}
                                 {renderColumnHeader('contact', 'Contact')}
                                 <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase">Email</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase">Email 2</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase">Phone</th>
                                 {renderColumnHeader('country', 'Country')}
                                 <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase text-right">Actions</th>
@@ -289,6 +297,7 @@ const CargoAgents: React.FC<CargoAgentsProps> = ({ agents, onAdd, onUpdate, onDe
                                     <td className="px-3 py-2 font-medium text-slate-800">{agent.name}</td>
                                     <td className="px-3 py-2 text-sm text-slate-600">{agent.contact || '-'}</td>
                                     <td className="px-3 py-2 text-sm text-slate-600">{agent.email || '-'}</td>
+                                    <td className="px-3 py-2 text-sm text-slate-600">{agent.email2 || '-'}</td>
                                     <td className="px-3 py-2 text-sm text-slate-600">{agent.phone || '-'}</td>
                                     <td className="px-3 py-2 text-sm text-slate-600">{agent.country || '-'}</td>
                                     <td className="px-3 py-2 text-right">
@@ -341,13 +350,19 @@ const CargoAgents: React.FC<CargoAgentsProps> = ({ agents, onAdd, onUpdate, onDe
                                     <input type="email" className="w-full border border-slate-300 rounded-lg p-2 text-sm" name="email" value={formData.email} onChange={handleInputChange} />
                                 </div>
                                 <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email 2</label>
+                                    <input type="email" className="w-full border border-slate-300 rounded-lg p-2 text-sm" name="email2" value={formData.email2} onChange={handleInputChange} placeholder="Secondary email" />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Phone</label>
                                     <input className="w-full border border-slate-300 rounded-lg p-2 text-sm" name="phone" value={formData.phone} onChange={handleInputChange} />
                                 </div>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Country</label>
-                                <input className="w-full border border-slate-300 rounded-lg p-2 text-sm" name="country" value={formData.country} onChange={handleInputChange} placeholder="e.g. USA" />
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Country</label>
+                                    <input className="w-full border border-slate-300 rounded-lg p-2 text-sm" name="country" value={formData.country} onChange={handleInputChange} placeholder="e.g. USA" />
+                                </div>
                             </div>
 
                             <button type="submit" className="w-full bg-blue-600 text-white font-bold py-2 rounded-lg hover:bg-blue-700 mt-2">

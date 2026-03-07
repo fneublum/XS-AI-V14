@@ -503,23 +503,28 @@ const SaleBrazil: React.FC<SaleBrazilProps> = ({ products = [], onAddProduct, cu
 
     return (
         <div className="space-y-6 pb-20 p-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
-                        <TrendingUp className="text-emerald-500" size={24} />
-                        Brazil Landed Cost Calculator
-                    </h1>
-                    <p className="text-slate-500 mt-1">Full "Nacionalização" Cost Analysis (HS Chapters 39, 52, 63)</p>
+            <div className="mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-gradient-to-r from-violet-500 to-purple-500 rounded-xl text-white">
+                        <TrendingUp size={24} />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-800">Brazil Landed Cost Calculator</h1>
+                        <p className="text-slate-500 text-sm mt-1">Full "Nacionalizacao" Cost Analysis (HS Chapters 39, 52, 63)</p>
+                    </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    <button onClick={handleNew} className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors" title="New Simulation">
-                        <FilePlus size={20} />
+                    <button onClick={handleNew} className="flex items-center gap-2 px-5 py-2.5 bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-all shadow-md font-medium" title="New Simulation">
+                        <FilePlus size={18} />
+                        New Simulation
                     </button>
-                    <button onClick={() => setShowLoadModal(true)} className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors" title="Open Saved">
-                        <FolderOpen size={20} />
+                    <button onClick={() => setShowLoadModal(true)} className="flex items-center gap-2 px-5 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all shadow-md font-medium" title="Open Saved">
+                        <FolderOpen size={18} />
+                        Open Saved
                     </button>
-                    <button onClick={() => setShowSaveModal(true)} className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors" title="Save Simulation">
-                        <Save size={20} />
+                    <button onClick={() => setShowSaveModal(true)} className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-all shadow-md font-medium" title="Save Simulation">
+                        <Save size={18} />
+                        Save
                     </button>
                     <div className="w-px h-6 bg-slate-300 mx-2"></div>
                     <div className="bg-blue-50 text-blue-700 px-4 py-2 rounded-lg font-mono text-sm border border-blue-100 font-bold">

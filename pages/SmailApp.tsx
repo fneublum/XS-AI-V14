@@ -1,9 +1,29 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { loginFor, logoutFor, getAccountFor, loginRequest, initializeMsal } from "../services/smailAuth";
 import { getUserProfile, getEmails, sendReply, markEmailAsRead } from "../services/smailGraph";
 import { generateEmailSummary, generateEmailReply } from "../services/geminiService";
-import { Mail, User, LogOut, RefreshCw, Send, Sparkles, Loader2, CheckCircle2, Copy, ArrowDownUp, Inbox, Archive } from 'lucide-react';
+import { Mail, User, LogOut, RefreshCw, Send, Sparkles, Loader2, CheckCircle2, Copy, ArrowDownUp, Inbox, Archive, Upload, X, FileText, Search, Eye } from 'lucide-react';
+import DOMPurify from 'dompurify';
+
+/** Sanitize Outlook HTML for safe, clean display */
+const sanitizeEmailHtml = (html: string): string => {
+    if (!html) return '';
+    // Remove cid: image references (embedded images we can't display)
+    let cleaned = html.replace(/<img[^>]*src=["']cid:[^"']*["'][^>]*>/gi, '');
+    // Strip <style> blocks that break our layout
+    cleaned = cleaned.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+    // Strip <meta>, <link>, <title>, <head> tags
+    cleaned = cleaned.replace(/<(meta|link|title|head)[^>]*>([\s\S]*?<\/\1>)?/gi, '');
+    // Remove Word/Outlook conditional comments
+    cleaned = cleaned.replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '');
+    // Sanitize with DOMPurify
+    return DOMPurify.sanitize(cleaned, {
+        ALLOWED_TAGS: ['p', 'br', 'b', 'strong', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'div', 'span', 'blockquote', 'pre', 'code', 'hr', 'img', 'sub', 'sup'],
+        ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'target', 'rel', 'colspan', 'rowspan', 'width', 'height', 'align', 'valign'],
+        ALLOW_DATA_ATTR: false,
+    });
+};
 
 const SmailApp: React.FC = () => {
     // Local auth state instead of useMsal hook
@@ -20,12 +40,21 @@ const SmailApp: React.FC = () => {
     const [replyDraft, setReplyDraft] = useState('');
     const [isDrafting, setIsDrafting] = useState(false);
     const [replyTone, setReplyTone] = useState<'Professional' | 'Friendly' | 'Brief'>('Professional');
+    const [userPrompt, setUserPrompt] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
+    const [showPreview, setShowPreview] = useState(false);
+    const [previewDraft, setPreviewDraft] = useState('');
 
     const [redirectUri] = useState(`${window.location.origin}`); // Updated for Auth File
     const [copied, setCopied] = useState(false);
     const [sortOrder, setSortOrder] = useState<'DESC' | 'ASC'>('DESC');
     const [activeFolder, setActiveFolder] = useState<'inbox' | 'deleteditems'>('inbox');
+
+    // Context files & AI lookup
+    const [contextFiles, setContextFiles] = useState<{ name: string; content: string }[]>([]);
+    const [aiLookupResult, setAiLookupResult] = useState('');
+    const [isLookingUp, setIsLookingUp] = useState(false);
+    const [isDragging, setIsDragging] = useState(false);
 
     useEffect(() => {
         let isMounted = true;
@@ -97,8 +126,17 @@ const SmailApp: React.FC = () => {
             } else {
                 setEmails([]);
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error("Failed to load data", e);
+            // If the error is auth-related (user cancelled consent, token expired, etc.), reset to login
+            if (e.name === 'InteractionRequiredAuthError' || e.name === 'BrowserAuthError' ||
+                e.errorCode === 'user_cancelled' || e.errorCode === 'invalid_grant' ||
+                e.errorCode === 'interaction_required' || e.errorCode === 'consent_required' ||
+                e.message?.includes('user_cancelled') || e.message?.includes('No account selected')) {
+                await logoutFor('my');
+                setIsAuthenticated(false);
+                setUserProfile(null);
+            }
             setEmails([]);
         } finally {
             setIsLoading(false);
@@ -125,14 +163,105 @@ const SmailApp: React.FC = () => {
         const summary = await generateEmailSummary(email.subject, email.from?.emailAddress?.name || "Unknown", bodyText);
         setAiSummary(summary);
         setIsSummarizing(false);
+        // Reset context on new email
+        setContextFiles([]);
+        setAiLookupResult('');
+    };
+
+    const handleFileDrop = async (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const files = Array.from(e.dataTransfer.files) as File[];
+        await processFiles(files);
+    };
+
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files) return;
+        const files = Array.from(e.target.files) as File[];
+        await processFiles(files);
+        e.target.value = '';
+    };
+
+    const processFiles = async (files: File[]) => {
+        const newFiles: { name: string; content: string }[] = [];
+        for (const file of files) {
+            if (file.size > 2_000_000) continue; // Skip files > 2MB
+            try {
+                if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                    // Use Gemini to extract text from PDF
+                    const base64 = await new Promise<string>((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const res = reader.result as string;
+                            resolve(res.split(',')[1]);
+                        };
+                        reader.readAsDataURL(file);
+                    });
+                    const { GoogleGenAI } = await import('@google/genai');
+                    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash',
+                        contents: [
+                            {
+                                role: 'user',
+                                parts: [
+                                    { inlineData: { mimeType: 'application/pdf', data: base64 } },
+                                    { text: 'Extract ALL text content from this PDF document. Include every detail: names, dates, numbers, addresses, items, quantities, prices, terms, and any other data. Output the raw extracted text only, no commentary.' }
+                                ]
+                            }
+                        ]
+                    });
+                    const extracted = response.text || '';
+                    newFiles.push({ name: file.name, content: extracted.substring(0, 8000) });
+                } else {
+                    // Text-based files
+                    const text = await file.text();
+                    newFiles.push({ name: file.name, content: text.substring(0, 5000) });
+                }
+            } catch (err) {
+                console.error('File processing error:', err);
+            }
+        }
+        setContextFiles(prev => [...prev, ...newFiles]);
+    };
+
+    const removeContextFile = (index: number) => {
+        setContextFiles(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const handleAiLookup = async () => {
+        if (!selectedEmail) return;
+        setIsLookingUp(true);
+        try {
+            const bodyText = selectedEmail.bodyPreview || selectedEmail.body?.content || '';
+            const prompt = `Based on this email from ${selectedEmail.from?.emailAddress?.name || 'Unknown'} about "${selectedEmail.subject}", extract the key business terms, product names, quantities, prices, and any relevant data points that would be useful for drafting a reply. Be concise. Email: ${bodyText.substring(0, 2000)}`;
+            const { GoogleGenAI } = await import('@google/genai');
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const response = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+            setAiLookupResult(response.text || 'No relevant data found.');
+        } catch {
+            setAiLookupResult('Lookup failed. Please try again.');
+        }
+        setIsLookingUp(false);
     };
 
     const handleGenerateReply = async () => {
         if (!selectedEmail) return;
         setIsDrafting(true);
-        const bodyText = selectedEmail.bodyPreview || selectedEmail.body?.content || "";
-        const senderName = selectedEmail.from?.emailAddress?.name || "Sender";
-        const draft = await generateEmailReply(senderName, bodyText, replyTone);
+        const bodyText = selectedEmail.bodyPreview || selectedEmail.body?.content || '';
+        const senderName = selectedEmail.from?.emailAddress?.name || 'Sender';
+        // Build additional context from uploaded files and AI lookup
+        let extraContext = '';
+        if (contextFiles.length > 0) {
+            extraContext += '\n\nReference Documents:\n' + contextFiles.map(f => `--- ${f.name} ---\n${f.content}`).join('\n\n');
+        }
+        if (aiLookupResult) {
+            extraContext += '\n\nAI Lookup Data:\n' + aiLookupResult;
+        }
+        if (userPrompt.trim()) {
+            extraContext += '\n\nUser Instructions:\n' + userPrompt.trim();
+        }
+        const draft = await generateEmailReply(senderName, bodyText + extraContext, replyTone);
         setReplyDraft(draft);
         setIsDrafting(false);
     };
@@ -291,36 +420,81 @@ const SmailApp: React.FC = () => {
                         </div>
 
                         <div className="flex-1 flex overflow-hidden">
-                            {/* Email Body */}
-                            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-white">
-                                <div
-                                    className="prose prose-sm max-w-none text-slate-800"
-                                    dangerouslySetInnerHTML={{ __html: selectedEmail.body?.content || selectedEmail.bodyPreview }}
-                                />
+                            {/* Email Body + Summary */}
+                            <div className="flex-1 flex flex-col overflow-hidden">
+                                <div className="flex-1 overflow-hidden bg-white">
+                                    <iframe
+                                        srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#334155;line-height:1.6;padding:24px;margin:0;word-wrap:break-word;}a{color:#3b82f6;}img{max-width:100%;height:auto;}table{border-collapse:collapse;max-width:100%;}td,th{padding:4px 8px;}</style></head><body>${selectedEmail.body?.content || selectedEmail.bodyPreview || ''}</body></html>`}
+                                        sandbox="allow-same-origin"
+                                        className="w-full h-full border-0"
+                                        title="Email body"
+                                    />
+                                </div>
+                                {/* Summary below email */}
+                                <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-4 max-h-64 overflow-y-auto custom-scrollbar">
+                                    <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Summary</h4>
+                                    {isSummarizing ? (
+                                        <div className="flex items-center gap-2 text-xs text-slate-400 animate-pulse">
+                                            <Loader2 size={12} className="animate-spin" /> Analyzing email...
+                                        </div>
+                                    ) : aiSummary ? (
+                                        <ul className="list-disc list-inside space-y-1">
+                                            {aiSummary.split('\n').filter((l: string) => l.trim()).map((line: string, i: number) => (
+                                                <li key={i} className="text-sm text-slate-700">{line.replace(/^[-•*]\s*/, '')}</li>
+                                            ))}
+                                        </ul>
+                                    ) : (
+                                        <p className="text-xs text-slate-400 italic">No summary available.</p>
+                                    )}
+                                </div>
                             </div>
 
                             {/* AI Sidebar */}
                             <div className="w-[350px] bg-slate-50 border-l border-slate-200 flex flex-col shrink-0 shadow-inner">
-                                <div className="p-4 border-b border-slate-200 flex items-center gap-2 text-indigo-700 bg-indigo-50/50">
-                                    <Sparkles size={16} />
-                                    <span className="font-bold text-xs uppercase tracking-wider">AI Intelligence</span>
-                                </div>
-
                                 <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-6">
-                                    {/* Summary Section */}
+
+                                    {/* Context Documents */}
                                     <div className="space-y-2">
-                                        <h4 className="text-xs font-bold text-slate-500 uppercase">Summary</h4>
-                                        {isSummarizing ? (
-                                            <div className="flex items-center gap-2 text-xs text-slate-400 animate-pulse">
-                                                <Loader2 size={12} className="animate-spin" /> Analyzing email...
+                                        <h4 className="text-xs font-bold text-slate-500 uppercase">Context Documents</h4>
+                                        <div
+                                            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                                            onDragLeave={() => setIsDragging(false)}
+                                            onDrop={handleFileDrop}
+                                            className={`relative border-2 border-dashed rounded-xl p-3 text-center transition-all cursor-pointer ${isDragging ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                                        >
+                                            <input
+                                                type="file"
+                                                multiple
+                                                accept=".txt,.csv,.json,.md,.xml,.html,.pdf"
+                                                onChange={handleFileSelect}
+                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                            />
+                                            <Upload size={16} className={`mx-auto mb-1 ${isDragging ? 'text-indigo-500' : 'text-slate-300'}`} />
+                                            <p className="text-[10px] text-slate-400">Drop files or click to upload</p>
+                                        </div>
+                                        {contextFiles.length > 0 && (
+                                            <div className="space-y-1">
+                                                {contextFiles.map((f, i) => (
+                                                    <div key={i} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                                                        <FileText size={12} className="text-indigo-500 shrink-0" />
+                                                        <span className="text-[11px] text-slate-600 truncate flex-1">{f.name}</span>
+                                                        <button onClick={() => removeContextFile(i)} className="text-slate-300 hover:text-red-500 transition-colors shrink-0"><X size={12} /></button>
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ) : aiSummary ? (
-                                            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-sm text-slate-700 leading-relaxed">
-                                                {aiSummary}
-                                            </div>
-                                        ) : (
-                                            <p className="text-xs text-slate-400 italic">No summary available.</p>
                                         )}
+
+                                    </div>
+
+                                    {/* User Reply Instructions */}
+                                    <div className="space-y-2">
+                                        <h4 className="text-xs font-bold text-slate-500 uppercase">Reply Instructions</h4>
+                                        <textarea
+                                            className="w-full h-20 p-2.5 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none bg-white shadow-sm placeholder:text-slate-400"
+                                            placeholder="Tell the AI how to reply, e.g. 'Confirm the shipment dates and ask about pricing...'"
+                                            value={userPrompt}
+                                            onChange={(e) => setUserPrompt(e.target.value)}
+                                        />
                                     </div>
 
                                     {/* Reply Section */}
@@ -376,12 +550,11 @@ const SmailApp: React.FC = () => {
                                                 <RefreshCw size={14} className={isDrafting ? 'animate-spin' : ''} /> Regenerate
                                             </button>
                                             <button
-                                                onClick={handleSendReply}
-                                                disabled={!replyDraft || isSending}
+                                                onClick={() => { setPreviewDraft(replyDraft); setShowPreview(true); }}
+                                                disabled={!replyDraft}
                                                 className="flex-[2] py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
-                                                {isSending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                                                {isSending ? 'Sending...' : 'Send Reply'}
+                                                <Eye size={14} /> Preview Email
                                             </button>
                                         </div>
                                     </div>
@@ -396,8 +569,100 @@ const SmailApp: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Preview Modal */}
+            {showPreview && selectedEmail && (
+                <PreviewModal
+                    selectedEmail={selectedEmail}
+                    draft={previewDraft}
+                    onDraftChange={setPreviewDraft}
+                    onSend={async () => {
+                        setIsSending(true);
+                        try {
+                            await sendReply('my', selectedEmail.id, previewDraft);
+                            setSuccessMsg('Reply sent successfully!');
+                            setTimeout(() => setSuccessMsg(''), 3000);
+                            setReplyDraft('');
+                            setPreviewDraft('');
+                            setShowPreview(false);
+                        } catch {
+                            setSuccessMsg('Failed to send reply.');
+                            setTimeout(() => setSuccessMsg(''), 3000);
+                        } finally {
+                            setIsSending(false);
+                        }
+                    }}
+                    onClose={() => setShowPreview(false)}
+                    isSending={isSending}
+                />
+            )}
         </div>
     );
 };
+
+// ─── Preview Modal ─────────────────────────────────────────────────
+function PreviewModal({ selectedEmail, draft, onDraftChange, onSend, onClose, isSending }: {
+    selectedEmail: any;
+    draft: string;
+    onDraftChange: (v: string) => void;
+    onSend: () => void;
+    onClose: () => void;
+    isSending: boolean;
+}) {
+    return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
+                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <Send size={18} className="text-indigo-500" /> Preview Reply
+                    </h3>
+                    <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors"><X size={20} /></button>
+                </div>
+
+                {/* Email meta */}
+                <div className="px-6 py-3 bg-slate-50 border-b border-slate-100 shrink-0 space-y-1">
+                    <div className="flex items-center gap-2 text-sm">
+                        <span className="text-slate-400 font-medium w-10">To:</span>
+                        <span className="text-slate-700 font-semibold">{selectedEmail?.from?.emailAddress?.name || selectedEmail?.from?.emailAddress?.address || 'Unknown'}</span>
+                        <span className="text-slate-400 text-xs">&lt;{selectedEmail?.from?.emailAddress?.address}&gt;</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                        <span className="text-slate-400 font-medium w-10">Re:</span>
+                        <span className="text-slate-600">{selectedEmail?.subject || '(No Subject)'}</span>
+                    </div>
+                </div>
+
+                {/* Editable body */}
+                <div className="flex-1 overflow-hidden p-6">
+                    <textarea
+                        className="w-full h-full min-h-[300px] p-4 text-sm text-slate-700 leading-relaxed border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none bg-white"
+                        value={draft}
+                        onChange={(e) => onDraftChange(e.target.value)}
+                        autoFocus
+                    />
+                </div>
+
+                {/* Footer */}
+                <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+                    <button
+                        onClick={onClose}
+                        className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-all"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        onClick={onSend}
+                        disabled={!draft.trim() || isSending}
+                        className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-all shadow-md active:scale-95 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isSending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        {isSending ? 'Sending...' : 'Send Reply'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 export default SmailApp;

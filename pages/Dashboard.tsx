@@ -1,15 +1,27 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Activity, Building2 } from 'lucide-react';
-import { User, Company } from '../types';
+import { User, Company, Role, BillOfLading, Booking, Estimate, ProformaInvoice, PurchaseOrderExtract, Invoice, PackingList, SupplierInvoice, Port } from '../types';
 import AiDashboard from './AiDashboard';
+
+import WhatsAppChatWidget from '../components/WhatsAppChatWidget';
 
 interface DashboardProps {
     currentUser: User;
     currentCompanyId: string;
     availableCompanies: Company[];
-    // All other data props removed — AiDashboard is now a chat-only WhatsApp interface
-    [key: string]: any; // Accept any extra props gracefully (from App.tsx)
+    // Doc OCR callbacks
+    onSaveBL?: (data: BillOfLading) => Promise<void> | void;
+    onSaveBooking?: (data: Booking) => Promise<void> | void;
+    onSaveEstimate?: (data: Estimate) => Promise<void> | void;
+    onSaveProforma?: (data: ProformaInvoice) => Promise<void> | void;
+    onSavePO?: (data: PurchaseOrderExtract) => Promise<void> | void;
+    onSaveInvoice?: (data: Invoice) => Promise<void> | void;
+    onSaveSupplierInvoice?: (data: SupplierInvoice) => Promise<void> | void;
+    onSavePackingList?: (data: PackingList) => Promise<void> | void;
+    ports?: Port[];
+    // Accept any extra props gracefully (from App.tsx)
+    [key: string]: any;
 }
 
 // Basic Error Boundary Component
@@ -22,9 +34,10 @@ interface ErrorBoundaryState {
 }
 
 class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-    state: ErrorBoundaryState = {
-        hasError: false
-    };
+    constructor(props: ErrorBoundaryProps) {
+        super(props);
+        this.state = { hasError: false };
+    }
 
     static getDerivedStateFromError(error: any) {
         return { hasError: true };
@@ -55,6 +68,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     currentUser,
     currentCompanyId,
     availableCompanies = [],
+    onSaveBL, onSaveBooking, onSaveEstimate, onSaveProforma, onSavePO, onSaveInvoice, onSaveSupplierInvoice, onSavePackingList,
+    ports = [],
     ...rest
 }) => {
     const currentCompanyName = (currentCompanyId === 'ALL' || !availableCompanies)
@@ -63,8 +78,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     const userName = currentUser?.name ? currentUser.name.split(' ')[0] : 'User';
 
+    // Bridge: WhatsApp OCR drop zone → AiDashboard file handler
+    const [ocrFile, setOcrFile] = useState<File | null>(null);
+
     return (
-        <div className="h-full overflow-hidden custom-scrollbar animate-in fade-in duration-500 flex flex-col">
+        <div className="h-full overflow-hidden animate-in fade-in duration-500 flex flex-col">
 
             {/* Minimal Header */}
             <div className="shrink-0 flex items-center justify-between mb-2">
@@ -81,11 +99,59 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </div>
             </div>
 
-            {/* Full-screen HALL Chat */}
-            <div className="flex-1 min-h-0 overflow-hidden">
-                <ErrorBoundary>
-                    <AiDashboard currentUser={currentUser} />
-                </ErrorBoundary>
+            {/* Layout: AI widget (left) + WhatsApp (right) */}
+            <div className="flex-1 min-h-0 flex gap-3 overflow-hidden">
+
+                {/* Left: AI Assistant Widget (full height) */}
+                <div className="flex-1 min-w-0 overflow-hidden h-full">
+                    <ErrorBoundary>
+                        <AiDashboard
+                            currentUser={currentUser}
+                            currentCompanyId={currentCompanyId}
+                            customers={rest.customers || []}
+                            suppliers={rest.suppliers || []}
+                            products={rest.products || []}
+                            salesOrders={rest.salesOrdersData || []}
+                            purchaseOrders={rest.purchaseOrders || []}
+                            bookings={rest.bookingsData || []}
+                            billOfLadings={rest.billOfLadingsData || []}
+                            cargoAgents={rest.cargoAgentsData || []}
+                            freightQuotes={rest.freightQuotesData || []}
+                            invoices={rest.invoicesData || []}
+                            estimates={rest.estimatesData || []}
+                            proformas={rest.proformasData || []}
+                            packingLists={rest.packingListsData || []}
+                            supplierInvoices={rest.supplierInvoicesData || []}
+                            commissions={rest.commissionsData || []}
+                            onAddCustomer={rest.onAddCustomer}
+                            onUpdateCustomer={rest.onUpdateCustomer}
+                            onAddSupplier={rest.onAddSupplier}
+                            onUpdateSupplier={rest.onUpdateSupplier}
+                            onAddProduct={rest.onAddProduct}
+                            onAddSalesOrder={rest.onAddSalesOrder}
+                            onAddPurchaseOrder={rest.onAddPurchaseOrder}
+                            onAddBooking={rest.onAddBooking}
+                            onAddCargoAgent={rest.onAddCargoAgent}
+                            onAddFreightQuote={rest.onAddFreightQuote}
+                            onSaveBL={onSaveBL}
+                            onSaveBooking={onSaveBooking}
+                            onSaveEstimate={onSaveEstimate}
+                            onSaveProforma={onSaveProforma}
+                            onSavePO={onSavePO}
+                            onSaveInvoice={onSaveInvoice}
+                            onSaveSupplierInvoice={onSaveSupplierInvoice}
+                            onSavePackingList={onSavePackingList}
+                            ports={ports}
+                            pendingOcrFile={ocrFile}
+                            onOcrFileProcessed={() => setOcrFile(null)}
+                        />
+                    </ErrorBoundary>
+                </div>
+
+                {/* Right: WhatsApp Chat Widget (full height) */}
+                <div className="w-[420px] shrink-0 overflow-hidden">
+                    <WhatsAppChatWidget currentCompanyId={currentCompanyId} onOcrUpload={setOcrFile} />
+                </div>
             </div>
         </div>
     );

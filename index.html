@@ -6,20 +6,53 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>XS CRM</title>
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://qfskvevighylzzmyiwre.supabase.co https://*.supabase.co https://esm.sh https://login.microsoftonline.com https://graph.microsoft.com https://*.googleapis.com https://generativelanguage.googleapis.com https://api.allorigins.win https://corsproxy.io https://shipsgo.com; frame-src 'self' blob: data:; child-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://aistudiocdn.com https://esm.sh; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.supabase.co https://placehold.co;">
+    content="default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://qfskvevighylzzmyiwre.supabase.co wss://qfskvevighylzzmyiwre.supabase.co https://*.supabase.co wss://*.supabase.co https://esm.sh https://login.microsoftonline.com https://graph.microsoft.com https://*.googleapis.com https://generativelanguage.googleapis.com https://api.allorigins.win https://corsproxy.io https://corsproxy.org https://gen-lang-client-0755290444.ue.r.appspot.com https://hall-memory-714806671182.us-central1.run.app https://shipsgo.com https://api.elevenlabs.io; frame-src 'self' blob: data:; child-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://aistudiocdn.com https://esm.sh; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: cid: https: http:;">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['Roboto Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          },
+          animation: {
+            'shake': 'shake 0.5s ease-in-out',
+          },
+          keyframes: {
+            shake: {
+              '0%, 100%': { transform: 'translateX(0)' },
+              '25%': { transform: 'translateX(-4px)' },
+              '75%': { transform: 'translateX(4px)' },
+            }
+          }
+        }
+      }
+    }
+  </script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Roboto+Mono:wght@400;500;700&display=swap');
 
     body {
-      font-family: 'Inter', sans-serif;
-      background-color: #f3f4f6;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background-color: #f8fafc;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
-    /* Custom Scrollbar */
+    /* Clean Scrollbar */
     .custom-scrollbar::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
+      width: 5px;
+      height: 5px;
     }
 
     .custom-scrollbar::-webkit-scrollbar-track {
@@ -27,12 +60,23 @@
     }
 
     .custom-scrollbar::-webkit-scrollbar-thumb {
-      background: #475569;
-      border-radius: 3px;
+      background: #cbd5e1;
+      border-radius: 10px;
     }
 
     .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-      background: #64748b;
+      background: #94a3b8;
+    }
+
+    /* Smooth transitions */
+    * {
+      scroll-behavior: smooth;
+    }
+
+    /* Focus ring */
+    *:focus-visible {
+      outline: 2px solid #6366f1;
+      outline-offset: 2px;
     }
 
     .font-mono-tape {

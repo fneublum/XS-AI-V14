@@ -1,1 +1,0 @@
-../../components/HelpCenter.tsx

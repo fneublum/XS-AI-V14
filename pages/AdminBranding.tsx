@@ -195,11 +195,14 @@ const AdminBranding: React.FC = () => {
         <div className="max-w-5xl mx-auto space-y-12 pb-24">
              {/* Section 1: System-Wide Branding */}
              <div className="space-y-6">
-                <div className="flex flex-col gap-2 border-b border-slate-200 pb-4">
-                    <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        <Image className="text-pink-600" /> System Appearance
-                    </h2>
-                    <p className="text-slate-500 text-sm">Customize the global system logo and login background.</p>
+                <div className="mb-6 flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl text-white"><Image size={24} /></div>
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-800">System Appearance</h1>
+                            <p className="text-slate-500 text-sm mt-1">Customize the global system logo and login background.</p>
+                        </div>
+                    </div>
                 </div>
 
                 {/* LOGO UPLOAD */}
