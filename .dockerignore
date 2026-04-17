@@ -1,0 +1,75 @@
+# Files excluded from the Docker build context. Smaller context = faster
+# `gcloud builds submit`, and prevents accidentally baking secrets into the
+# image (.env*, service-account keys, etc.).
+
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Node / build outputs
+node_modules
+dist
+dist-ssr
+coverage
+.next
+.turbo
+.cache
+
+# Local dev + editor
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+.claude
+.agent/sessions
+
+# Secrets — never ever ship these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+gcp-key*.json
+
+# Finder / iCloud duplicates (see .gitignore). Belt-and-suspenders so even
+# if they sneak past git, they don't reach the image.
+* 2.ts
+* 2.tsx
+* 2.js
+* 2.jsx
+* 2.html
+* 2.json
+* 2.css
+*.backup.ts
+*.backup.tsx
+
+# Docs that don't need to ship with the image.
+docs
+*.md
+!README.md
+
+# Local ad-hoc scripts used during Phase 1 investigation
+check_*.cjs
+test_*.cjs
+update_*.cjs
+revert_*.cjs
+fix_*.cjs
+fix_*.js
+wait_*.cjs
+force_*.cjs
+set_*.cjs
+create_*.cjs
+
+# Supabase CLI local state (edge functions deploy from source, but the
+# cache/branch files don't belong in an nginx container).
+supabase/.branches
+supabase/.temp
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

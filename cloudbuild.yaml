@@ -17,11 +17,12 @@
 substitutions:
   _VITE_SUPABASE_URL: 'https://qfskvevighylzzmyiwre.supabase.co'
   _VITE_SUPABASE_ANON_KEY: ''
-  _IMAGE: 'gcr.io/${PROJECT_ID}/xs-erp-app'
 
 options:
   logging: CLOUD_LOGGING_ONLY
 
+# Image path uses $PROJECT_ID (Cloud Build built-in), not a nested
+# substitution — Cloud Build does NOT double-expand substitution defaults.
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
@@ -31,11 +32,11 @@ steps:
       - '--build-arg'
       - 'VITE_SUPABASE_ANON_KEY=${_VITE_SUPABASE_ANON_KEY}'
       - '--tag'
-      - '${_IMAGE}:${BUILD_ID}'
+      - 'gcr.io/$PROJECT_ID/xs-erp-app:$BUILD_ID'
       - '--tag'
-      - '${_IMAGE}:latest'
+      - 'gcr.io/$PROJECT_ID/xs-erp-app:latest'
       - '.'
 
 images:
-  - '${_IMAGE}:${BUILD_ID}'
-  - '${_IMAGE}:latest'
+  - 'gcr.io/$PROJECT_ID/xs-erp-app:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/xs-erp-app:latest'
