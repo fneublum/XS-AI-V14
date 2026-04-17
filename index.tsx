@@ -1,7 +1,14 @@
 
+import React, { Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { initializeMsal } from './services/smailAuth';
+
+// Phase 3A — opt-in v2 shell. `?v2=1` in the URL mounts v2/AppV2 instead
+// of the legacy App. v2 bundle only loads when the flag is set.
+const AppV2 = lazy(() => import('./v2/AppV2'));
+const useV2 = typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).get('v2') === '1';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -42,6 +49,8 @@ if (isPopupCallback) {
     // Normal App Render
     const root = ReactDOM.createRoot(rootElement);
     root.render(
-      <App />
+      useV2
+        ? <Suspense fallback={null}><AppV2 /></Suspense>
+        : <App />
     );
 }

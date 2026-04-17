@@ -1157,6 +1157,14 @@ export interface AgentAction {
         plNumber?: string;
         // Status updates
         status?: string;
+        // Logistics / commercial terms
+        incoterm?: string;
+        portOfLoading?: string;
+        portOfDischarge?: string;
+        poa?: string;
+        deliveryMethod?: string;
+        paymentTerms?: string;
+        deliveryDate?: string;
     };
     missingFields: string[];
     confirmed?: boolean;
