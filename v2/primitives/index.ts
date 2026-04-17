@@ -13,4 +13,5 @@ export { Kbd } from './Kbd';
 export { StatCard, StatGrid } from './StatCard';
 export { Skeleton } from './Skeleton';
 export { EmptyState } from './EmptyState';
+export { Drawer } from './Drawer';
 export { cn } from './utils';

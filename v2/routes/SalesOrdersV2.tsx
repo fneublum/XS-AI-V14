@@ -6,8 +6,8 @@ import {
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { useSalesOrders, SalesOrder } from '../queries/useSalesOrders';
-import { useToast } from '../primitives/Toast';
 import { cn } from '../primitives/utils';
+import { useEditor } from '../providers/EditorProvider';
 
 const fmtCurrency = (n: number, currency: string) => {
   try {
@@ -87,7 +87,7 @@ const FilterPill: React.FC<{
 const SalesOrdersV2: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [search, setSearch] = useState('');
-  const toast = useToast();
+  const { openSalesOrder } = useEditor();
 
   // Fetch with no status filter so the pill counts reflect the full list.
   const all = useSalesOrders({ search });
@@ -215,11 +215,7 @@ const SalesOrdersV2: React.FC = () => {
             columns={columns}
             rows={rows}
             getRowId={r => r.id}
-            onRowClick={r => toast.push({
-              kind: 'info',
-              title: r.orderNumber,
-              description: `${r.customerName} · ${fmtCurrency(r.totalAmount, r.currency)}`,
-            })}
+            onRowClick={r => openSalesOrder(r)}
           />
         )}
       </Card>
