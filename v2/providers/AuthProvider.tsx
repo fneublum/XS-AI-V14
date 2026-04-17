@@ -29,11 +29,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Best-effort read of the v1 session. Replaced in Phase 3B with
-    // supabase.auth.getSession() once Phase 1e auth migration lands.
+    // Best-effort read of the v1 session (key: xs_current_user, see
+    // App.tsx:247). Replaced in Phase 3B with supabase.auth.getSession()
+    // once Phase 1e auth migration lands.
     try {
-      const raw = sessionStorage.getItem('xs_user');
-      if (raw) setUser(JSON.parse(raw));
+      const raw = sessionStorage.getItem('xs_current_user');
+      if (raw) {
+        const v1User = JSON.parse(raw);
+        setUser({
+          id: v1User.id,
+          name: v1User.name,
+          email: v1User.email,
+          role: v1User.role,
+          allowedCompanies: v1User.allowed_company_ids ?? v1User.allowedCompanyIds,
+        });
+      }
     } catch { /* noop */ }
     setLoading(false);
   }, []);
