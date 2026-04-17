@@ -35,16 +35,20 @@ const alignClass: Record<NonNullable<DataTableColumn<unknown>['align']>, string>
 export function DataTable<T>({
   columns, rows, getRowId, onRowClick, emptyMessage = 'No rows',
 }: DataTableProps<T>) {
+  // Density: tightened 2026-04-17 — tables are the main canvas across
+  // every CRUD page, so fitting more rows without horizontal scroll is
+  // a bigger win than extra whitespace. Leading is explicit so the cell
+  // height is driven by the text (not Tailwind's default 1.5x line-box).
   return (
     <div className="w-full overflow-x-auto">
-      <table className="w-full text-[12.5px]">
+      <table className="w-full text-[11.5px] leading-[16px]">
         <thead>
           <tr className="border-b border-[#1f1f1f]">
             {columns.map(col => (
               <th
                 key={col.id}
                 className={cn(
-                  'px-4 py-2 text-[11px] font-normal text-slate-500 uppercase tracking-wider',
+                  'px-3 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider',
                   alignClass[col.align ?? 'left'],
                 )}
                 style={col.width ? { width: col.width } : undefined}
@@ -59,7 +63,7 @@ export function DataTable<T>({
             <tr>
               <td
                 colSpan={columns.length}
-                className="px-4 py-8 text-center text-[12px] text-slate-500"
+                className="px-3 py-6 text-center text-[12px] text-slate-500"
               >
                 {emptyMessage}
               </td>
@@ -80,7 +84,7 @@ export function DataTable<T>({
                   <td
                     key={col.id}
                     className={cn(
-                      'px-4 py-2.5 text-slate-200',
+                      'px-3 py-1.5 text-slate-200 align-middle',
                       alignClass[col.align ?? 'left'],
                       col.mono && 'font-mono tabular-nums',
                     )}
