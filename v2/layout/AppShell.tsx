@@ -13,6 +13,7 @@ interface AppShellProps {
   onNavigate: (id: string) => void;
   workspace?: { name: string; subtitle?: string };
   user?: { name: string; role?: string };
+  sidebarFooter?: React.ReactNode;
   breadcrumbs: BreadcrumbSegment[];
   onSearch?: () => void;
   primaryAction?: { label: string; onClick: () => void };
@@ -20,7 +21,7 @@ interface AppShellProps {
 }
 
 export const AppShell: React.FC<AppShellProps> = ({
-  sections, activeId, onNavigate, workspace, user,
+  sections, activeId, onNavigate, workspace, user, sidebarFooter,
   breadcrumbs, onSearch, primaryAction, children,
 }) => (
   <div className="min-h-screen bg-[#0a0a0a] text-slate-200 flex font-sans antialiased [color-scheme:dark]">
@@ -30,6 +31,7 @@ export const AppShell: React.FC<AppShellProps> = ({
       onSelect={onNavigate}
       workspace={workspace}
       user={user}
+      footer={sidebarFooter}
     />
     <div className="flex-1 flex flex-col min-w-0">
       <TopBar

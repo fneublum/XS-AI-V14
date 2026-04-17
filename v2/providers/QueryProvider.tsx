@@ -1,21 +1,36 @@
-// Phase 3A — TanStack Query provider shell.
+// Phase 3B — TanStack Query provider.
 //
-// TanStack Query isn't in package.json yet — this file contains the
-// intended shape. When `@tanstack/react-query` is installed, swap the
-// stub for the real provider. Until then, the provider is an identity
-// wrapper so consumer code (`v2/queries/*`) typechecks without error.
+// Hosts a single QueryClient for every v2 route. Configured for our
+// typical Supabase workload: fresh for 30s, retry on network errors
+// but not on 401/403 (user scope issues shouldn't hammer the DB), and
+// keep hydrated data through tab blurs.
 
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-interface QueryContextValue {
-  enabled: boolean;
-}
-
-const QueryContext = createContext<QueryContextValue>({ enabled: false });
-
-export const useQueryClient = (): QueryContextValue => useContext(QueryContext);
+const shouldRetry = (failureCount: number, error: unknown): boolean => {
+  if (failureCount >= 3) return false;
+  const status = (error as { status?: number })?.status;
+  if (status === 401 || status === 403 || status === 404) return false;
+  return true;
+};
 
 export const QueryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const value = useMemo(() => ({ enabled: false }), []);
-  return <QueryContext.Provider value={value}>{children}</QueryContext.Provider>;
+  const [client] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        gcTime: 5 * 60_000,
+        refetchOnWindowFocus: false,
+        retry: shouldRetry,
+      },
+      mutations: {
+        retry: false,
+      },
+    },
+  }));
+
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 };
+
+export { useQueryClient } from '@tanstack/react-query';

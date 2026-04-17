@@ -1,14 +1,10 @@
-// Phase 3B — Minimal Supabase query hook.
+// Phase 3B — thin wrapper around TanStack Query's useQuery.
 //
-// Stands in for TanStack Query until we install the real dep. Handles:
-//   - in-flight cancellation when the key changes
-//   - loading / error / data states
-//   - one-line retry via refetch
-//
-// API deliberately matches TanStack Query's `useQuery` shape so the
-// swap-over in a later commit is a narrow find-and-replace.
+// Keeps the QueryState shape the v2 routes expect so they don't have
+// to change when the underlying engine swaps in. `refetch` returns
+// void to match the pre-TanStack signature.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 
 export interface QueryState<T> {
   data: T | undefined;
@@ -22,45 +18,15 @@ export function useSupabaseQuery<T>(
   key: readonly unknown[],
   fetcher: (signal: AbortSignal) => Promise<T>,
 ): QueryState<T> {
-  const [data, setData] = useState<T | undefined>();
-  const [error, setError] = useState<Error | null>(null);
-  const [isFetching, setIsFetching] = useState(true);
-  const fetcherRef = useRef(fetcher);
-  fetcherRef.current = fetcher;
-  const [attempt, setAttempt] = useState(0);
-
-  const refetch = useCallback(() => setAttempt(n => n + 1), []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let cancelled = false;
-    setIsFetching(true);
-    setError(null);
-    fetcherRef.current(controller.signal)
-      .then(result => {
-        if (cancelled) return;
-        setData(result);
-      })
-      .catch(err => {
-        if (cancelled || controller.signal.aborted) return;
-        setError(err instanceof Error ? err : new Error(String(err)));
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setIsFetching(false);
-      });
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...key, attempt]);
-
+  const q = useQuery<T, Error>({
+    queryKey: key,
+    queryFn: ({ signal }) => fetcher(signal),
+  });
   return {
-    data,
-    isLoading: data === undefined && isFetching,
-    isFetching,
-    error,
-    refetch,
+    data: q.data,
+    isLoading: q.isLoading,
+    isFetching: q.isFetching,
+    error: (q.error as Error | null) ?? null,
+    refetch: () => { void q.refetch(); },
   };
 }

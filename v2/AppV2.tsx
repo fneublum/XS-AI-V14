@@ -7,12 +7,13 @@ import { CompanyProvider } from './providers/CompanyProvider';
 import { QueryProvider } from './providers/QueryProvider';
 import { ToastProvider, useToast } from './primitives/Toast';
 import { AppShell } from './layout/AppShell';
+import { CompanySwitcher } from './layout/CompanySwitcher';
+import { CommandPalette, PaletteCommand } from './layout/CommandPalette';
 
-const DashboardV2 = lazy(() => import('./routes/DashboardV2'));
-const CustomersV2 = lazy(() => import('./routes/CustomersV2'));
+const DashboardV2    = lazy(() => import('./routes/DashboardV2'));
+const CustomersV2    = lazy(() => import('./routes/CustomersV2'));
+const SalesOrdersV2  = lazy(() => import('./routes/SalesOrdersV2'));
 
-// Each section item either has `route: true` (navigable) or defaults to
-// disabled placeholder until the corresponding Phase 3B port lands.
 const sections = [
   {
     id: 'workspace',
@@ -20,8 +21,8 @@ const sections = [
     items: [
       { id: 'dashboard',       label: 'Dashboard',       hint: 'D', route: true },
       { id: 'customers',       label: 'Customers',       hint: 'C', route: true },
+      { id: 'sales-orders',    label: 'Sales Orders',    hint: 'O', route: true },
       { id: 'suppliers',       label: 'Suppliers',       count: 42,  disabled: true },
-      { id: 'sales-orders',    label: 'Sales Orders',    count: 7,   disabled: true },
       { id: 'purchase-orders', label: 'Purchase Orders', disabled: true },
       { id: 'logistics',       label: 'Logistics',       disabled: true },
     ],
@@ -38,13 +39,15 @@ const sections = [
 ];
 
 const routeTitles: Record<string, string> = {
-  dashboard: 'Dashboard',
-  customers: 'Customers',
+  'dashboard':    'Dashboard',
+  'customers':    'Customers',
+  'sales-orders': 'Sales Orders',
 };
 
 const routeHotkeys: Record<string, string> = {
   d: 'dashboard',
   c: 'customers',
+  o: 'sales-orders',
 };
 
 const Fallback: React.FC = () => (
@@ -60,16 +63,16 @@ const AppV2Inner: React.FC = () => {
       : null;
     return stored && routeTitles[stored] ? stored : 'dashboard';
   });
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const toast = useToast();
 
   const navigate = useCallback((id: string) => {
-    if (!routeTitles[id]) return; // ignore disabled/unknown items
+    if (!routeTitles[id]) return;
     setActiveId(id);
     try { sessionStorage.setItem('xs_v2_active_route', id); } catch { /* noop */ }
   }, []);
 
-  // Keyboard shortcut: plain letter with no modifier (Linear-style).
-  // Ignored while typing in inputs.
+  // Single-letter hotkeys (outside inputs, no modifiers).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -94,33 +97,76 @@ const AppV2Inner: React.FC = () => {
     [activeId],
   );
 
-  return (
-    <AppShell
-      sections={sections}
-      activeId={activeId}
-      onNavigate={navigate}
-      workspace={{ name: 'XS-ERP', subtitle: 'v12' }}
-      user={{ name: 'Felipe N.', role: 'Admin' }}
-      breadcrumbs={breadcrumbs}
-      onSearch={() => toast.push({
+  const commands: PaletteCommand[] = useMemo(() => [
+    // Navigation
+    ...Object.entries(routeTitles).map<PaletteCommand>(([id, label]) => {
+      const letter = Object.keys(routeHotkeys).find(k => routeHotkeys[k] === id);
+      return {
+        id: `nav.${id}`,
+        label: `Go to ${label}`,
+        hint: letter?.toUpperCase(),
+        section: 'Navigate',
+        keywords: `${label} ${id} page route`,
+        onSelect: () => navigate(id),
+      };
+    }),
+    // Actions
+    {
+      id: 'action.new-order',
+      label: 'New sales order',
+      section: 'Actions',
+      keywords: 'create add quote SO',
+      onSelect: () => toast.push({
+        kind: 'success',
+        title: 'New order',
+        description: 'Wiring lands with the Sales Orders editor port.',
+      }),
+    },
+    {
+      id: 'action.new-customer',
+      label: 'New customer',
+      section: 'Actions',
+      keywords: 'create add account',
+      onSelect: () => toast.push({
         kind: 'info',
-        title: 'Command palette',
-        description: 'Coming soon — for now press D or C to jump.',
-      })}
-      primaryAction={{
-        label: '+ New order',
-        onClick: () => toast.push({
-          kind: 'success',
-          title: 'New order',
-          description: 'Wiring lands with the Sales Orders port.',
-        }),
-      }}
-    >
-      <Suspense fallback={<Fallback />}>
-        {activeId === 'dashboard' && <DashboardV2 />}
-        {activeId === 'customers' && <CustomersV2 />}
-      </Suspense>
-    </AppShell>
+        title: 'New customer',
+        description: 'Form editor lands next.',
+      }),
+    },
+  ], [navigate, toast]);
+
+  return (
+    <>
+      <AppShell
+        sections={sections}
+        activeId={activeId}
+        onNavigate={navigate}
+        workspace={{ name: 'XS-ERP', subtitle: 'v12' }}
+        sidebarFooter={<CompanySwitcher />}
+        breadcrumbs={breadcrumbs}
+        onSearch={() => setPaletteOpen(true)}
+        primaryAction={{
+          label: '+ New order',
+          onClick: () => toast.push({
+            kind: 'success',
+            title: 'New order',
+            description: 'Wiring lands with the Sales Orders editor port.',
+          }),
+        }}
+      >
+        <Suspense fallback={<Fallback />}>
+          {activeId === 'dashboard'    && <DashboardV2 />}
+          {activeId === 'customers'    && <CustomersV2 />}
+          {activeId === 'sales-orders' && <SalesOrdersV2 />}
+        </Suspense>
+      </AppShell>
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        commands={commands}
+      />
+    </>
   );
 };
 

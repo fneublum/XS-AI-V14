@@ -1,0 +1,230 @@
+// Phase 3B — v2 Sales Orders list.
+
+import React, { useMemo, useState } from 'react';
+import {
+  Card, CardHeader, CardTitle, Input, Badge, Skeleton, EmptyState,
+} from '../primitives';
+import { DataTable, DataTableColumn } from '../primitives/DataTable';
+import { useSalesOrders, SalesOrder } from '../queries/useSalesOrders';
+import { useToast } from '../primitives/Toast';
+import { cn } from '../primitives/utils';
+
+const fmtCurrency = (n: number, currency: string) => {
+  try {
+    return n.toLocaleString('en-US', {
+      style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0,
+    });
+  } catch {
+    return `${currency} ${n.toLocaleString('en-US')}`;
+  }
+};
+
+const fmtDate = (iso: string): string => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
+};
+
+type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
+const statusTone = (status: string): BadgeTone => {
+  const s = status.toUpperCase();
+  if (s.includes('FULFIL') || s.includes('SHIP') || s.includes('COMPLETE')) return 'success';
+  if (s.includes('APPROV'))                                                  return 'info';
+  if (s.includes('PEND') || s.includes('HOLD'))                              return 'warning';
+  if (s.includes('CANCEL') || s.includes('REJECT'))                          return 'danger';
+  return 'neutral';
+};
+
+const columns: DataTableColumn<SalesOrder>[] = [
+  { id: 'orderNumber', header: 'Order', mono: true, cell: r => r.orderNumber },
+  { id: 'customer',    header: 'Customer',           cell: r => r.customerName },
+  { id: 'status',      header: 'Status',             cell: r => (
+      <Badge variant={statusTone(r.status)} dot>{r.status}</Badge>
+    ) },
+  { id: 'incoterm',    header: 'Incoterm', cell: r => (
+      <span className="text-slate-400 font-mono text-[11.5px]">{r.incoterm ?? '—'}</span>
+    ) },
+  { id: 'terms',       header: 'Terms',    cell: r => (
+      <span className="text-slate-400">{r.paymentTerms ?? '—'}</span>
+    ) },
+  { id: 'amount',      header: 'Amount', align: 'right', mono: true,
+      cell: r => fmtCurrency(r.totalAmount, r.currency) },
+  { id: 'date',        header: 'Ordered', align: 'right', cell: r => (
+      <span className="text-slate-500 font-mono tabular-nums text-[11px]">
+        {fmtDate(r.orderDate || r.createdAt)}
+      </span>
+    ) },
+];
+
+const FilterPill: React.FC<{
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  count?: number;
+}> = ({ active, onClick, children, count }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-pressed={active}
+    className={cn(
+      'px-2 py-1 rounded text-[12px] flex items-center gap-1.5 transition-colors',
+      active
+        ? 'bg-[#161616] text-slate-100'
+        : 'border border-[#1f1f1f] text-slate-500 hover:text-slate-200',
+    )}
+  >
+    {children}
+    {count !== undefined && (
+      <span className={cn(
+        'font-mono tabular-nums text-[10px]',
+        active ? 'text-slate-500' : 'text-slate-600',
+      )}>{count}</span>
+    )}
+  </button>
+);
+
+const SalesOrdersV2: React.FC = () => {
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [search, setSearch] = useState('');
+  const toast = useToast();
+
+  // Fetch with no status filter so the pill counts reflect the full list.
+  const all = useSalesOrders({ search });
+  const rows = useMemo(() => {
+    if (!all.data) return [];
+    if (statusFilter === 'ALL') return all.data;
+    return all.data.filter(r => r.status === statusFilter);
+  }, [all.data, statusFilter]);
+
+  const counts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of all.data ?? []) {
+      map.set(r.status, (map.get(r.status) ?? 0) + 1);
+    }
+    return map;
+  }, [all.data]);
+
+  const statuses = useMemo(
+    () => Array.from(counts.keys()).sort(),
+    [counts],
+  );
+
+  const totalAmount = rows.reduce((s, r) => s + r.totalAmount, 0);
+
+  return (
+    <div className="max-w-6xl">
+      <div className="flex items-baseline justify-between mb-8">
+        <div>
+          <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
+            Sales Orders
+          </h1>
+          <p className="text-[13px] text-slate-500 mt-0.5">
+            {all.data
+              ? `${rows.length} shown${statusFilter !== 'ALL' ? ` · ${statusFilter}` : ''}${search ? ` · "${search}"` : ''}`
+              : 'Loading…'}
+            {all.data && rows.length > 0 && (
+              <> · <span className="font-mono tabular-nums">${Math.round(totalAmount).toLocaleString('en-US')}</span></>
+            )}
+          </p>
+        </div>
+      </div>
+
+      {/* Filters row */}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <FilterPill
+          active={statusFilter === 'ALL'}
+          onClick={() => setStatusFilter('ALL')}
+          count={all.data?.length}
+        >
+          All
+        </FilterPill>
+        {statuses.map(status => (
+          <FilterPill
+            key={status}
+            active={statusFilter === status}
+            onClick={() => setStatusFilter(status)}
+            count={counts.get(status)}
+          >
+            {status}
+          </FilterPill>
+        ))}
+
+        <div className="ml-auto w-64">
+          <Input
+            type="search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Order # or customer"
+            className="h-7 text-[12px] bg-[#111111] border-[#1f1f1f] text-slate-200 placeholder:text-slate-500"
+          />
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            {statusFilter === 'ALL' ? 'All sales orders' : statusFilter}
+          </CardTitle>
+        </CardHeader>
+
+        {all.isLoading ? (
+          <div className="p-4 space-y-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4">
+                <Skeleton width={90} height={14} />
+                <Skeleton width={220} height={14} />
+                <Skeleton width={80} height={14} />
+                <Skeleton width={80} height={14} className="ml-auto" />
+              </div>
+            ))}
+          </div>
+        ) : all.error ? (
+          <EmptyState
+            tone="danger"
+            title="Couldn't load sales orders"
+            description={all.error.message}
+            action={{ label: 'Retry', onClick: all.refetch }}
+          />
+        ) : rows.length === 0 ? (
+          <EmptyState
+            title={
+              search
+                ? 'No matches'
+                : statusFilter === 'ALL'
+                  ? 'No sales orders yet'
+                  : `No ${statusFilter.toLowerCase()} orders`
+            }
+            description={
+              search
+                ? `Nothing matched "${search}".`
+                : statusFilter !== 'ALL'
+                  ? 'Try clearing the status filter.'
+                  : 'New orders show up here as they are created.'
+            }
+            action={
+              search
+                ? { label: 'Clear search', onClick: () => setSearch('') }
+                : statusFilter !== 'ALL'
+                  ? { label: 'Show all', onClick: () => setStatusFilter('ALL') }
+                  : undefined
+            }
+          />
+        ) : (
+          <DataTable
+            columns={columns}
+            rows={rows}
+            getRowId={r => r.id}
+            onRowClick={r => toast.push({
+              kind: 'info',
+              title: r.orderNumber,
+              description: `${r.customerName} · ${fmtCurrency(r.totalAmount, r.currency)}`,
+            })}
+          />
+        )}
+      </Card>
+    </div>
+  );
+};
+
+export default SalesOrdersV2;

@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>XS CRM</title>
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://qfskvevighylzzmyiwre.supabase.co wss://qfskvevighylzzmyiwre.supabase.co https://*.supabase.co wss://*.supabase.co https://esm.sh https://login.microsoftonline.com https://graph.microsoft.com https://*.googleapis.com https://generativelanguage.googleapis.com https://api.allorigins.win https://corsproxy.io https://corsproxy.org https://gen-lang-client-0755290444.ue.r.appspot.com https://hall-memory-714806671182.us-central1.run.app https://shipsgo.com https://api.elevenlabs.io; frame-src 'self' blob: data:; child-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://aistudiocdn.com https://esm.sh; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: cid: https: http:;">
+    content="default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://qfskvevighylzzmyiwre.supabase.co wss://qfskvevighylzzmyiwre.supabase.co https://*.supabase.co wss://*.supabase.co https://esm.sh https://login.microsoftonline.com https://graph.microsoft.com https://*.googleapis.com https://generativelanguage.googleapis.com https://api.allorigins.win https://corsproxy.io https://corsproxy.org https://gen-lang-client-0755290444.ue.r.appspot.com https://hall-memory-714806671182.us-central1.run.app https://shipsgo.com https://api.elevenlabs.io; frame-src 'self' blob: data: https://login.microsoftonline.com; child-src 'self' blob: data: https://login.microsoftonline.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://aistudiocdn.com https://esm.sh; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: cid: https: http:;">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -83,25 +83,11 @@
       font-family: 'Roboto Mono', monospace;
     }
   </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "recharts": "https://aistudiocdn.com/recharts@^3.5.0",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3",
-    "jszip": "https://esm.sh/jszip@3.10.1",
-    "@azure/msal-browser": "https://esm.sh/@azure/msal-browser@3.10.0",
-    "@azure/msal-react": "https://esm.sh/@azure/msal-react@2.0.12?external=react,react-dom,@azure/msal-browser",
-    "jspdf": "https://esm.sh/jspdf@2.5.1",
-    "jspdf-autotable": "https://esm.sh/jspdf-autotable@3.8.1"
-  }
-}
-</script>
+  <!-- Importmap removed 2026-04-17: all listed packages are in package.json +
+       node_modules. Vite pre-bundles them for dev and Rollup chunks them for
+       prod builds. Keeping CDN-sourced copies in parallel caused duplicate
+       React instances (Radix/cmdk use node_modules React, CDN-bundled libs
+       ship their own), breaking hooks across the whole app. -->
 
 </head>
 

@@ -1,7 +1,7 @@
 {
   "name": "xsolution-ai-business-platform",
   "private": true,
-  "version": "9.29",
+  "version": "11.29",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,12 @@
     "@azure/msal-browser": "3.10.0",
     "@azure/msal-react": "2.0.12",
     "@google/genai": "^1.30.0",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@supabase/supabase-js": "2.39.3",
+    "@tanstack/react-query": "^5.99.0",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
     "jspdf": "2.5.1",
     "jspdf-autotable": "3.8.1",
     "jszip": "3.10.1",
@@ -21,7 +26,9 @@
     "react-dom": "^19.2.0",
     "react-is": "^19.2.3",
     "recharts": "^3.5.0",
-    "xlsx": "^0.18.5"
+    "tailwind-merge": "^3.5.0",
+    "xlsx": "^0.18.5",
+    "zustand": "^4.5.7"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

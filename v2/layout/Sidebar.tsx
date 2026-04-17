@@ -28,10 +28,12 @@ interface SidebarProps {
   onSelect: (id: string) => void;
   workspace?: { name: string; subtitle?: string };
   user?: { name: string; role?: string };
+  /** Custom footer — overrides the built-in user tile when provided. */
+  footer?: React.ReactNode;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
-  sections, activeId, onSelect, workspace, user,
+  sections, activeId, onSelect, workspace, user, footer,
 }) => (
   <aside className="w-56 shrink-0 border-r border-[#1f1f1f] bg-[#0a0a0a] flex flex-col">
     {workspace && (
@@ -102,17 +104,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ))}
     </nav>
 
-    {user && (
-      <div className="border-t border-[#1f1f1f] p-3 flex items-center gap-2">
-        <div
-          className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500"
-          aria-hidden
-        />
-        <div className="text-[12px] leading-tight min-w-0">
-          <div className="text-slate-100 truncate">{user.name}</div>
-          {user.role && <div className="text-[10px] text-slate-500 truncate">{user.role}</div>}
+    {footer
+      ? <div className="border-t border-[#1f1f1f] p-2">{footer}</div>
+      : user && (
+        <div className="border-t border-[#1f1f1f] p-3 flex items-center gap-2">
+          <div
+            className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500"
+            aria-hidden
+          />
+          <div className="text-[12px] leading-tight min-w-0">
+            <div className="text-slate-100 truncate">{user.name}</div>
+            {user.role && <div className="text-[10px] text-slate-500 truncate">{user.role}</div>}
+          </div>
         </div>
-      </div>
-    )}
+      )}
   </aside>
 );
