@@ -196,3 +196,40 @@ services/geminiService.ts  — logistics fields on AgentAction.entities
 Ready for review. Nothing awaits autonomous action; each next step
 needs a user decision (PR base reconciliation, secret-setting,
 Cloud Run build, Phase 1d apply window).
+
+---
+
+## Post-sprint update — 2026-04-17
+
+### Phase 1c partial deploy (DONE)
+- `auth-issue` and `gemini-proxy` deployed to `qfskvevighylzzmyiwre`.
+- `APP_JWT_SIGNING_SECRET` set on Supabase (renamed from
+  `SUPABASE_JWT_SECRET` because the CLI blocks that prefix — commit
+  `3f812ca` carries the rename).
+- Smoke tests green: auth-issue returns 400/401 as expected,
+  gemini-proxy returns 401 without a valid user JWT.
+- Live production (App Engine v9.29) is untouched — the new endpoints
+  sit dormant until a new frontend build consumes them.
+
+### ⚠️ Deferred: JWT secret rotation
+The JWT secret value was pasted into the chat transcript during setup
+and is now exposed at rest in that conversation history. Rotation is
+**deliberately deferred** until the Cloud Run cutover because rotating
+alone would break production:
+
+- The live anon key and service-role key are JWTs signed with that
+  same secret. Rotating invalidates them.
+- Production v9.29 has the OLD anon key baked into the JS bundle — it
+  would start returning 401 on every Supabase call.
+- All active user sessions would be kicked out.
+
+**Do the rotation as part of the Cloud Run cutover**, in one
+coordinated move:
+1. Rotate JWT secret in Supabase dashboard → copy new anon key.
+2. Update frontend build env with new anon key.
+3. `gcloud builds submit` + `gcloud run deploy`.
+4. Re-run `supabase secrets set APP_JWT_SIGNING_SECRET=<new>`
+   so `auth-issue` signs with the new key.
+5. Users re-login.
+
+Until then: don't share this conversation transcript outside the team.
