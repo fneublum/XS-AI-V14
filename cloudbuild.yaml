@@ -1,0 +1,41 @@
+# Cloud Build config for Cloud Run deploys.
+#
+# `gcloud builds submit --tag ...` uses a default config that doesn't pass
+# Docker --build-arg flags. This file gives us control over build args so
+# Vite can bake VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY into the bundle.
+#
+# Usage:
+#   gcloud builds submit \
+#     --config=cloudbuild.yaml \
+#     --substitutions=_VITE_SUPABASE_URL=<url>,_VITE_SUPABASE_ANON_KEY=<anon-key>
+#
+# The anon key is designed for public browser exposure (RLS-gated), so
+# passing it as a substitution is safe. Do NOT add GEMINI_API_KEY or any
+# server-side secret to this file — those live in Supabase Edge Function
+# secrets, never in the frontend bundle.
+
+substitutions:
+  _VITE_SUPABASE_URL: 'https://qfskvevighylzzmyiwre.supabase.co'
+  _VITE_SUPABASE_ANON_KEY: ''
+  _IMAGE: 'gcr.io/${PROJECT_ID}/xs-erp-app'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'VITE_SUPABASE_URL=${_VITE_SUPABASE_URL}'
+      - '--build-arg'
+      - 'VITE_SUPABASE_ANON_KEY=${_VITE_SUPABASE_ANON_KEY}'
+      - '--tag'
+      - '${_IMAGE}:${BUILD_ID}'
+      - '--tag'
+      - '${_IMAGE}:latest'
+      - '.'
+
+images:
+  - '${_IMAGE}:${BUILD_ID}'
+  - '${_IMAGE}:latest'
