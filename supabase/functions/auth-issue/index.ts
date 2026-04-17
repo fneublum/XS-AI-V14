@@ -12,9 +12,12 @@
 //    This is NOT a new vulnerability; it preserves current behavior
 //    while moving the check server-side where the credentials never
 //    transit past Supabase's TLS boundary (no client bundle shipment).
-// 4. If valid, signs an HS256 JWT using SUPABASE_JWT_SECRET with the
-//    claims Supabase's own GoTrue expects, so `auth.getUser()` in the
-//    other Edge Functions accepts it natively.
+// 4. If valid, signs an HS256 JWT using APP_JWT_SIGNING_SECRET (set to
+//    the same value as the project's JWT Secret from Supabase dashboard
+//    → Settings → API → JWT Settings) with the claims Supabase's own
+//    GoTrue expects, so `auth.getUser()` in the other Edge Functions
+//    accepts it natively. Note: Supabase CLI reserves the SUPABASE_*
+//    namespace for platform-managed secrets, hence the APP_* prefix.
 //
 // Security notes:
 // - Token is short-lived (1 hour) to limit blast radius if stolen.
@@ -29,7 +32,9 @@ import { buildCorsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const SUPABASE_JWT_SECRET = Deno.env.get('SUPABASE_JWT_SECRET') || '';
+// Renamed from SUPABASE_JWT_SECRET — the Supabase CLI reserves that prefix.
+// Set via: supabase secrets set APP_JWT_SIGNING_SECRET=<jwt-secret-from-dashboard>
+const APP_JWT_SIGNING_SECRET = Deno.env.get('APP_JWT_SIGNING_SECRET') || '';
 
 const TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
 
@@ -57,8 +62,8 @@ Deno.serve(async (req: Request) => {
         return json({ error: 'Method not allowed' }, 405, corsHeaders);
     }
 
-    if (!SUPABASE_JWT_SECRET) {
-        console.error('[auth-issue] SUPABASE_JWT_SECRET not configured');
+    if (!APP_JWT_SIGNING_SECRET) {
+        console.error('[auth-issue] APP_JWT_SIGNING_SECRET not configured');
         return json({ error: 'Auth not configured' }, 500, corsHeaders);
     }
 
@@ -93,7 +98,7 @@ Deno.serve(async (req: Request) => {
     // Sign a Supabase-compatible JWT.
     const key = await crypto.subtle.importKey(
         'raw',
-        new TextEncoder().encode(SUPABASE_JWT_SECRET),
+        new TextEncoder().encode(APP_JWT_SIGNING_SECRET),
         { name: 'HMAC', hash: 'SHA-256' },
         false,
         ['sign', 'verify'],
