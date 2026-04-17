@@ -126,7 +126,11 @@ const PurchaseOrdersV2: React.FC = () => {
                 ? `Nothing matched "${search}".`
                 : 'Once POs are created they show up here.'
             }
-            action={search ? { label: 'Clear search', onClick: () => setSearch('') } : undefined}
+            action={
+              search
+                ? { label: 'Clear search', onClick: () => setSearch('') }
+                : { label: '+ New PO', onClick: openPurchaseOrderCreate }
+            }
           />
         ) : (
           <DataTable

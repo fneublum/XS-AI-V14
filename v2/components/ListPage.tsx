@@ -30,6 +30,8 @@ interface ListPageProps<T> {
   onRowClick?: (row: T) => void;
   emptyTitle?: string;
   emptyDescription?: string;
+  /** Action surfaced on an empty (non-search) list — typically "+ New X". */
+  emptyAction?: { label: string; onClick: () => void };
   skeletonRows?: number;
   skeletonCols?: number[];
 }
@@ -37,7 +39,7 @@ interface ListPageProps<T> {
 export function ListPage<T>({
   title, subtitle, search, setSearch, searchPlaceholder = 'Search',
   cardTitle, cardAction, headerAction, columns, getRowId, data, isLoading, error, onRetry,
-  onRowClick, emptyTitle, emptyDescription,
+  onRowClick, emptyTitle, emptyDescription, emptyAction,
   skeletonRows = 6, skeletonCols = [160, 220, 100, 60],
 }: ListPageProps<T>) {
   return (
@@ -100,7 +102,11 @@ export function ListPage<T>({
                 ? `Nothing matched "${search}".`
                 : 'Rows will appear here as they are created.')
             }
-            action={search ? { label: 'Clear search', onClick: () => setSearch('') } : undefined}
+            action={
+              search
+                ? { label: 'Clear search', onClick: () => setSearch('') }
+                : emptyAction
+            }
           />
         ) : (
           <DataTable

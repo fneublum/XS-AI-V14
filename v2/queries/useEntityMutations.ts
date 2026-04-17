@@ -64,5 +64,23 @@ export function useEntityInsert<Fields extends Record<string, unknown>>({
   });
 }
 
+export function useEntityDelete({
+  table, listQueryKeys,
+}: MutationConfig) {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: async (id) => {
+      const supabase = getSupabaseClient();
+      const { error } = await supabase.from(table).delete().eq('id', id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      for (const key of listQueryKeys) {
+        void qc.invalidateQueries({ queryKey: [key] });
+      }
+    },
+  });
+}
+
 // Legacy alias — some older code imported useEntityMutation for UPDATE.
 export const useEntityMutation = useEntityUpdate;

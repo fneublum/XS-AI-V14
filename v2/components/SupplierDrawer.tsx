@@ -1,9 +1,9 @@
 // Phase 3B — Supplier editor drawer (create + edit).
 
 import React, { useEffect, useState } from 'react';
-import { Drawer, Input, FormField, Label, Button } from '../primitives';
+import { Drawer, Input, FormField, Label, Button, ConfirmDialog } from '../primitives';
 import { Supplier } from '../queries/useSuppliers';
-import { useEntityUpdate, useEntityInsert } from '../queries/useEntityMutations';
+import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import type { EditorMode } from '../providers/EditorProvider';
@@ -22,8 +22,11 @@ export const SupplierDrawer: React.FC<Props> = ({ supplier, mode, onOpenChange }
   const [city, setCity]       = useState('');
   const [terms, setTerms]     = useState('');
   const [rating, setRating]   = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
+
+  const del = useEntityDelete({ table: 'suppliers', listQueryKeys: ['suppliers'] });
 
   const update = useEntityUpdate<{
     id: string; name?: string; email?: string | null; phone?: string | null;
@@ -108,7 +111,23 @@ export const SupplierDrawer: React.FC<Props> = ({ supplier, mode, onOpenChange }
     ? 'Create a supplier in the current workspace.'
     : (supplier?.email ?? supplier?.country ?? undefined);
 
+  const onDelete = () => {
+    if (!supplier) return;
+    del.mutate(supplier.id, {
+      onSuccess: () => {
+        toast.push({ kind: 'success', title: 'Deleted', description: supplier.name || supplier.id });
+        setConfirmDelete(false);
+        onOpenChange(false);
+      },
+      onError: (err) => {
+        toast.push({ kind: 'error', title: 'Delete failed', description: err.message });
+        setConfirmDelete(false);
+      },
+    });
+  };
+
   return (
+    <>
     <Drawer
       open={!!supplier}
       onOpenChange={onOpenChange}
@@ -116,6 +135,16 @@ export const SupplierDrawer: React.FC<Props> = ({ supplier, mode, onOpenChange }
       description={description}
       footer={
         <>
+          {mode === 'edit' && (
+            <Button
+              variant="secondary" size="sm"
+              onClick={() => setConfirmDelete(true)}
+              disabled={pending || del.isPending}
+              className="bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10"
+            >
+              Delete
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}
             className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]">
             Cancel
@@ -178,5 +207,15 @@ export const SupplierDrawer: React.FC<Props> = ({ supplier, mode, onOpenChange }
         </div>
       )}
     </Drawer>
+    <ConfirmDialog
+      open={confirmDelete}
+      onOpenChange={setConfirmDelete}
+      title={`Delete ${supplier?.name ?? 'supplier'}?`}
+      description="This permanently removes the supplier row. Related POs and invoices are not touched."
+      confirmLabel="Delete"
+      loading={del.isPending}
+      onConfirm={onDelete}
+    />
+    </>
   );
 };

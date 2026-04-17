@@ -15,6 +15,7 @@ import { CustomerDrawer }      from './components/CustomerDrawer';
 import { SupplierDrawer }      from './components/SupplierDrawer';
 import { InvoiceDrawer }       from './components/InvoiceDrawer';
 import { PurchaseOrderDrawer } from './components/PurchaseOrderDrawer';
+import { ShortcutsHelp, ShortcutGroup } from './layout/ShortcutsHelp';
 import { getSupabaseClient } from '../services/supabase';
 import { SalesOrder } from './queries/useSalesOrders';
 
@@ -209,6 +210,36 @@ function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q 
   return companyId === 'ALL' ? q : (q.eq('"companyId"', companyId) as Q);
 }
 
+const shortcutGroups: ShortcutGroup[] = [
+  {
+    title: 'Navigation',
+    items: [
+      { keys: ['D'], label: 'Dashboard' },
+      { keys: ['C'], label: 'Customers' },
+      { keys: ['O'], label: 'Sales Orders' },
+      { keys: ['R'], label: 'Products (catalog)' },
+      { keys: ['I'], label: 'Inventory' },
+      { keys: ['Q'], label: 'Freight Quotes' },
+      { keys: ['B'], label: 'Bookings' },
+    ],
+  },
+  {
+    title: 'Global',
+    items: [
+      { keys: ['⌘', 'K'], label: 'Open command palette' },
+      { keys: ['?'], label: 'Show keyboard shortcuts' },
+      { keys: ['Esc'], label: 'Close any dialog or drawer' },
+    ],
+  },
+  {
+    title: 'Tables',
+    items: [
+      { keys: ['↵'], label: 'Open selected palette result' },
+      { keys: ['Click'], label: 'Open editor drawer for a row' },
+    ],
+  },
+];
+
 const AppV2Inner: React.FC = () => {
   const [activeId, setActiveId] = useState(() => {
     const stored = typeof window !== 'undefined'
@@ -217,6 +248,7 @@ const AppV2Inner: React.FC = () => {
     return stored && routeTitles[stored] ? stored : 'dashboard';
   });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const {
@@ -432,6 +464,12 @@ const AppV2Inner: React.FC = () => {
         onOpenChange={setPaletteOpen}
         commands={commands}
         dataProviders={dataProviders}
+      />
+
+      <ShortcutsHelp
+        open={shortcutsOpen}
+        onOpenChange={setShortcutsOpen}
+        groups={shortcutGroups}
       />
 
       <SalesOrderDrawer

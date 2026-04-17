@@ -90,9 +90,13 @@ const CustomersV2: React.FC = () => {
             description={
               search
                 ? `Nothing matched "${search}".`
-                : 'Once customers exist in this company they show up here.'
+                : 'Add your first customer to get started.'
             }
-            action={search ? { label: 'Clear search', onClick: () => setSearch('') } : undefined}
+            action={
+              search
+                ? { label: 'Clear search', onClick: () => setSearch('') }
+                : { label: '+ New customer', onClick: openCustomerCreate }
+            }
           />
         ) : (
           <DataTable

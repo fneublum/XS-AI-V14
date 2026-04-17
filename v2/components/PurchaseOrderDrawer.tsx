@@ -1,9 +1,9 @@
 // Phase 3B — Purchase Order editor drawer (create + edit).
 
 import React, { useEffect, useState } from 'react';
-import { Drawer, Input, FormField, Label, Button, Badge } from '../primitives';
+import { Drawer, Input, FormField, Label, Button, Badge, ConfirmDialog } from '../primitives';
 import { PurchaseOrder } from '../queries/usePurchaseOrders';
-import { useEntityUpdate, useEntityInsert } from '../queries/useEntityMutations';
+import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import type { EditorMode } from '../providers/EditorProvider';
@@ -23,8 +23,11 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
   const [status, setStatus] = useState('');
   const [terms, setTerms] = useState('');
   const [expected, setExpected] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
+
+  const del = useEntityDelete({ table: 'purchase_orders', listQueryKeys: ['purchaseOrders'] });
 
   const update = useEntityUpdate<{
     id: string; status?: string; paymentTerms?: string | null;
@@ -102,7 +105,23 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     ? 'Create a purchase order in the current workspace.'
     : (po?.supplierName ?? undefined);
 
+  const onDelete = () => {
+    if (!po) return;
+    del.mutate(po.id, {
+      onSuccess: () => {
+        toast.push({ kind: 'success', title: 'Deleted', description: po.id.slice(0, 12) });
+        setConfirmDelete(false);
+        onOpenChange(false);
+      },
+      onError: (err) => {
+        toast.push({ kind: 'error', title: 'Delete failed', description: err.message });
+        setConfirmDelete(false);
+      },
+    });
+  };
+
   return (
+    <>
     <Drawer
       open={!!po}
       onOpenChange={onOpenChange}
@@ -110,6 +129,16 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
       description={description}
       footer={
         <>
+          {mode === 'edit' && (
+            <Button
+              variant="secondary" size="sm"
+              onClick={() => setConfirmDelete(true)}
+              disabled={pending || del.isPending}
+              className="bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10"
+            >
+              Delete
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}
             className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]">
             Cancel
@@ -198,5 +227,15 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
         </div>
       )}
     </Drawer>
+    <ConfirmDialog
+      open={confirmDelete}
+      onOpenChange={setConfirmDelete}
+      title={`Delete PO ${po?.id.slice(0, 12) ?? ''}?`}
+      description="This permanently removes the purchase order. Supplier invoices keep their data but lose the PO reference."
+      confirmLabel="Delete"
+      loading={del.isPending}
+      onConfirm={onDelete}
+    />
+    </>
   );
 };

@@ -1,9 +1,9 @@
 // Phase 3B — Invoice editor drawer (create + edit).
 
 import React, { useEffect, useState } from 'react';
-import { Drawer, Input, FormField, Label, Button, Badge } from '../primitives';
+import { Drawer, Input, FormField, Label, Button, Badge, ConfirmDialog } from '../primitives';
 import { Invoice } from '../queries/useInvoices';
-import { useEntityUpdate, useEntityInsert } from '../queries/useEntityMutations';
+import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import type { EditorMode } from '../providers/EditorProvider';
@@ -22,8 +22,14 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
   const [totalAmount, setTotal] = useState('');
   const [currency, setCurrency] = useState('USD');
   const [invoiceDate, setDate] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
+
+  const del = useEntityDelete({
+    table: 'invoices',
+    listQueryKeys: ['invoices', 'recentSalesOrders', 'dashboardStats', 'pl'],
+  });
 
   const update = useEntityUpdate<{
     id: string; invoiceNumber?: string;
@@ -109,7 +115,23 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
     ? 'Create an invoice in the current workspace.'
     : (invoice?.soldTo ?? invoice?.billToName ?? undefined);
 
+  const onDelete = () => {
+    if (!invoice) return;
+    del.mutate(invoice.id, {
+      onSuccess: () => {
+        toast.push({ kind: 'success', title: 'Deleted', description: invoice.invoiceNumber || invoice.id });
+        setConfirmDelete(false);
+        onOpenChange(false);
+      },
+      onError: (err) => {
+        toast.push({ kind: 'error', title: 'Delete failed', description: err.message });
+        setConfirmDelete(false);
+      },
+    });
+  };
+
   return (
+    <>
     <Drawer
       open={!!invoice}
       onOpenChange={onOpenChange}
@@ -117,6 +139,16 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
       description={description}
       footer={
         <>
+          {mode === 'edit' && (
+            <Button
+              variant="secondary" size="sm"
+              onClick={() => setConfirmDelete(true)}
+              disabled={pending || del.isPending}
+              className="bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10"
+            >
+              Delete
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}
             className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]">
             Cancel
@@ -210,5 +242,15 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
         </div>
       )}
     </Drawer>
+    <ConfirmDialog
+      open={confirmDelete}
+      onOpenChange={setConfirmDelete}
+      title={`Delete ${invoice?.invoiceNumber ?? 'invoice'}?`}
+      description="This permanently removes the invoice. Related orders and packing lists keep their data but lose the invoice reference."
+      confirmLabel="Delete"
+      loading={del.isPending}
+      onConfirm={onDelete}
+    />
+    </>
   );
 };

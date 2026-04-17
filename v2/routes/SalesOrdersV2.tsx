@@ -214,7 +214,7 @@ const SalesOrdersV2: React.FC = () => {
                 ? { label: 'Clear search', onClick: () => setSearch('') }
                 : statusFilter !== 'ALL'
                   ? { label: 'Show all', onClick: () => setStatusFilter('ALL') }
-                  : undefined
+                  : { label: '+ New order', onClick: openSalesOrderCreate }
             }
           />
         ) : (

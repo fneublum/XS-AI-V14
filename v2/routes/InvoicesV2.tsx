@@ -75,6 +75,7 @@ const InvoicesV2: React.FC = () => {
       error={invoices.error}
       onRetry={invoices.refetch}
       onRowClick={r => openInvoice(r)}
+      emptyAction={{ label: '+ New invoice', onClick: openInvoiceCreate }}
       skeletonCols={[100, 200, 80, 80, 80, 60]}
     />
   );

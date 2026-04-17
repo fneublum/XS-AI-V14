@@ -2,11 +2,11 @@
 
 import React, { useEffect, useState } from 'react';
 import {
-  Drawer, Input, FormField, Label, Button, Badge,
+  Drawer, Input, FormField, Label, Button, Badge, ConfirmDialog,
 } from '../primitives';
 import { SalesOrder } from '../queries/useSalesOrders';
 import { useUpdateSalesOrder } from '../queries/useSalesOrderMutations';
-import { useEntityInsert } from '../queries/useEntityMutations';
+import { useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import type { EditorMode } from '../providers/EditorProvider';
@@ -36,9 +36,14 @@ export const SalesOrderDrawer: React.FC<SalesOrderDrawerProps> = ({ order, mode,
   const [paymentTerms, setPaymentTerms] = useState('');
   const [incoterm, setIncoterm] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const update = useUpdateSalesOrder();
+  const del = useEntityDelete({
+    table: 'sales_orders',
+    listQueryKeys: ['salesOrders', 'recentSalesOrders', 'dashboardStats'],
+  });
   const insert = useEntityInsert<{
     companyId: string; orderNumber: string; customerName: string;
     status: string; totalAmount: number; currency: string;
@@ -122,7 +127,23 @@ export const SalesOrderDrawer: React.FC<SalesOrderDrawerProps> = ({ order, mode,
     ? 'Create a sales order in the current workspace.'
     : (order?.customerName || undefined);
 
+  const onDelete = () => {
+    if (!order) return;
+    del.mutate(order.id, {
+      onSuccess: () => {
+        toast.push({ kind: 'success', title: 'Deleted', description: order.orderNumber || order.id });
+        setConfirmDelete(false);
+        onOpenChange(false);
+      },
+      onError: (err) => {
+        toast.push({ kind: 'error', title: 'Delete failed', description: err.message });
+        setConfirmDelete(false);
+      },
+    });
+  };
+
   return (
+    <>
     <Drawer
       open={!!order}
       onOpenChange={onOpenChange}
@@ -130,6 +151,16 @@ export const SalesOrderDrawer: React.FC<SalesOrderDrawerProps> = ({ order, mode,
       description={description}
       footer={
         <>
+          {mode === 'edit' && (
+            <Button
+              variant="secondary" size="sm"
+              onClick={() => setConfirmDelete(true)}
+              disabled={pending || del.isPending}
+              className="bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10"
+            >
+              Delete
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}
             className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]">
             Cancel
@@ -247,5 +278,15 @@ export const SalesOrderDrawer: React.FC<SalesOrderDrawerProps> = ({ order, mode,
         </div>
       )}
     </Drawer>
+    <ConfirmDialog
+      open={confirmDelete}
+      onOpenChange={setConfirmDelete}
+      title={`Delete ${order?.orderNumber ?? 'order'}?`}
+      description="This permanently removes the sales order. Invoices and shipments referencing it will show a blank order link."
+      confirmLabel="Delete"
+      loading={del.isPending}
+      onConfirm={onDelete}
+    />
+    </>
   );
 };

@@ -14,4 +14,5 @@ export { StatCard, StatGrid } from './StatCard';
 export { Skeleton } from './Skeleton';
 export { EmptyState } from './EmptyState';
 export { Drawer } from './Drawer';
+export { ConfirmDialog } from './ConfirmDialog';
 export { cn } from './utils';

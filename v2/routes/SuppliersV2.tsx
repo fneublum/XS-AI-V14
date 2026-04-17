@@ -108,9 +108,13 @@ const SuppliersV2: React.FC = () => {
             description={
               search
                 ? `Nothing matched "${search}".`
-                : 'Suppliers show up here once they exist in this company.'
+                : 'Add your first supplier to get started.'
             }
-            action={search ? { label: 'Clear search', onClick: () => setSearch('') } : undefined}
+            action={
+              search
+                ? { label: 'Clear search', onClick: () => setSearch('') }
+                : { label: '+ New supplier', onClick: openSupplierCreate }
+            }
           />
         ) : (
           <DataTable

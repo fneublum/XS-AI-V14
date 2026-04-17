@@ -1,9 +1,9 @@
 // Phase 3B — Customer editor drawer (create + edit).
 
 import React, { useEffect, useState } from 'react';
-import { Drawer, Input, FormField, Label, Button } from '../primitives';
+import { Drawer, Input, FormField, Label, Button, ConfirmDialog } from '../primitives';
 import { Customer } from '../queries/useCustomers';
-import { useEntityUpdate, useEntityInsert } from '../queries/useEntityMutations';
+import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import type { EditorMode } from '../providers/EditorProvider';
@@ -22,8 +22,11 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
   const [city, setCity]       = useState('');
   const [pod, setPod]         = useState('');
   const [terms, setTerms]     = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
+
+  const del = useEntityDelete({ table: 'customers', listQueryKeys: ['customers'] });
 
   const update = useEntityUpdate<{
     id: string;
@@ -107,7 +110,23 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
     ? 'Create a customer in the current workspace.'
     : (customer?.email ?? customer?.country ?? undefined);
 
+  const onDelete = () => {
+    if (!customer) return;
+    del.mutate(customer.id, {
+      onSuccess: () => {
+        toast.push({ kind: 'success', title: 'Deleted', description: customer.name || customer.id });
+        setConfirmDelete(false);
+        onOpenChange(false);
+      },
+      onError: (err) => {
+        toast.push({ kind: 'error', title: 'Delete failed', description: err.message });
+        setConfirmDelete(false);
+      },
+    });
+  };
+
   return (
+    <>
     <Drawer
       open={!!customer}
       onOpenChange={onOpenChange}
@@ -115,6 +134,16 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
       description={description}
       footer={
         <>
+          {mode === 'edit' && (
+            <Button
+              variant="secondary" size="sm"
+              onClick={() => setConfirmDelete(true)}
+              disabled={pending || del.isPending}
+              className="bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10"
+            >
+              Delete
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}
             className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]">
             Cancel
@@ -175,5 +204,15 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
         </div>
       )}
     </Drawer>
+    <ConfirmDialog
+      open={confirmDelete}
+      onOpenChange={setConfirmDelete}
+      title={`Delete ${customer?.name ?? 'customer'}?`}
+      description="This permanently removes the customer row. Related orders and invoices are not touched, but they will show a blank customer reference."
+      confirmLabel="Delete"
+      loading={del.isPending}
+      onConfirm={onDelete}
+    />
+    </>
   );
 };
