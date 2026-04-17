@@ -2,7 +2,7 @@
 // Mounts when index.tsx detects `?v2=1`.
 
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
-import { AuthProvider } from './providers/AuthProvider';
+import { AuthProvider, useAuth } from './providers/AuthProvider';
 import { CompanyProvider, useCompany } from './providers/CompanyProvider';
 import { QueryProvider } from './providers/QueryProvider';
 import { ToastProvider, useToast } from './primitives/Toast';
@@ -50,6 +50,7 @@ const LogisticsDocsV2       = lazy(() => import('./routes/LogisticsDocsV2'));
 const SopiciCommissionsV2   = lazy(() => import('./routes/SopiciCommissionsV2'));
 const PLInvoiceEngineV2     = lazy(() => import('./routes/PLInvoiceEngineV2'));
 const CostProfitAIV2        = lazy(() => import('./routes/CostProfitAIV2'));
+const LoginV2               = lazy(() => import('./routes/LoginV2'));
 
 const sections = [
   {
@@ -251,6 +252,7 @@ const AppV2Inner: React.FC = () => {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
+  const { user, loading: authLoading } = useAuth();
   const {
     salesOrder, openSalesOrder, closeSalesOrder,
     customer, closeCustomer,
@@ -404,6 +406,20 @@ const AppV2Inner: React.FC = () => {
       },
     },
   ], [currentCompanyId, navigate, toast, openSalesOrder]);
+
+  // Auth gate — show LoginV2 until a user session is present. The
+  // AuthProvider flips `loading` to false on its first effect tick, so
+  // we don't flash the login page during the initial hydration.
+  if (authLoading) {
+    return <div className="min-h-screen bg-[#0a0a0a]" aria-hidden />;
+  }
+  if (!user) {
+    return (
+      <Suspense fallback={<Fallback />}>
+        <LoginV2 />
+      </Suspense>
+    );
+  }
 
   return (
     <>

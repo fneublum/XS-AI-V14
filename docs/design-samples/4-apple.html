@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>XS-ERP — Apple / Stripe</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+  body { font-family: 'Inter', system-ui, sans-serif; background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); color: #0a0a0a; min-height: 100vh; }
+  .number-grad { background: linear-gradient(135deg, #0a0a0a 0%, #4f46e5 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero-grad { background: linear-gradient(135deg, #6366f1 0%, #ec4899 50%, #f59e0b 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .glass-light { background: rgba(255,255,255,0.7); backdrop-filter: blur(16px) saturate(1.5); -webkit-backdrop-filter: blur(16px) saturate(1.5); border: 1px solid rgba(0,0,0,0.04); }
+  .soft-shadow { box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.02); }
+  .mono { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body class="antialiased">
+
+<div class="flex min-h-screen">
+  <!-- Sidebar -->
+  <aside class="w-64 border-r border-slate-200/60 glass-light flex flex-col">
+    <div class="p-6 flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 shadow-lg shadow-indigo-500/25"></div>
+      <div>
+        <div class="text-[15px] font-semibold tracking-tight">XS-ERP</div>
+        <div class="text-[11px] text-slate-500">ACME Workspace</div>
+      </div>
+    </div>
+
+    <nav class="flex-1 px-3 text-[14px] text-slate-600">
+      <div class="px-3 text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2">Overview</div>
+      <a class="flex items-center gap-3 px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-50 to-pink-50 text-slate-900 font-medium">
+        <span class="w-5 h-5 rounded-md bg-indigo-500/15 flex items-center justify-center text-indigo-600 text-[11px]">◆</span>
+        Dashboard
+      </a>
+
+      <div class="px-3 text-[10px] uppercase tracking-widest text-slate-400 font-semibold mt-6 mb-2">Contacts</div>
+      <a class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-100/70"><span class="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center text-slate-500 text-[11px]">●</span>Customers<span class="ml-auto text-[11px] text-slate-400 mono">128</span></a>
+      <a class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-100/70"><span class="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center text-slate-500 text-[11px]">●</span>Suppliers<span class="ml-auto text-[11px] text-slate-400 mono">42</span></a>
+
+      <div class="px-3 text-[10px] uppercase tracking-widest text-slate-400 font-semibold mt-6 mb-2">Orders</div>
+      <a class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-100/70"><span class="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center text-slate-500 text-[11px]">●</span>Sales Orders<span class="ml-auto text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-1.5 rounded-full">7</span></a>
+      <a class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-100/70"><span class="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center text-slate-500 text-[11px]">●</span>Purchase Orders</a>
+      <a class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-100/70"><span class="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center text-slate-500 text-[11px]">●</span>Logistics</a>
+
+      <div class="px-3 text-[10px] uppercase tracking-widest text-slate-400 font-semibold mt-6 mb-2">Finance</div>
+      <a class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-100/70"><span class="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center text-slate-500 text-[11px]">●</span>Receivables</a>
+      <a class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-100/70"><span class="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center text-slate-500 text-[11px]">●</span>Payables</a>
+      <a class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-100/70"><span class="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center text-slate-500 text-[11px]">●</span>Commissions</a>
+    </nav>
+
+    <div class="p-4 m-3 rounded-2xl bg-gradient-to-br from-indigo-500/5 via-pink-500/5 to-amber-500/5 border border-slate-200/40 flex items-center gap-3">
+      <div class="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 ring-2 ring-white shadow"></div>
+      <div class="flex-1">
+        <div class="text-[13px] font-semibold">Felipe N.</div>
+        <div class="text-[11px] text-slate-500">Admin</div>
+      </div>
+      <button class="text-slate-400 hover:text-slate-600">⌄</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="flex-1 flex flex-col">
+    <header class="h-16 flex items-center px-10 border-b border-slate-200/50 glass-light sticky top-0 z-10">
+      <div class="text-[13px] text-slate-500 flex items-center gap-2">
+        <span>Overview</span><span class="text-slate-300">/</span><span class="text-slate-900 font-medium">Dashboard</span>
+      </div>
+      <div class="ml-auto flex items-center gap-3">
+        <div class="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-100/70 text-[13px] text-slate-500 w-64">
+          <span class="text-slate-400">⌕</span>Search customers, orders…
+        </div>
+        <button class="px-4 py-2 rounded-full bg-slate-900 text-white text-[13px] font-medium shadow-lg shadow-slate-900/20 hover:shadow-slate-900/30 transition">+ New order</button>
+      </div>
+    </header>
+
+    <main class="flex-1 px-10 py-10 overflow-auto">
+      <div class="max-w-6xl">
+        <!-- Hero -->
+        <div class="mb-10">
+          <div class="text-[12px] text-slate-500 uppercase tracking-widest font-semibold">Last 30 days</div>
+          <h1 class="text-[44px] font-bold tracking-tight mt-2 leading-tight">Good afternoon, <span class="hero-grad">Felipe</span></h1>
+          <p class="text-[16px] text-slate-500 mt-2 max-w-xl">Here's how ACME is doing this month. Everything is on track — revenue is up and all critical orders are flowing.</p>
+        </div>
+
+        <!-- Stat cards -->
+        <div class="grid grid-cols-4 gap-4 mb-10">
+          <div class="p-6 rounded-3xl bg-white soft-shadow">
+            <div class="text-[12px] text-slate-500 font-medium">Revenue</div>
+            <div class="mono text-[32px] font-bold tracking-tight number-grad mt-2">$184,392</div>
+            <div class="flex items-center gap-1.5 mt-2">
+              <span class="text-[12px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">↑ 12.4%</span>
+              <span class="text-[11px] text-slate-400">vs last month</span>
+            </div>
+          </div>
+          <div class="p-6 rounded-3xl bg-white soft-shadow">
+            <div class="text-[12px] text-slate-500 font-medium">Orders</div>
+            <div class="mono text-[32px] font-bold tracking-tight mt-2">42</div>
+            <div class="flex items-center gap-1.5 mt-2"><span class="text-[12px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">↑ 8 new</span></div>
+          </div>
+          <div class="p-6 rounded-3xl bg-white soft-shadow">
+            <div class="text-[12px] text-slate-500 font-medium">Customers</div>
+            <div class="mono text-[32px] font-bold tracking-tight mt-2">128</div>
+            <div class="flex items-center gap-1.5 mt-2"><span class="text-[12px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">+3 new</span></div>
+          </div>
+          <div class="p-6 rounded-3xl bg-white soft-shadow">
+            <div class="text-[12px] text-slate-500 font-medium">Pending</div>
+            <div class="mono text-[32px] font-bold tracking-tight mt-2">$28,104</div>
+            <div class="flex items-center gap-1.5 mt-2"><span class="text-[12px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">⚠ 5 overdue</span></div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="rounded-3xl bg-white soft-shadow overflow-hidden">
+          <div class="px-6 py-5 flex items-end justify-between border-b border-slate-100">
+            <div>
+              <h2 class="text-[20px] font-semibold tracking-tight">Recent sales orders</h2>
+              <p class="text-[13px] text-slate-500 mt-0.5">7 active orders · updated 2 min ago</p>
+            </div>
+            <button class="text-[13px] text-indigo-600 font-medium hover:text-indigo-700">View all →</button>
+          </div>
+          <table class="w-full text-[14px]">
+            <thead class="text-[11px] text-slate-500 uppercase tracking-wider font-semibold">
+              <tr><th class="text-left font-semibold px-6 py-3">Order</th><th class="text-left font-semibold px-6 py-3">Customer</th><th class="text-left font-semibold px-6 py-3">Status</th><th class="text-right font-semibold px-6 py-3">Amount</th><th class="text-right font-semibold px-6 py-3">Date</th></tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr class="hover:bg-slate-50/50"><td class="px-6 py-4 mono text-[13px] text-slate-500">SO-7A2F</td><td class="px-6 py-4 font-medium">Acme Industries</td><td class="px-6 py-4"><span class="text-[12px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full">● Shipped</span></td><td class="px-6 py-4 text-right mono font-semibold">$12,480</td><td class="px-6 py-4 text-right text-slate-500">Apr 14</td></tr>
+              <tr class="hover:bg-slate-50/50"><td class="px-6 py-4 mono text-[13px] text-slate-500">SO-9B1C</td><td class="px-6 py-4 font-medium">Zenith Materials Co.</td><td class="px-6 py-4"><span class="text-[12px] font-semibold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full">● In transit</span></td><td class="px-6 py-4 text-right mono font-semibold">$8,920</td><td class="px-6 py-4 text-right text-slate-500">Apr 13</td></tr>
+              <tr class="hover:bg-slate-50/50"><td class="px-6 py-4 mono text-[13px] text-slate-500">SO-4D88</td><td class="px-6 py-4 font-medium">Meridian Logistics LLC</td><td class="px-6 py-4"><span class="text-[12px] font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">● Pending</span></td><td class="px-6 py-4 text-right mono font-semibold">$23,100</td><td class="px-6 py-4 text-right text-slate-500">Apr 12</td></tr>
+              <tr class="hover:bg-slate-50/50"><td class="px-6 py-4 mono text-[13px] text-slate-500">SO-5E30</td><td class="px-6 py-4 font-medium">Titan Steel Corp.</td><td class="px-6 py-4"><span class="text-[12px] font-semibold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-full">● Draft</span></td><td class="px-6 py-4 text-right mono font-semibold">$4,650</td><td class="px-6 py-4 text-right text-slate-500">Apr 11</td></tr>
+              <tr class="hover:bg-slate-50/50"><td class="px-6 py-4 mono text-[13px] text-slate-500">SO-1F09</td><td class="px-6 py-4 font-medium">Everwell Imports</td><td class="px-6 py-4"><span class="text-[12px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full">● Shipped</span></td><td class="px-6 py-4 text-right mono font-semibold">$17,280</td><td class="px-6 py-4 text-right text-slate-500">Apr 10</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+</body>
+</html>

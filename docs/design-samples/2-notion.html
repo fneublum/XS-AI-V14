@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>XS-ERP — Notion / Airtable</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  body { font-family: 'Inter', system-ui, sans-serif; background: #fbfaf8; color: #2f2f2f; }
+  .paper { background: #fbfaf8; }
+  .warm { background: #f7f4ef; }
+  .chip { border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; }
+</style>
+</head>
+<body class="antialiased">
+
+<div class="flex min-h-screen">
+  <!-- Sidebar -->
+  <aside class="w-60 warm border-r border-[#ece8e1] flex flex-col">
+    <div class="p-3 flex items-center gap-2 hover:bg-[#efebe4] rounded-md mx-2 mt-2 cursor-pointer">
+      <div class="w-7 h-7 rounded-md bg-gradient-to-br from-orange-400 to-pink-400 flex items-center justify-center text-white text-xs font-bold">X</div>
+      <div class="flex-1 text-sm font-semibold">XS-ERP Workspace</div>
+      <span class="text-gray-400 text-xs">⌄</span>
+    </div>
+
+    <div class="px-3 mt-2">
+      <button class="w-full flex items-center gap-2 px-2 py-1 text-sm text-gray-500 hover:bg-[#efebe4] rounded">
+        <span>🔍</span><span>Search</span>
+      </button>
+      <button class="w-full flex items-center gap-2 px-2 py-1 text-sm text-gray-500 hover:bg-[#efebe4] rounded">
+        <span>⚙️</span><span>Settings</span>
+      </button>
+    </div>
+
+    <nav class="flex-1 px-3 mt-4 text-sm">
+      <div class="px-2 text-[11px] uppercase font-semibold text-gray-400 tracking-wider mb-1">Overview</div>
+      <a class="flex items-center gap-2 px-2 py-1 rounded bg-[#efebe4] font-medium">
+        <span>📊</span><span>Dashboard</span>
+      </a>
+      <div class="px-2 text-[11px] uppercase font-semibold text-gray-400 tracking-wider mt-4 mb-1">Contacts</div>
+      <a class="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#efebe4]">
+        <span>🧑</span><span>Customers</span><span class="ml-auto text-gray-400 text-xs">128</span>
+      </a>
+      <a class="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#efebe4]">
+        <span>🏭</span><span>Suppliers</span><span class="ml-auto text-gray-400 text-xs">42</span>
+      </a>
+      <div class="px-2 text-[11px] uppercase font-semibold text-gray-400 tracking-wider mt-4 mb-1">Orders</div>
+      <a class="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#efebe4]">
+        <span>📦</span><span>Sales Orders</span><span class="ml-auto chip bg-emerald-100 text-emerald-700">7</span>
+      </a>
+      <a class="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#efebe4]">
+        <span>🛒</span><span>Purchase Orders</span>
+      </a>
+      <a class="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#efebe4]">
+        <span>🚢</span><span>Logistics</span>
+      </a>
+      <div class="px-2 text-[11px] uppercase font-semibold text-gray-400 tracking-wider mt-4 mb-1">Finance</div>
+      <a class="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#efebe4]">
+        <span>💰</span><span>Receivables</span>
+      </a>
+      <a class="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#efebe4]">
+        <span>💸</span><span>Payables</span>
+      </a>
+      <a class="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#efebe4]">
+        <span>📈</span><span>Commissions</span>
+      </a>
+    </nav>
+
+    <div class="border-t border-[#ece8e1] p-3 flex items-center gap-2">
+      <div class="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center text-white text-xs font-bold">F</div>
+      <div class="text-[13px]"><div class="font-medium">Felipe N.</div><div class="text-[11px] text-gray-500">Admin · ACME</div></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="flex-1 flex flex-col paper">
+    <!-- Breadcrumb bar -->
+    <header class="px-8 py-3 border-b border-[#ece8e1] flex items-center gap-3 text-[13px]">
+      <span class="text-gray-500 hover:bg-[#f2eee8] px-1.5 py-0.5 rounded cursor-pointer">Overview</span>
+      <span class="text-gray-400">/</span>
+      <span class="font-medium">Dashboard</span>
+      <div class="ml-auto flex items-center gap-2">
+        <button class="px-2.5 py-1 hover:bg-[#f2eee8] rounded text-gray-600 text-xs">Share</button>
+        <button class="px-2.5 py-1 hover:bg-[#f2eee8] rounded text-gray-600 text-xs">⋯</button>
+      </div>
+    </header>
+
+    <main class="flex-1 px-8 py-8 overflow-auto">
+      <div class="max-w-5xl mx-auto">
+        <!-- Cover emoji + title -->
+        <div class="text-5xl mb-3">📊</div>
+        <h1 class="text-[34px] font-bold tracking-tight mb-1">Dashboard</h1>
+        <div class="text-[14px] text-gray-500 mb-8">Last 30 days · All companies</div>
+
+        <!-- Stat cards -->
+        <div class="grid grid-cols-4 gap-3 mb-8">
+          <div class="p-4 rounded-lg bg-white border border-[#ece8e1] hover:shadow-sm transition">
+            <div class="text-[12px] text-gray-500 mb-1">💰 Revenue</div>
+            <div class="text-[24px] font-bold">$184,392</div>
+            <div class="chip bg-emerald-100 text-emerald-700 mt-2">↑ 12.4%</div>
+          </div>
+          <div class="p-4 rounded-lg bg-white border border-[#ece8e1] hover:shadow-sm transition">
+            <div class="text-[12px] text-gray-500 mb-1">📦 Orders</div>
+            <div class="text-[24px] font-bold">42</div>
+            <div class="chip bg-blue-100 text-blue-700 mt-2">↑ 8 new</div>
+          </div>
+          <div class="p-4 rounded-lg bg-white border border-[#ece8e1] hover:shadow-sm transition">
+            <div class="text-[12px] text-gray-500 mb-1">🧑 Customers</div>
+            <div class="text-[24px] font-bold">128</div>
+            <div class="chip bg-purple-100 text-purple-700 mt-2">+3 this week</div>
+          </div>
+          <div class="p-4 rounded-lg bg-white border border-[#ece8e1] hover:shadow-sm transition">
+            <div class="text-[12px] text-gray-500 mb-1">⏰ Pending</div>
+            <div class="text-[24px] font-bold">$28,104</div>
+            <div class="chip bg-amber-100 text-amber-700 mt-2">5 overdue</div>
+          </div>
+        </div>
+
+        <!-- Database-style table -->
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-[13px] font-medium">Recent sales orders</span>
+          <span class="text-[12px] text-gray-400">7 items</span>
+          <button class="ml-auto text-[12px] text-gray-600 hover:bg-[#f2eee8] px-2 py-0.5 rounded">+ Add</button>
+          <button class="text-[12px] text-gray-600 hover:bg-[#f2eee8] px-2 py-0.5 rounded">Filter</button>
+        </div>
+        <div class="border border-[#ece8e1] rounded-lg overflow-hidden bg-white">
+          <div class="grid grid-cols-[100px_1fr_140px_110px_90px] bg-[#f9f7f4] border-b border-[#ece8e1] text-[11px] uppercase font-semibold text-gray-500 tracking-wider">
+            <div class="px-3 py-2">Order</div><div class="px-3 py-2">Customer</div><div class="px-3 py-2">Status</div><div class="px-3 py-2 text-right">Amount</div><div class="px-3 py-2 text-right">Date</div>
+          </div>
+          <div class="divide-y divide-[#ece8e1] text-[13.5px]">
+            <div class="grid grid-cols-[100px_1fr_140px_110px_90px] hover:bg-[#faf8f4]"><div class="px-3 py-2.5 font-mono text-[12px]">SO-7A2F</div><div class="px-3 py-2.5">Acme Industries</div><div class="px-3 py-2.5"><span class="chip bg-emerald-100 text-emerald-700">● Shipped</span></div><div class="px-3 py-2.5 text-right font-medium">$12,480</div><div class="px-3 py-2.5 text-right text-gray-500">Apr 14</div></div>
+            <div class="grid grid-cols-[100px_1fr_140px_110px_90px] hover:bg-[#faf8f4]"><div class="px-3 py-2.5 font-mono text-[12px]">SO-9B1C</div><div class="px-3 py-2.5">Zenith Materials Co.</div><div class="px-3 py-2.5"><span class="chip bg-blue-100 text-blue-700">● In transit</span></div><div class="px-3 py-2.5 text-right font-medium">$8,920</div><div class="px-3 py-2.5 text-right text-gray-500">Apr 13</div></div>
+            <div class="grid grid-cols-[100px_1fr_140px_110px_90px] hover:bg-[#faf8f4]"><div class="px-3 py-2.5 font-mono text-[12px]">SO-4D88</div><div class="px-3 py-2.5">Meridian Logistics LLC</div><div class="px-3 py-2.5"><span class="chip bg-amber-100 text-amber-700">● Pending</span></div><div class="px-3 py-2.5 text-right font-medium">$23,100</div><div class="px-3 py-2.5 text-right text-gray-500">Apr 12</div></div>
+            <div class="grid grid-cols-[100px_1fr_140px_110px_90px] hover:bg-[#faf8f4]"><div class="px-3 py-2.5 font-mono text-[12px]">SO-5E30</div><div class="px-3 py-2.5">Titan Steel Corp.</div><div class="px-3 py-2.5"><span class="chip bg-gray-100 text-gray-600">● Draft</span></div><div class="px-3 py-2.5 text-right font-medium">$4,650</div><div class="px-3 py-2.5 text-right text-gray-500">Apr 11</div></div>
+            <div class="grid grid-cols-[100px_1fr_140px_110px_90px] hover:bg-[#faf8f4]"><div class="px-3 py-2.5 font-mono text-[12px]">SO-1F09</div><div class="px-3 py-2.5">Everwell Imports</div><div class="px-3 py-2.5"><span class="chip bg-emerald-100 text-emerald-700">● Shipped</span></div><div class="px-3 py-2.5 text-right font-medium">$17,280</div><div class="px-3 py-2.5 text-right text-gray-500">Apr 10</div></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+</body>
+</html>

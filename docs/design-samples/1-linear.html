@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>XS-ERP — Linear / Vercel</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui'], mono: ['JetBrains Mono', 'ui-monospace'] },
+  colors: { bg: '#0a0a0a', panel: '#111111', line: '#1f1f1f', dim: '#6b7280', fg: '#e5e5e5', accent: '#5e6ad2' }
+}}}
+</script>
+<style>
+  body { background: #0a0a0a; color: #e5e5e5; font-feature-settings: "ss01"; }
+  .mono-num { font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', monospace; }
+  .hair { border-color: #1f1f1f; }
+  ::selection { background: #5e6ad2; color: white; }
+</style>
+</head>
+<body class="font-sans antialiased">
+
+<div class="flex min-h-screen">
+  <!-- Sidebar -->
+  <aside class="w-56 border-r hair bg-[#0a0a0a] flex flex-col">
+    <div class="px-4 h-14 flex items-center gap-2 border-b hair">
+      <div class="w-5 h-5 rounded bg-gradient-to-br from-indigo-500 to-purple-500"></div>
+      <span class="font-semibold text-[13px] tracking-tight">XS-ERP</span>
+      <span class="ml-auto text-[10px] text-gray-500 mono-num">v12</span>
+    </div>
+    <nav class="flex-1 px-2 py-3 text-[13px] text-gray-400">
+      <div class="px-2 text-[10px] uppercase tracking-widest text-gray-600 mb-1.5">Workspace</div>
+      <a class="flex items-center justify-between px-2 py-1.5 rounded-md bg-[#161616] text-white">
+        <span class="flex items-center gap-2">▪ Dashboard</span><span class="text-[10px] text-gray-500 mono-num">⌘D</span>
+      </a>
+      <a class="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-[#161616] hover:text-white">
+        <span class="flex items-center gap-2">○ Customers</span><span class="text-[10px] text-gray-600 mono-num">128</span>
+      </a>
+      <a class="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-[#161616] hover:text-white">
+        <span class="flex items-center gap-2">○ Suppliers</span><span class="text-[10px] text-gray-600 mono-num">42</span>
+      </a>
+      <a class="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-[#161616] hover:text-white">
+        <span class="flex items-center gap-2">○ Sales Orders</span><span class="text-[10px] text-gray-600 mono-num">7</span>
+      </a>
+      <a class="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-[#161616] hover:text-white">
+        <span class="flex items-center gap-2">○ Purchase Orders</span>
+      </a>
+      <a class="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-[#161616] hover:text-white">
+        <span class="flex items-center gap-2">○ Logistics</span>
+      </a>
+      <div class="px-2 text-[10px] uppercase tracking-widest text-gray-600 mt-4 mb-1.5">Finance</div>
+      <a class="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-[#161616] hover:text-white">
+        <span class="flex items-center gap-2">○ Receivables</span>
+      </a>
+      <a class="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-[#161616] hover:text-white">
+        <span class="flex items-center gap-2">○ Payables</span>
+      </a>
+      <a class="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-[#161616] hover:text-white">
+        <span class="flex items-center gap-2">○ Commissions</span>
+      </a>
+    </nav>
+    <div class="border-t hair p-3 flex items-center gap-2">
+      <div class="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500"></div>
+      <div class="text-[12px]"><div>Felipe N.</div><div class="text-[10px] text-gray-500">Admin</div></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="flex-1 flex flex-col">
+    <!-- Top bar -->
+    <header class="h-14 border-b hair flex items-center px-6 gap-4 bg-[#0a0a0a]">
+      <div class="flex items-center gap-2 text-[13px] text-gray-400">
+        <span>Workspace</span><span class="text-gray-600">/</span><span class="text-white">Dashboard</span>
+      </div>
+      <div class="ml-auto flex items-center gap-3">
+        <div class="flex items-center gap-2 px-2.5 py-1 bg-[#111111] border hair rounded-md text-[12px] text-gray-500">
+          <span>Search</span><span class="mono-num text-[10px] text-gray-600">⌘K</span>
+        </div>
+        <button class="px-2.5 py-1 bg-[#5e6ad2] text-white text-[12px] rounded-md font-medium">New order</button>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <main class="flex-1 p-6 overflow-auto">
+      <div class="max-w-6xl">
+        <div class="flex items-baseline justify-between mb-8">
+          <div>
+            <h1 class="text-[22px] font-semibold tracking-tight">Dashboard</h1>
+            <p class="text-[13px] text-gray-500 mt-0.5">Last 30 days · Company ACME</p>
+          </div>
+          <div class="flex gap-1 text-[12px] text-gray-500">
+            <button class="px-2 py-1 rounded border hair hover:text-white">7d</button>
+            <button class="px-2 py-1 rounded bg-[#161616] text-white">30d</button>
+            <button class="px-2 py-1 rounded border hair hover:text-white">90d</button>
+          </div>
+        </div>
+
+        <!-- Stat grid -->
+        <div class="grid grid-cols-4 gap-px bg-[#1f1f1f] border hair rounded-md overflow-hidden mb-8">
+          <div class="bg-[#0a0a0a] p-4">
+            <div class="text-[11px] text-gray-500 uppercase tracking-wider">Revenue</div>
+            <div class="mono-num text-[26px] font-semibold mt-1">$184,392</div>
+            <div class="text-[11px] text-emerald-400 mono-num mt-1">+12.4%</div>
+          </div>
+          <div class="bg-[#0a0a0a] p-4">
+            <div class="text-[11px] text-gray-500 uppercase tracking-wider">Orders</div>
+            <div class="mono-num text-[26px] font-semibold mt-1">42</div>
+            <div class="text-[11px] text-emerald-400 mono-num mt-1">+8</div>
+          </div>
+          <div class="bg-[#0a0a0a] p-4">
+            <div class="text-[11px] text-gray-500 uppercase tracking-wider">Customers</div>
+            <div class="mono-num text-[26px] font-semibold mt-1">128</div>
+            <div class="text-[11px] text-gray-500 mono-num mt-1">+3 new</div>
+          </div>
+          <div class="bg-[#0a0a0a] p-4">
+            <div class="text-[11px] text-gray-500 uppercase tracking-wider">Pending</div>
+            <div class="mono-num text-[26px] font-semibold mt-1">$28,104</div>
+            <div class="text-[11px] text-amber-400 mono-num mt-1">5 overdue</div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="border hair rounded-md overflow-hidden">
+          <div class="px-4 py-2.5 border-b hair flex items-center justify-between">
+            <span class="text-[13px] font-medium">Recent sales orders</span>
+            <span class="text-[11px] text-gray-500">7 active</span>
+          </div>
+          <table class="w-full text-[12.5px]">
+            <thead class="text-gray-500">
+              <tr class="border-b hair">
+                <th class="text-left font-normal px-4 py-2">Order</th>
+                <th class="text-left font-normal px-4 py-2">Customer</th>
+                <th class="text-left font-normal px-4 py-2">Status</th>
+                <th class="text-right font-normal px-4 py-2 mono-num">Amount</th>
+                <th class="text-right font-normal px-4 py-2">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b hair hover:bg-[#111111]"><td class="px-4 py-2.5 mono-num">SO-7A2F</td><td class="px-4 py-2.5">Acme Industries</td><td class="px-4 py-2.5"><span class="px-1.5 py-0.5 text-[10px] rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Shipped</span></td><td class="px-4 py-2.5 text-right mono-num">$12,480</td><td class="px-4 py-2.5 text-right text-gray-500 mono-num">Apr 14</td></tr>
+              <tr class="border-b hair hover:bg-[#111111]"><td class="px-4 py-2.5 mono-num">SO-9B1C</td><td class="px-4 py-2.5">Zenith Materials Co.</td><td class="px-4 py-2.5"><span class="px-1.5 py-0.5 text-[10px] rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">In transit</span></td><td class="px-4 py-2.5 text-right mono-num">$8,920</td><td class="px-4 py-2.5 text-right text-gray-500 mono-num">Apr 13</td></tr>
+              <tr class="border-b hair hover:bg-[#111111]"><td class="px-4 py-2.5 mono-num">SO-4D88</td><td class="px-4 py-2.5">Meridian Logistics LLC</td><td class="px-4 py-2.5"><span class="px-1.5 py-0.5 text-[10px] rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">Pending</span></td><td class="px-4 py-2.5 text-right mono-num">$23,100</td><td class="px-4 py-2.5 text-right text-gray-500 mono-num">Apr 12</td></tr>
+              <tr class="border-b hair hover:bg-[#111111]"><td class="px-4 py-2.5 mono-num">SO-5E30</td><td class="px-4 py-2.5">Titan Steel Corp.</td><td class="px-4 py-2.5"><span class="px-1.5 py-0.5 text-[10px] rounded bg-gray-500/10 text-gray-400 border border-gray-500/20">Draft</span></td><td class="px-4 py-2.5 text-right mono-num">$4,650</td><td class="px-4 py-2.5 text-right text-gray-500 mono-num">Apr 11</td></tr>
+              <tr class="hover:bg-[#111111]"><td class="px-4 py-2.5 mono-num">SO-1F09</td><td class="px-4 py-2.5">Everwell Imports</td><td class="px-4 py-2.5"><span class="px-1.5 py-0.5 text-[10px] rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Shipped</span></td><td class="px-4 py-2.5 text-right mono-num">$17,280</td><td class="px-4 py-2.5 text-right text-gray-500 mono-num">Apr 10</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+</body>
+</html>

@@ -4,12 +4,16 @@ import React, { Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { initializeMsal } from './services/smailAuth';
+import { shouldMountV2 } from './v2/services/featureFlags';
 
-// Phase 3A — opt-in v2 shell. `?v2=1` in the URL mounts v2/AppV2 instead
-// of the legacy App. v2 bundle only loads when the flag is set.
+// Phase 3A/B — v2 opt-in. Precedence (highest wins):
+//   1. `?v2=1` URL param — always v2
+//   2. `?v2=0` URL param — always v1
+//   3. localStorage `xs_feature_flags['v2-default']=true`
+//   4. Default: v1
+// See v2/services/featureFlags.ts for the source of truth.
 const AppV2 = lazy(() => import('./v2/AppV2'));
-const useV2 = typeof window !== 'undefined'
-  && new URLSearchParams(window.location.search).get('v2') === '1';
+const useV2 = shouldMountV2();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
