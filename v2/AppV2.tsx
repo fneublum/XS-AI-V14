@@ -14,17 +14,25 @@ import { SalesOrderDrawer } from './components/SalesOrderDrawer';
 import { getSupabaseClient } from '../services/supabase';
 import { SalesOrder } from './queries/useSalesOrders';
 
-const DashboardV2      = lazy(() => import('./routes/DashboardV2'));
-const CustomersV2      = lazy(() => import('./routes/CustomersV2'));
-const SuppliersV2      = lazy(() => import('./routes/SuppliersV2'));
-const SalesOrdersV2    = lazy(() => import('./routes/SalesOrdersV2'));
-const PurchaseOrdersV2 = lazy(() => import('./routes/PurchaseOrdersV2'));
-const OpportunitiesV2  = lazy(() => import('./routes/OpportunitiesV2'));
-const ProductsV2       = lazy(() => import('./routes/ProductsV2'));
-const InventoryV2      = lazy(() => import('./routes/InventoryV2'));
-const FreightQuotesV2  = lazy(() => import('./routes/FreightQuotesV2'));
-const BookingsV2       = lazy(() => import('./routes/BookingsV2'));
-const ShipmentsV2      = lazy(() => import('./routes/ShipmentsV2'));
+const DashboardV2       = lazy(() => import('./routes/DashboardV2'));
+const CustomersV2       = lazy(() => import('./routes/CustomersV2'));
+const SuppliersV2       = lazy(() => import('./routes/SuppliersV2'));
+const SalesOrdersV2     = lazy(() => import('./routes/SalesOrdersV2'));
+const PurchaseOrdersV2  = lazy(() => import('./routes/PurchaseOrdersV2'));
+const OpportunitiesV2   = lazy(() => import('./routes/OpportunitiesV2'));
+const ProductsV2        = lazy(() => import('./routes/ProductsV2'));
+const InventoryV2       = lazy(() => import('./routes/InventoryV2'));
+const FreightQuotesV2   = lazy(() => import('./routes/FreightQuotesV2'));
+const BookingsV2        = lazy(() => import('./routes/BookingsV2'));
+const ShipmentsV2       = lazy(() => import('./routes/ShipmentsV2'));
+const BillOfLadingsV2   = lazy(() => import('./routes/BillOfLadingsV2'));
+const PackingListsV2    = lazy(() => import('./routes/PackingListsV2'));
+const InvoicesV2        = lazy(() => import('./routes/InvoicesV2'));
+const ReceivablesV2     = lazy(() => import('./routes/ReceivablesV2'));
+const PayablesV2        = lazy(() => import('./routes/PayablesV2'));
+const CommissionsV2     = lazy(() => import('./routes/CommissionsV2'));
+const AdminUsersV2      = lazy(() => import('./routes/AdminUsersV2'));
+const AdminCompaniesV2  = lazy(() => import('./routes/AdminCompaniesV2'));
 
 const sections = [
   {
@@ -54,8 +62,8 @@ const sections = [
       { id: 'freight-quotes', label: 'Freight Quotes', hint: 'Q' },
       { id: 'bookings',       label: 'Bookings',       hint: 'B' },
       { id: 'shipments',      label: 'Shipments' },
-      { id: 'bol',            label: 'Bill of Ladings',  disabled: true },
-      { id: 'packing-lists',  label: 'Packing Lists',    disabled: true },
+      { id: 'bol',            label: 'Bill of Ladings' },
+      { id: 'packing-lists',  label: 'Packing Lists' },
       { id: 'logistics-docs', label: 'Logistics Docs',   disabled: true },
     ],
   },
@@ -63,10 +71,10 @@ const sections = [
     id: 'finance',
     label: 'Finance',
     items: [
-      { id: 'invoices',     label: 'Invoices',     disabled: true },
-      { id: 'receivables',  label: 'Receivables',  disabled: true },
-      { id: 'payables',     label: 'Payables',     disabled: true },
-      { id: 'commissions',  label: 'Commissions',  disabled: true },
+      { id: 'invoices',     label: 'Invoices' },
+      { id: 'receivables',  label: 'Receivables' },
+      { id: 'payables',     label: 'Payables' },
+      { id: 'commissions',  label: 'Commissions' },
       { id: 'pl',           label: 'P&L',          disabled: true },
     ],
   },
@@ -85,8 +93,8 @@ const sections = [
     id: 'admin',
     label: 'Admin',
     items: [
-      { id: 'users',       label: 'Users',       disabled: true },
-      { id: 'companies',   label: 'Companies',   disabled: true },
+      { id: 'users',       label: 'Users' },
+      { id: 'companies',   label: 'Companies' },
       { id: 'settings',    label: 'Settings',    disabled: true },
       { id: 'connections', label: 'Connections', disabled: true },
     ],
@@ -105,6 +113,14 @@ const routeTitles: Record<string, string> = {
   'freight-quotes':  'Freight Quotes',
   'bookings':        'Bookings',
   'shipments':       'Shipments',
+  'bol':             'Bill of Ladings',
+  'packing-lists':   'Packing Lists',
+  'invoices':        'Invoices',
+  'receivables':     'Receivables',
+  'payables':        'Payables',
+  'commissions':     'Commissions',
+  'users':           'Users',
+  'companies':       'Companies',
 };
 
 const routeHotkeys: Record<string, string> = {
@@ -130,6 +146,14 @@ const routeSection: Record<string, string> = {
   'freight-quotes':  'Logistics',
   'bookings':        'Logistics',
   'shipments':       'Logistics',
+  'bol':             'Logistics',
+  'packing-lists':   'Logistics',
+  'invoices':        'Finance',
+  'receivables':     'Finance',
+  'payables':        'Finance',
+  'commissions':     'Finance',
+  'users':           'Admin',
+  'companies':       'Admin',
 };
 
 const Fallback: React.FC = () => (
@@ -331,6 +355,14 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'freight-quotes'  && <FreightQuotesV2 />}
           {activeId === 'bookings'        && <BookingsV2 />}
           {activeId === 'shipments'       && <ShipmentsV2 />}
+          {activeId === 'bol'             && <BillOfLadingsV2 />}
+          {activeId === 'packing-lists'   && <PackingListsV2 />}
+          {activeId === 'invoices'        && <InvoicesV2 />}
+          {activeId === 'receivables'     && <ReceivablesV2 />}
+          {activeId === 'payables'        && <PayablesV2 />}
+          {activeId === 'commissions'     && <CommissionsV2 />}
+          {activeId === 'users'           && <AdminUsersV2 />}
+          {activeId === 'companies'       && <AdminCompaniesV2 />}
         </Suspense>
       </AppShell>
 
