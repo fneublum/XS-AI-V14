@@ -6,7 +6,7 @@ import {
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { useCustomers, Customer } from '../queries/useCustomers';
-import { useToast } from '../primitives/Toast';
+import { useEditor } from '../providers/EditorProvider';
 
 const columns: DataTableColumn<Customer>[] = [
   { id: 'name',     header: 'Name',                cell: r => (
@@ -29,7 +29,7 @@ const columns: DataTableColumn<Customer>[] = [
 
 const CustomersV2: React.FC = () => {
   const [search, setSearch] = useState('');
-  const toast = useToast();
+  const { openCustomer } = useEditor();
   const customers = useCustomers(search);
 
   return (
@@ -92,11 +92,7 @@ const CustomersV2: React.FC = () => {
             columns={columns}
             rows={customers.data}
             getRowId={r => r.id}
-            onRowClick={r => toast.push({
-              kind: 'info',
-              title: r.name,
-              description: r.email ?? r.country ?? r.id,
-            })}
+            onRowClick={r => openCustomer(r)}
           />
         )}
       </Card>

@@ -10,7 +10,11 @@ import { EditorProvider, useEditor } from './providers/EditorProvider';
 import { AppShell } from './layout/AppShell';
 import { CompanySwitcher } from './layout/CompanySwitcher';
 import { CommandPalette, PaletteCommand, PaletteDataProvider } from './layout/CommandPalette';
-import { SalesOrderDrawer } from './components/SalesOrderDrawer';
+import { SalesOrderDrawer }    from './components/SalesOrderDrawer';
+import { CustomerDrawer }      from './components/CustomerDrawer';
+import { SupplierDrawer }      from './components/SupplierDrawer';
+import { InvoiceDrawer }       from './components/InvoiceDrawer';
+import { PurchaseOrderDrawer } from './components/PurchaseOrderDrawer';
 import { getSupabaseClient } from '../services/supabase';
 import { SalesOrder } from './queries/useSalesOrders';
 
@@ -33,6 +37,15 @@ const PayablesV2        = lazy(() => import('./routes/PayablesV2'));
 const CommissionsV2     = lazy(() => import('./routes/CommissionsV2'));
 const AdminUsersV2      = lazy(() => import('./routes/AdminUsersV2'));
 const AdminCompaniesV2  = lazy(() => import('./routes/AdminCompaniesV2'));
+const AiDashboardV2         = lazy(() => import('./routes/AiDashboardV2'));
+const AiUploadV2            = lazy(() => import('./routes/AiUploadV2'));
+const AiEmailAssistantV2    = lazy(() => import('./routes/AiEmailAssistantV2'));
+const AiLogisticsManagerV2  = lazy(() => import('./routes/AiLogisticsManagerV2'));
+const EmailAgentV2          = lazy(() => import('./routes/EmailAgentV2'));
+const SettingsV2            = lazy(() => import('./routes/SettingsV2'));
+const ConnectionsV2         = lazy(() => import('./routes/ConnectionsV2'));
+const PLV2                  = lazy(() => import('./routes/PLV2'));
+const LogisticsDocsV2       = lazy(() => import('./routes/LogisticsDocsV2'));
 
 const sections = [
   {
@@ -64,7 +77,7 @@ const sections = [
       { id: 'shipments',      label: 'Shipments' },
       { id: 'bol',            label: 'Bill of Ladings' },
       { id: 'packing-lists',  label: 'Packing Lists' },
-      { id: 'logistics-docs', label: 'Logistics Docs',   disabled: true },
+      { id: 'logistics-docs', label: 'Logistics Docs' },
     ],
   },
   {
@@ -75,18 +88,18 @@ const sections = [
       { id: 'receivables',  label: 'Receivables' },
       { id: 'payables',     label: 'Payables' },
       { id: 'commissions',  label: 'Commissions' },
-      { id: 'pl',           label: 'P&L',          disabled: true },
+      { id: 'pl',           label: 'P&L' },
     ],
   },
   {
     id: 'ai',
     label: 'AI',
     items: [
-      { id: 'ai-dashboard',     label: 'AI Dashboard',        disabled: true },
-      { id: 'ai-upload',        label: 'AI Upload',           disabled: true },
-      { id: 'ai-email',         label: 'AI Email Assistant',  disabled: true },
-      { id: 'ai-logistics',     label: 'AI Logistics Manager',disabled: true },
-      { id: 'email-agent',      label: 'Email Agent',         disabled: true },
+      { id: 'ai-dashboard',     label: 'AI Dashboard' },
+      { id: 'ai-upload',        label: 'AI Upload' },
+      { id: 'ai-email',         label: 'AI Email Assistant' },
+      { id: 'ai-logistics',     label: 'AI Logistics Manager' },
+      { id: 'email-agent',      label: 'Email Agent' },
     ],
   },
   {
@@ -95,8 +108,8 @@ const sections = [
     items: [
       { id: 'users',       label: 'Users' },
       { id: 'companies',   label: 'Companies' },
-      { id: 'settings',    label: 'Settings',    disabled: true },
-      { id: 'connections', label: 'Connections', disabled: true },
+      { id: 'settings',    label: 'Settings' },
+      { id: 'connections', label: 'Connections' },
     ],
   },
 ];
@@ -121,6 +134,15 @@ const routeTitles: Record<string, string> = {
   'commissions':     'Commissions',
   'users':           'Users',
   'companies':       'Companies',
+  'logistics-docs':  'Logistics Docs',
+  'pl':              'P&L',
+  'ai-dashboard':    'AI Dashboard',
+  'ai-upload':       'AI Upload',
+  'ai-email':        'AI Email Assistant',
+  'ai-logistics':    'AI Logistics Manager',
+  'email-agent':     'Email Agent',
+  'settings':        'Settings',
+  'connections':     'Connections',
 };
 
 const routeHotkeys: Record<string, string> = {
@@ -152,8 +174,17 @@ const routeSection: Record<string, string> = {
   'receivables':     'Finance',
   'payables':        'Finance',
   'commissions':     'Finance',
+  'pl':              'Finance',
+  'logistics-docs':  'Logistics',
+  'ai-dashboard':    'AI',
+  'ai-upload':       'AI',
+  'ai-email':        'AI',
+  'ai-logistics':    'AI',
+  'email-agent':     'AI',
   'users':           'Admin',
   'companies':       'Admin',
+  'settings':        'Admin',
+  'connections':     'Admin',
 };
 
 const Fallback: React.FC = () => (
@@ -176,7 +207,13 @@ const AppV2Inner: React.FC = () => {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
-  const { editingSalesOrder, openSalesOrder, closeSalesOrder } = useEditor();
+  const {
+    editingSalesOrder, openSalesOrder, closeSalesOrder,
+    editingCustomer, closeCustomer,
+    editingSupplier, closeSupplier,
+    editingInvoice, closeInvoice,
+    editingPurchaseOrder, closePurchaseOrder,
+  } = useEditor();
 
   const navigate = useCallback((id: string) => {
     if (!routeTitles[id]) return;
@@ -363,6 +400,15 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'commissions'     && <CommissionsV2 />}
           {activeId === 'users'           && <AdminUsersV2 />}
           {activeId === 'companies'       && <AdminCompaniesV2 />}
+          {activeId === 'logistics-docs'  && <LogisticsDocsV2 />}
+          {activeId === 'pl'              && <PLV2 />}
+          {activeId === 'ai-dashboard'    && <AiDashboardV2 />}
+          {activeId === 'ai-upload'       && <AiUploadV2 />}
+          {activeId === 'ai-email'        && <AiEmailAssistantV2 />}
+          {activeId === 'ai-logistics'    && <AiLogisticsManagerV2 />}
+          {activeId === 'email-agent'     && <EmailAgentV2 />}
+          {activeId === 'settings'        && <SettingsV2 />}
+          {activeId === 'connections'     && <ConnectionsV2 />}
         </Suspense>
       </AppShell>
 
@@ -376,6 +422,22 @@ const AppV2Inner: React.FC = () => {
       <SalesOrderDrawer
         order={editingSalesOrder}
         onOpenChange={open => { if (!open) closeSalesOrder(); }}
+      />
+      <CustomerDrawer
+        customer={editingCustomer}
+        onOpenChange={open => { if (!open) closeCustomer(); }}
+      />
+      <SupplierDrawer
+        supplier={editingSupplier}
+        onOpenChange={open => { if (!open) closeSupplier(); }}
+      />
+      <InvoiceDrawer
+        invoice={editingInvoice}
+        onOpenChange={open => { if (!open) closeInvoice(); }}
+      />
+      <PurchaseOrderDrawer
+        po={editingPurchaseOrder}
+        onOpenChange={open => { if (!open) closePurchaseOrder(); }}
       />
     </>
   );

@@ -6,7 +6,7 @@ import {
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { useSuppliers, Supplier } from '../queries/useSuppliers';
-import { useToast } from '../primitives/Toast';
+import { useEditor } from '../providers/EditorProvider';
 
 const fmtRating = (n: number | null): React.ReactNode => {
   if (n === null) return <span className="text-slate-600">—</span>;
@@ -47,7 +47,7 @@ const columns: DataTableColumn<Supplier>[] = [
 
 const SuppliersV2: React.FC = () => {
   const [search, setSearch] = useState('');
-  const toast = useToast();
+  const { openSupplier } = useEditor();
   const suppliers = useSuppliers(search);
 
   return (
@@ -110,11 +110,7 @@ const SuppliersV2: React.FC = () => {
             columns={columns}
             rows={suppliers.data}
             getRowId={r => r.id}
-            onRowClick={r => toast.push({
-              kind: 'info',
-              title: r.name,
-              description: r.email ?? r.country ?? r.id,
-            })}
+            onRowClick={r => openSupplier(r)}
           />
         )}
       </Card>

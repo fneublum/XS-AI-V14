@@ -6,7 +6,7 @@ import {
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { usePurchaseOrders, PurchaseOrder } from '../queries/usePurchaseOrders';
-import { useToast } from '../primitives/Toast';
+import { useEditor } from '../providers/EditorProvider';
 
 const fmtCurrency = (n: number, currency: string) => {
   try {
@@ -62,7 +62,7 @@ const columns: DataTableColumn<PurchaseOrder>[] = [
 
 const PurchaseOrdersV2: React.FC = () => {
   const [search, setSearch] = useState('');
-  const toast = useToast();
+  const { openPurchaseOrder } = useEditor();
   const pos = usePurchaseOrders(search);
   const total = (pos.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
 
@@ -129,11 +129,7 @@ const PurchaseOrdersV2: React.FC = () => {
             columns={columns}
             rows={pos.data}
             getRowId={r => r.id}
-            onRowClick={r => toast.push({
-              kind: 'info',
-              title: r.id,
-              description: `${r.supplierName} · ${fmtCurrency(r.totalAmount, r.currency)}`,
-            })}
+            onRowClick={r => openPurchaseOrder(r)}
           />
         )}
       </Card>

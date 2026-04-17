@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
 import { useInvoices, Invoice } from '../queries/useInvoices';
-import { useToast } from '../primitives/Toast';
+import { useEditor } from '../providers/EditorProvider';
 
 const fmtMoney = (n: number, currency: string) => {
   try {
@@ -46,7 +46,7 @@ const columns: DataTableColumn<Invoice>[] = [
 
 const InvoicesV2: React.FC = () => {
   const [search, setSearch] = useState('');
-  const toast = useToast();
+  const { openInvoice } = useEditor();
   const invoices = useInvoices(search);
   const total = (invoices.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
 
@@ -67,11 +67,7 @@ const InvoicesV2: React.FC = () => {
       isLoading={invoices.isLoading}
       error={invoices.error}
       onRetry={invoices.refetch}
-      onRowClick={r => toast.push({
-        kind: 'info',
-        title: r.invoiceNumber,
-        description: `${r.soldTo ?? r.billToName ?? '—'} · ${fmtMoney(r.totalAmount, r.currency)}`,
-      })}
+      onRowClick={r => openInvoice(r)}
       skeletonCols={[100, 200, 80, 80, 80, 60]}
     />
   );
