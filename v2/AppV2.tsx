@@ -16,9 +16,15 @@ import { SalesOrder } from './queries/useSalesOrders';
 
 const DashboardV2      = lazy(() => import('./routes/DashboardV2'));
 const CustomersV2      = lazy(() => import('./routes/CustomersV2'));
-const SalesOrdersV2    = lazy(() => import('./routes/SalesOrdersV2'));
 const SuppliersV2      = lazy(() => import('./routes/SuppliersV2'));
+const SalesOrdersV2    = lazy(() => import('./routes/SalesOrdersV2'));
 const PurchaseOrdersV2 = lazy(() => import('./routes/PurchaseOrdersV2'));
+const OpportunitiesV2  = lazy(() => import('./routes/OpportunitiesV2'));
+const ProductsV2       = lazy(() => import('./routes/ProductsV2'));
+const InventoryV2      = lazy(() => import('./routes/InventoryV2'));
+const FreightQuotesV2  = lazy(() => import('./routes/FreightQuotesV2'));
+const BookingsV2       = lazy(() => import('./routes/BookingsV2'));
+const ShipmentsV2      = lazy(() => import('./routes/ShipmentsV2'));
 
 const sections = [
   {
@@ -27,19 +33,62 @@ const sections = [
     items: [
       { id: 'dashboard',       label: 'Dashboard',       hint: 'D' },
       { id: 'customers',       label: 'Customers',       hint: 'C' },
+      { id: 'suppliers',       label: 'Suppliers' },
       { id: 'sales-orders',    label: 'Sales Orders',    hint: 'O' },
-      { id: 'suppliers',       label: 'Suppliers',       hint: 'S' },
-      { id: 'purchase-orders', label: 'Purchase Orders', hint: 'P' },
-      { id: 'logistics',       label: 'Logistics',       disabled: true },
+      { id: 'purchase-orders', label: 'Purchase Orders' },
+      { id: 'opportunities',   label: 'Opportunities' },
+    ],
+  },
+  {
+    id: 'catalog',
+    label: 'Catalog',
+    items: [
+      { id: 'products',  label: 'Products',  hint: 'R' },
+      { id: 'inventory', label: 'Inventory', hint: 'I' },
+    ],
+  },
+  {
+    id: 'logistics',
+    label: 'Logistics',
+    items: [
+      { id: 'freight-quotes', label: 'Freight Quotes', hint: 'Q' },
+      { id: 'bookings',       label: 'Bookings',       hint: 'B' },
+      { id: 'shipments',      label: 'Shipments' },
+      { id: 'bol',            label: 'Bill of Ladings',  disabled: true },
+      { id: 'packing-lists',  label: 'Packing Lists',    disabled: true },
+      { id: 'logistics-docs', label: 'Logistics Docs',   disabled: true },
     ],
   },
   {
     id: 'finance',
     label: 'Finance',
     items: [
-      { id: 'receivables', label: 'Receivables', disabled: true },
-      { id: 'payables',    label: 'Payables',    disabled: true },
-      { id: 'commissions', label: 'Commissions', disabled: true },
+      { id: 'invoices',     label: 'Invoices',     disabled: true },
+      { id: 'receivables',  label: 'Receivables',  disabled: true },
+      { id: 'payables',     label: 'Payables',     disabled: true },
+      { id: 'commissions',  label: 'Commissions',  disabled: true },
+      { id: 'pl',           label: 'P&L',          disabled: true },
+    ],
+  },
+  {
+    id: 'ai',
+    label: 'AI',
+    items: [
+      { id: 'ai-dashboard',     label: 'AI Dashboard',        disabled: true },
+      { id: 'ai-upload',        label: 'AI Upload',           disabled: true },
+      { id: 'ai-email',         label: 'AI Email Assistant',  disabled: true },
+      { id: 'ai-logistics',     label: 'AI Logistics Manager',disabled: true },
+      { id: 'email-agent',      label: 'Email Agent',         disabled: true },
+    ],
+  },
+  {
+    id: 'admin',
+    label: 'Admin',
+    items: [
+      { id: 'users',       label: 'Users',       disabled: true },
+      { id: 'companies',   label: 'Companies',   disabled: true },
+      { id: 'settings',    label: 'Settings',    disabled: true },
+      { id: 'connections', label: 'Connections', disabled: true },
     ],
   },
 ];
@@ -47,17 +96,40 @@ const sections = [
 const routeTitles: Record<string, string> = {
   'dashboard':       'Dashboard',
   'customers':       'Customers',
-  'sales-orders':    'Sales Orders',
   'suppliers':       'Suppliers',
+  'sales-orders':    'Sales Orders',
   'purchase-orders': 'Purchase Orders',
+  'opportunities':   'Opportunities',
+  'products':        'Products',
+  'inventory':       'Inventory',
+  'freight-quotes':  'Freight Quotes',
+  'bookings':        'Bookings',
+  'shipments':       'Shipments',
 };
 
 const routeHotkeys: Record<string, string> = {
   d: 'dashboard',
   c: 'customers',
   o: 'sales-orders',
-  s: 'suppliers',
-  p: 'purchase-orders',
+  r: 'products',      // R for "pRoducts" (P is already Purchase Orders)
+  i: 'inventory',
+  q: 'freight-quotes',
+  b: 'bookings',
+};
+
+// Section each route belongs to, for breadcrumbs.
+const routeSection: Record<string, string> = {
+  'dashboard':       'Overview',
+  'customers':       'Workspace',
+  'suppliers':       'Workspace',
+  'sales-orders':    'Workspace',
+  'purchase-orders': 'Workspace',
+  'opportunities':   'Workspace',
+  'products':        'Catalog',
+  'inventory':       'Catalog',
+  'freight-quotes':  'Logistics',
+  'bookings':        'Logistics',
+  'shipments':       'Logistics',
 };
 
 const Fallback: React.FC = () => (
@@ -105,13 +177,13 @@ const AppV2Inner: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [navigate]);
 
-  const breadcrumbs = useMemo(
-    () => [
-      { id: 'ws', label: 'ACME' },
-      { id: activeId, label: routeTitles[activeId] ?? activeId, current: true },
-    ],
-    [activeId],
-  );
+  const breadcrumbs = useMemo(() => {
+    const section = routeSection[activeId];
+    const crumbs = [{ id: 'ws', label: 'ACME' }];
+    if (section && section !== 'Overview') crumbs.push({ id: 'section', label: section });
+    crumbs.push({ id: activeId, label: routeTitles[activeId] ?? activeId, current: true } as typeof crumbs[0] & { current: boolean });
+    return crumbs;
+  }, [activeId]);
 
   // Static palette commands.
   const commands: PaletteCommand[] = useMemo(() => [
@@ -122,7 +194,7 @@ const AppV2Inner: React.FC = () => {
         label: `Go to ${label}`,
         hint: letter?.toUpperCase(),
         section: 'Navigate',
-        keywords: `${label} ${id} page route`,
+        keywords: `${label} ${id} page route ${routeSection[id] ?? ''}`,
         onSelect: () => navigate(id),
       };
     }),
@@ -150,7 +222,7 @@ const AppV2Inner: React.FC = () => {
     },
   ], [navigate, toast]);
 
-  // Async palette providers — search customers + sales orders live.
+  // Async palette providers.
   const dataProviders: PaletteDataProvider[] = useMemo(() => [
     {
       id: 'customers',
@@ -250,9 +322,15 @@ const AppV2Inner: React.FC = () => {
         <Suspense fallback={<Fallback />}>
           {activeId === 'dashboard'       && <DashboardV2 />}
           {activeId === 'customers'       && <CustomersV2 />}
-          {activeId === 'sales-orders'    && <SalesOrdersV2 />}
           {activeId === 'suppliers'       && <SuppliersV2 />}
+          {activeId === 'sales-orders'    && <SalesOrdersV2 />}
           {activeId === 'purchase-orders' && <PurchaseOrdersV2 />}
+          {activeId === 'opportunities'   && <OpportunitiesV2 />}
+          {activeId === 'products'        && <ProductsV2 />}
+          {activeId === 'inventory'       && <InventoryV2 />}
+          {activeId === 'freight-quotes'  && <FreightQuotesV2 />}
+          {activeId === 'bookings'        && <BookingsV2 />}
+          {activeId === 'shipments'       && <ShipmentsV2 />}
         </Suspense>
       </AppShell>
 
