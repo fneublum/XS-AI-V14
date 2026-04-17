@@ -12,6 +12,26 @@ dist
 dist-ssr
 *.local
 
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+gcp-key*.json
+
+# macOS Finder duplicates & stale backups
+* 2.ts
+* 2.tsx
+* 2.js
+* 2.jsx
+* 2.html
+* 2.json
+* 2.css
+*.backup.ts
+*.backup.tsx
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -22,3 +42,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claude scheduled tasks
+.claude/scheduled_tasks.lock

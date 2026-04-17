@@ -5,6 +5,7 @@ import {
     Check, CheckCheck, Clock, AlertCircle, X, Trash2, Eraser, Sparkles
 } from 'lucide-react';
 import { getSupabaseClient } from '../services/supabase';
+import { invokeEdgeFunction } from '../services/edgeAuth';
 import { BillOfLading, Booking, Estimate, ProformaInvoice, PurchaseOrderExtract, Invoice, PackingList, SupplierInvoice, Port } from '../types';
 
 // ─── Lazy import of AiEmailAssistant ────────────────────────────────
@@ -16,9 +17,6 @@ const TWILIO_CACHE_TTL = 5 * 60 * 1000;
 let twilioCredsCache: { accountSid: string; authToken: string; phoneNumber: string } | null = null;
 let twilioCacheTimestamp = 0;
 
-// Twilio-send edge function config (proxy to avoid CSP)
-const SUPABASE_FN_URL = 'https://qfskvevighylzzmyiwre.supabase.co/functions/v1/whatsapp-send';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmc2t2ZXZpZ2h5bHp6bXlpd3JlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODE2MzQsImV4cCI6MjA3OTY1NzYzNH0.MZ3S57O9J6LGHaN5zbuNmW8Gt7Hg5MaJSF-U-JhTa0Q';
 const TEMPLATE_NAME = 'hall_notification_template';
 
 async function getTwilioCreds(): Promise<{ accountSid: string; authToken: string; phoneNumber: string } | null> {
@@ -325,37 +323,30 @@ const WhatsAppPanel: React.FC<{ currentUser?: any; currentCompanyId?: string }> 
                 payload.templateName = TEMPLATE_NAME;
             }
 
-            const waRes = await fetch(SUPABASE_FN_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                },
-                body: JSON.stringify(payload),
-            });
-
-            const waData = await waRes.json();
-
-            if (!waRes.ok || waData.error) {
-                throw new Error(waData.error || waData.message || `Meta WhatsApp API error`);
+            let waData: any;
+            try {
+                waData = await invokeEdgeFunction('whatsapp-send', {
+                    method: 'POST',
+                    body: payload,
+                });
+            } catch (err: any) {
+                throw new Error(err?.message || `Meta WhatsApp API error`);
             }
 
             // If we had to send a template, follow up with the actual free-form message text
             if (!sessionActive) {
                 await new Promise(r => setTimeout(r, 1500));
-                await fetch(SUPABASE_FN_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                    },
-                    body: JSON.stringify({ to: toNumber, text: text }),
-                });
+                try {
+                    await invokeEdgeFunction('whatsapp-send', {
+                        method: 'POST',
+                        body: { to: toNumber, text: text },
+                    });
+                } catch (err) {
+                    console.warn('[ConnectionsHub] Follow-up text after template failed:', err);
+                }
             }
 
-            const messageSid = waData.data?.messages?.[0]?.id || crypto.randomUUID();
+            const messageSid = waData?.data?.messages?.[0]?.id || crypto.randomUUID();
 
             // Save to main Supabase
             await sb.from('wa_messages').insert({

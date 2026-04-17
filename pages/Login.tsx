@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { User, Role } from '../types';
 import { Loader2, ArrowRight, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { getSupabaseClient } from '../services/supabase';
+import { issueEdgeToken } from '../services/edgeAuth';
 import pkg from '../package.json';
 
 interface LoginProps {
@@ -93,33 +94,36 @@ const Login: React.FC<LoginProps> = ({ onLogin, users, isLoading = false, dbErro
             return;
         }
 
-        // Hardcoded admin shortcut
-        if (cleanUsername.toUpperCase() === 'ADMIN' && cleanPassword === 'JCKING') {
-            onLogin({
-                id: 'ADMIN_HARDCODED',
-                name: 'Administrador',
-                username: 'ADMIN',
-                role: Role.ADMIN,
-                avatarInitials: 'AD',
-                allowed_company_ids: ['ALL'],
-                allowed_modules: ['ALL']
-            });
-            return;
-        }
+        // SECURITY: hardcoded ADMIN/JCKING bypass removed in Phase 1b.
+        // Admin access must now come from a real user row with role = ADMIN.
+        //
+        // TODO (Phase 1e): This function still compares dbUser.password in
+        // plaintext, which means passwords are stored unhashed in the DB.
+        // Migrate to Supabase Auth (supabase.auth.signInWithPassword) and
+        // hash any existing passwords via a backfill script. Until then,
+        // any DB read exposes every user's credentials.
 
         const normalizedUsername = cleanUsername.toLowerCase();
         const dbUser = users.find(u => u.username.trim().toLowerCase() === normalizedUsername);
 
         if (dbUser && dbUser.password === cleanPassword) {
+            // Phase 1c: fetch a server-signed JWT so subsequent Edge
+            // Function calls (Gemini proxy, QB sync, Twilio/WhatsApp
+            // send, etc.) are authenticated. Soft-fail if the auth-issue
+            // function is unreachable — the rest of the app still works
+            // against Supabase directly; edge-function features will
+            // surface their own "please sign in again" error.
+            try {
+                await issueEdgeToken(cleanUsername, cleanPassword);
+            } catch (err) {
+                console.warn('[Login] auth-issue failed — AI/Edge features may be unavailable', err);
+            }
             onLogin(dbUser);
             return;
         }
 
-        if (dbUser) {
-            setError('Incorrect password.');
-        } else {
-            setError('User not found.');
-        }
+        // Constant-error message to prevent user enumeration
+        setError('Invalid username or password.');
     };
 
     const bgStyle = bgSrc ? {

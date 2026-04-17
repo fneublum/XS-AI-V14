@@ -1,5 +1,9 @@
 
-import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
+// Phase 1c: routed through gemini-proxy Edge Function instead of the
+// SDK, so GEMINI_API_KEY never ships to the browser bundle. The shim
+// re-exports GoogleGenAI / Type / FunctionDeclaration with matching
+// shapes so every call site in this file works unchanged.
+import { GoogleGenAI, Type, FunctionDeclaration } from "./geminiClient";
 import { Product, Customer, Opportunity, DealStage, QuoteItem, SupplierQuote, Supplier, PurchaseOrder, SupplierOffer, Port, Shipment, FreightQuote, CostCalculation } from "../types";
 import { getSupabaseClient } from "./supabase";
 import { normalizeEntities } from "./aiAssistantService";
@@ -175,6 +179,89 @@ export const getGeminiInsight = async (prompt: string, context: string = ''): Pr
     }
 };
 
+/**
+ * Translate product descriptions to a target country's language.
+ * Uses direct Gemini API call (API key referrer updated to allow appspot.com).
+ */
+export const translateDescriptions = async (descriptions: string[], targetCountry: string): Promise<string[]> => {
+    try {
+        console.log('[translateDescriptions] Calling Gemini for', descriptions.length, 'items →', targetCountry);
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const prompt = `You are a professional translator. Translate these product descriptions to the main language spoken in ${targetCountry}. For example: Brazil → Portuguese, Mexico/Honduras/Colombia → Spanish, China → Chinese, United States → English.
+
+Descriptions:
+${descriptions.map((d, i) => `${i + 1}. ${d}`).join('\n')}
+
+Return ONLY a JSON array with exactly ${descriptions.length} translated strings, in the same order. No explanation, no markdown, no code fences. Example: ["translated 1", "translated 2"]`;
+
+        const response = await ai.models.generateContent({ model: MODEL_ID, contents: prompt });
+        const rawText = response.text || '[]';
+        console.log('[translateDescriptions] Raw response:', rawText.substring(0, 300));
+        const cleaned = rawText.replace(/```json\s*|\s*```/g, '').trim();
+        const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+        if (!arrayMatch) {
+            console.warn('[translateDescriptions] No JSON array found in response');
+            return [];
+        }
+        const translated = JSON.parse(arrayMatch[0]);
+        if (Array.isArray(translated) && translated.length > 0) {
+            console.log('[translateDescriptions] ✅ Success:', translated.length, 'translations');
+            return translated;
+        }
+        console.warn('[translateDescriptions] Empty or invalid response');
+        return [];
+    } catch (err) {
+        console.error('[translateDescriptions] ❌ Error:', err);
+        return [];
+    }
+};
+
+/**
+ * Generate localized UI labels AND a sales-oriented intro paragraph for a proposal document.
+ * Returns labels (seller/buyer/description/qty/price/total/incoterm/payment/date + closing) in target country's language.
+ */
+export const generateProposalLabels = async (
+    sellerName: string,
+    buyerName: string,
+    targetCountry: string
+): Promise<Record<string, string>> => {
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const prompt = `You are a professional international business communications writer.
+Generate a JSON object with localized labels and a short sales proposal intro for a B2B commodity trading company.
+The seller is "${sellerName}" and the buyer is "${buyerName}", located in ${targetCountry}.
+Write everything in the primary business language of ${targetCountry} (e.g. Brazil → Portuguese, Mexico → Spanish, China → Chinese, USA → English, etc.).
+
+Return ONLY a raw JSON object (no markdown, no code fences) with exactly these keys:
+{
+  "title": "COMMERCIAL PROPOSAL" (translated),
+  "labelSeller": "SELLER" (translated),
+  "labelBuyer": "BUYER" (translated),
+  "labelDate": "DATE" (translated),
+  "labelIncoterm": "INCOTERM" (translated),
+  "labelPayment": "PAYMENT TERMS" (translated),
+  "labelDescription": "DESCRIPTION" (translated),
+  "labelQty": "QTY / UNIT" (translated),
+  "labelUnitPrice": "UNIT PRICE" (translated),
+  "labelAmount": "AMOUNT" (translated),
+  "labelTotal": "TOTAL" (translated),
+  "labelValidity": "VALIDITY" (translated),
+  "validityValue": "30 days from the date of this proposal" (translated),
+  "intro": "A single short paragraph (2-3 sentences) in a warm, professional, sales-oriented tone addressed to ${buyerName}, expressing enthusiasm to offer high-quality products and the commitment to deliver value. Do NOT list products. Keep it under 50 words.",
+  "closing": "A single closing sentence thanking ${buyerName} and inviting them to confirm or negotiate. Under 25 words."
+}`;
+
+        const response = await ai.models.generateContent({ model: MODEL_ID, contents: prompt });
+        const rawText = (response.text || '{}').replace(/```json\s*|\s*```/g, '').trim();
+        const objMatch = rawText.match(/\{[\s\S]*\}/);
+        if (!objMatch) return {};
+        return JSON.parse(objMatch[0]);
+    } catch (err) {
+        console.error('[generateProposalLabels] ❌ Error:', err);
+        return {};
+    }
+};
+
 export const getQuoteRecommendation = async (productName: string, origin: string, destination: string): Promise<string> => {
     return getGeminiInsight(
         `I am creating a quote for ${productName} shipping from ${origin} to ${destination}.`,
@@ -281,11 +368,12 @@ RULES:
 1. Decide if this email NEEDS a reply from us. Newsletters, automated notifications, marketing emails, and internal system alerts do NOT need replies.
 2. If a reply is needed, draft a professional reply using ONLY real data from the ERP context. NEVER fabricate numbers, dates, or facts.
 3. If data is missing, say "I will confirm and get back to you" instead of making up values.
-4. Match the tone and language of the thread (if they write in Portuguese, reply in Portuguese; if formal English, reply formally).
+4. **CRITICAL — LANGUAGE MATCHING**: You MUST detect the language used in the email thread (especially the most recent messages) and ALWAYS reply in that SAME language. If the thread is in Portuguese, your reply MUST be entirely in Portuguese. If in Spanish, reply in Spanish. If in English, reply in English. NEVER switch languages. This is the most important rule.
 5. Reference specific order numbers, shipment details, prices, and dates from the ERP context when relevant.
 6. Keep replies concise and action-oriented.
 7. Determine priority: HIGH = money/urgent/overdue, MEDIUM = business operations, LOW = informational.
 8. Determine if the LAST message in the thread expects a reply from us (the sender is waiting for our response).
+9. When processing booking confirmations, freight quotes, shipping documents, or other operational documents that match existing records in the ERP context, NEVER ask the user whether to "create a new record" or "update the existing one". The system saves and updates records automatically — just confirm the document was received and logged.
 
 Return ONLY valid JSON:
 {
@@ -500,7 +588,7 @@ RULES:
 1. Be polite but clear — reference the original topic.
 2. If ${daysSinceSent} <= 3: gentle check-in. If 4-7: firmer follow-up. If > 7: urgent/final follow-up.
 3. Use ONLY real data from ERP context. Never fabricate.
-4. Match the language of the thread.
+4. **CRITICAL**: You MUST write the follow-up in the SAME language as the thread. If Portuguese, write in Portuguese. If Spanish, write in Spanish. NEVER switch languages.
 5. Keep it short (3-5 sentences max).
 
 Return ONLY valid JSON:
@@ -698,6 +786,7 @@ User: ${userMessage}`;
 };
 
 export const analyzeDocument = async (fileBase64: string, mimeType: string, prompt: string): Promise<string> => {
+    const _t0 = Date.now();
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -707,7 +796,36 @@ export const analyzeDocument = async (fileBase64: string, mimeType: string, prom
             model: MODEL_ID,
             contents: { parts: [{ inlineData: { mimeType: mimeType, data: fileBase64 } }, { text: prompt }] }
         });
-        return response.text || "";
+        const result = response.text || "";
+
+        // ── Brain Integration: Log every document OCR to the centralized brain ──
+        // Detect document type from the prompt to build memory
+        try {
+            const { brainService } = await import('./brainService');
+            const docTypeHint = detectDocTypeFromPrompt(prompt);
+            const resultPreview = result.substring(0, 300);
+
+            // Log interaction (fire-and-forget, never blocks the OCR response)
+            brainService.logInteraction({
+                source: 'document',
+                type: 'document_extract',
+                userId: 'system', // Will be enriched by the caller context
+                companyId: '',
+                inputSummary: `Document OCR [${mimeType}] — ${docTypeHint}`,
+                outputSummary: resultPreview,
+                metadata: {
+                    mimeType,
+                    docType: docTypeHint,
+                    resultLength: result.length,
+                    processingTimeMs: Date.now() - _t0,
+                    promptHint: prompt.substring(0, 100)
+                }
+            }).catch(() => { }); // Never fail the OCR because of brain logging
+        } catch {
+            // Brain service not available — silent fail
+        }
+
+        return result;
     } catch (e: any) {
         const keyStatus = process.env.API_KEY ? `Key present (${process.env.API_KEY.substring(0, 8)}...)` : 'Key undefined or empty';
         console.error("Gemini Document Analysis Error:", e);
@@ -715,6 +833,25 @@ export const analyzeDocument = async (fileBase64: string, mimeType: string, prom
         return "Error analyzing doc: " + (e.message || String(e));
     }
 };
+
+/**
+ * Helper: detect document type from the OCR prompt text.
+ * Used by brain to categorize document interactions without parsing the full prompt.
+ */
+function detectDocTypeFromPrompt(prompt: string): string {
+    const p = prompt.toUpperCase();
+    if (p.includes('BILL OF LADING') || p.includes('B/L')) return 'BILL_OF_LADING';
+    if (p.includes('PURCHASE ORDER') || p.includes('PO NUMBER')) return 'PURCHASE_ORDER';
+    if (p.includes('INVOICE') && p.includes('SUPPLIER')) return 'SUPPLIER_INVOICE';
+    if (p.includes('INVOICE')) return 'INVOICE';
+    if (p.includes('PROFORMA') || p.includes('ESTIMATE')) return 'ESTIMATE';
+    if (p.includes('BOOKING')) return 'BOOKING';
+    if (p.includes('PACKING LIST')) return 'PACKING_LIST';
+    if (p.includes('FREIGHT') && p.includes('QUOTE')) return 'FREIGHT_QUOTE';
+    if (p.includes('COMMISSION')) return 'COMMISSION_DOC';
+    if (p.includes('CLASSIFY') || p.includes('IDENTIFY') || p.includes('CATEGORY')) return 'IDENTIFICATION';
+    return 'GENERAL_DOCUMENT';
+}
 
 export const generateCustomerDescription = async (name: string, customer: string, specs: string) => {
     try {
@@ -923,7 +1060,26 @@ export const getSettingsAgentResponse = async (msg: string, hist: any[], ctx: an
 
 // --- SUPER COPILOT: ACTIVE MODE ---
 
-export type AgentActionType = 'CREATE_PO' | 'CREATE_SO' | 'CREATE_SUPPLIER' | 'CREATE_CUSTOMER' | 'CREATE_CARGO_AGENT' | 'CREATE_FREIGHT_QUOTE' | 'CREATE_PRODUCT' | 'UPDATE_CUSTOMER' | 'UPDATE_SUPPLIER' | 'DELETE_CUSTOMER' | 'DELETE_SUPPLIER' | 'DELETE_PRODUCT' | 'DELETE_FREIGHT_QUOTE' | 'SHOW_FREIGHT_QUOTES' | 'SHOW_BOOKINGS' | 'REQUEST_BOOKING' | 'SHOW_BOLS' | 'CONFIRM' | 'CANCEL' | 'CHAT';
+export type AgentActionType =
+    // CREATE
+    | 'CREATE_PO' | 'CREATE_SO' | 'CREATE_SUPPLIER' | 'CREATE_CUSTOMER' | 'CREATE_CARGO_AGENT'
+    | 'CREATE_FREIGHT_QUOTE' | 'CREATE_PRODUCT' | 'CREATE_CARRIER' | 'CREATE_PORT' | 'CREATE_BANK' | 'CREATE_LOCATION'
+    | 'REQUEST_BOOKING'
+    // UPDATE
+    | 'UPDATE_CUSTOMER' | 'UPDATE_SUPPLIER' | 'UPDATE_PRODUCT' | 'UPDATE_CARGO_AGENT'
+    | 'UPDATE_SO_STATUS' | 'UPDATE_PO_STATUS' | 'UPDATE_BOOKING_STATUS'
+    // DELETE
+    | 'DELETE_CUSTOMER' | 'DELETE_SUPPLIER' | 'DELETE_PRODUCT' | 'DELETE_FREIGHT_QUOTE'
+    | 'DELETE_CARGO_AGENT' | 'DELETE_CARRIER' | 'DELETE_PORT' | 'DELETE_BANK' | 'DELETE_LOCATION'
+    | 'DELETE_SO' | 'DELETE_PO' | 'DELETE_BOOKING' | 'DELETE_BOL'
+    | 'DELETE_INVOICE' | 'DELETE_SUPPLIER_INVOICE' | 'DELETE_PACKING_LIST' | 'DELETE_ESTIMATE' | 'DELETE_PROFORMA'
+    // SHOW
+    | 'SHOW_FREIGHT_QUOTES' | 'SHOW_BOOKINGS' | 'SHOW_BOLS' | 'SHOW_CUSTOMERS' | 'SHOW_SUPPLIERS'
+    | 'SHOW_PRODUCTS' | 'SHOW_SALES_ORDERS' | 'SHOW_PURCHASE_ORDERS' | 'SHOW_INVOICES'
+    | 'SHOW_SUPPLIER_INVOICES' | 'SHOW_ESTIMATES' | 'SHOW_PROFORMAS' | 'SHOW_PACKING_LISTS'
+    | 'SHOW_COMMISSIONS' | 'SHOW_CARGO_AGENTS' | 'SHOW_CARRIERS' | 'SHOW_PORTS' | 'SHOW_BANKS' | 'SHOW_LOCATIONS'
+    // FLOW
+    | 'CONFIRM' | 'CANCEL' | 'CHAT';
 
 export interface AgentAction {
     type: AgentActionType;
@@ -943,7 +1099,7 @@ export interface AgentAction {
         email?: string;
         phone?: string;
         country?: string;
-        // Address fields for updates
+        // Address fields
         location?: string;
         city?: string;
         state?: string;
@@ -971,6 +1127,36 @@ export interface AgentAction {
         notes?: string;
         unitPrice?: number;
         weightUnit?: string;
+        grade?: string;
+        description?: string;
+        sku?: string;
+        stockStatus?: string;
+        contact?: string;
+        // Carrier fields
+        carrierName?: string;
+        scac?: string;
+        name?: string;
+        // Port fields
+        portName?: string;
+        portCode?: string;
+        // Bank fields
+        bankName?: string;
+        bankCode?: string;
+        swiftCode?: string;
+        routingNumber?: string;
+        accountNumber?: string;
+        // Location fields
+        locationName?: string;
+        entityType?: string;
+        entityName?: string;
+        // Order/Doc identifiers
+        orderNumber?: string;
+        invoiceNumber?: string;
+        estimateNumber?: string;
+        piNumber?: string;
+        plNumber?: string;
+        // Status updates
+        status?: string;
     };
     missingFields: string[];
     confirmed?: boolean;
@@ -1272,15 +1458,37 @@ export const getDashboardAgentResponse = async (
             
             **Products:** create_product, edit_product, delete_product, view_products, search_product, get_product_history
             
+            **Cargo Agents:** create_cargo_agent, edit_cargo_agent, delete_cargo_agent, view_cargo_agents, search_cargo_agent
+            
             **Carriers:** create_carrier, edit_carrier, delete_carrier, view_carriers, search_carrier
             
-            **Bookings:** create_booking, edit_booking, delete_booking, view_bookings, view_booking_details, update_booking_status, track_shipment
+            **Ports:** create_port, delete_port, view_ports
             
-            **Bill of Lading:** create_bol, edit_bol, delete_bol, view_bols, view_bol_details, update_bol_status, print_bol
+            **Banks:** create_bank, delete_bank, view_banks
             
-            **Freight Quotes:** create_freight_quote, edit_freight_quote, delete_freight_quote, view_freight_quotes, view_freight_quote_details, update_freight_quote_status, compare_freight_quotes, accept_freight_quote
+            **Locations:** create_location, delete_location, view_locations
             
-            **Supplier Quotes:** create_supplier_quote, request_supplier_quote, edit_supplier_quote, delete_supplier_quote, view_supplier_quotes, view_supplier_quote_details, update_supplier_quote_status, compare_supplier_quotes, accept_supplier_quote, convert_quote_to_po
+            **Sales Orders:** create_sales_order, delete_sales_order, view_sales_orders, update_so_status
+            
+            **Purchase Orders:** create_purchase_order, delete_purchase_order, view_purchase_orders, update_po_status
+            
+            **Bookings:** create_booking, delete_booking, view_bookings, view_booking_details, update_booking_status, track_shipment
+            
+            **Bill of Lading:** delete_bol, view_bols, view_bol_details
+            
+            **Freight Quotes:** create_freight_quote, edit_freight_quote, delete_freight_quote, view_freight_quotes, compare_freight_quotes
+            
+            **Invoices:** delete_invoice, view_invoices
+            
+            **Supplier Invoices:** delete_supplier_invoice, view_supplier_invoices
+            
+            **Packing Lists:** delete_packing_list, view_packing_lists
+            
+            **Estimates:** delete_estimate, view_estimates
+            
+            **Proformas:** delete_proforma, view_proformas
+            
+            **Commissions:** view_commissions
             
             **Reports:** get_last_price, get_sales_report, get_purchase_report, get_shipment_report, get_freight_report
             
@@ -1468,6 +1676,7 @@ export const getDashboardAgentResponse = async (
 
         const mapIntentToActionType = (intent: string): AgentActionType | null => {
             const mapping: Record<string, AgentActionType> = {
+                // CREATE
                 'create_purchase_order': 'CREATE_PO',
                 'create_sales_order': 'CREATE_SO',
                 'create_supplier': 'CREATE_SUPPLIER',
@@ -1475,16 +1684,58 @@ export const getDashboardAgentResponse = async (
                 'create_product': 'CREATE_PRODUCT',
                 'create_freight_quote': 'CREATE_FREIGHT_QUOTE',
                 'create_booking': 'REQUEST_BOOKING',
-                'create_carrier': 'CREATE_CARGO_AGENT',
+                'create_cargo_agent': 'CREATE_CARGO_AGENT',
+                'create_carrier': 'CREATE_CARRIER',
+                'create_port': 'CREATE_PORT',
+                'create_bank': 'CREATE_BANK',
+                'create_location': 'CREATE_LOCATION',
+                // UPDATE
                 'edit_customer': 'UPDATE_CUSTOMER',
                 'edit_supplier': 'UPDATE_SUPPLIER',
+                'edit_product': 'UPDATE_PRODUCT',
+                'edit_cargo_agent': 'UPDATE_CARGO_AGENT',
+                'update_so_status': 'UPDATE_SO_STATUS',
+                'update_po_status': 'UPDATE_PO_STATUS',
+                'update_booking_status': 'UPDATE_BOOKING_STATUS',
+                // DELETE
                 'delete_customer': 'DELETE_CUSTOMER',
                 'delete_supplier': 'DELETE_SUPPLIER',
                 'delete_product': 'DELETE_PRODUCT',
                 'delete_freight_quote': 'DELETE_FREIGHT_QUOTE',
+                'delete_cargo_agent': 'DELETE_CARGO_AGENT',
+                'delete_carrier': 'DELETE_CARRIER',
+                'delete_port': 'DELETE_PORT',
+                'delete_bank': 'DELETE_BANK',
+                'delete_location': 'DELETE_LOCATION',
+                'delete_sales_order': 'DELETE_SO',
+                'delete_purchase_order': 'DELETE_PO',
+                'delete_booking': 'DELETE_BOOKING',
+                'delete_bol': 'DELETE_BOL',
+                'delete_invoice': 'DELETE_INVOICE',
+                'delete_supplier_invoice': 'DELETE_SUPPLIER_INVOICE',
+                'delete_packing_list': 'DELETE_PACKING_LIST',
+                'delete_estimate': 'DELETE_ESTIMATE',
+                'delete_proforma': 'DELETE_PROFORMA',
+                // SHOW
                 'view_freight_quotes': 'SHOW_FREIGHT_QUOTES',
                 'view_bookings': 'SHOW_BOOKINGS',
                 'view_bols': 'SHOW_BOLS',
+                'view_customers': 'SHOW_CUSTOMERS',
+                'view_suppliers': 'SHOW_SUPPLIERS',
+                'view_products': 'SHOW_PRODUCTS',
+                'view_sales_orders': 'SHOW_SALES_ORDERS',
+                'view_purchase_orders': 'SHOW_PURCHASE_ORDERS',
+                'view_invoices': 'SHOW_INVOICES',
+                'view_supplier_invoices': 'SHOW_SUPPLIER_INVOICES',
+                'view_estimates': 'SHOW_ESTIMATES',
+                'view_proformas': 'SHOW_PROFORMAS',
+                'view_packing_lists': 'SHOW_PACKING_LISTS',
+                'view_commissions': 'SHOW_COMMISSIONS',
+                'view_cargo_agents': 'SHOW_CARGO_AGENTS',
+                'view_carriers': 'SHOW_CARRIERS',
+                'view_ports': 'SHOW_PORTS',
+                'view_banks': 'SHOW_BANKS',
+                'view_locations': 'SHOW_LOCATIONS',
             };
             return mapping[intent] || null;
         };
@@ -1843,6 +2094,9 @@ export interface BobContext {
         ports?: { count: number; sample: string[] };
         cargoAgents?: { count: number; sample: string[] };
     };
+    actions?: {
+        addPort?: (port: any) => Promise<any>;
+    };
 }
 
 const BOB_SYSTEM_PROMPT = `You are **Bob**, a smart and friendly AI assistant built into the X-Solution AI Business Platform.
@@ -1918,6 +2172,7 @@ CAPABILITIES
 3. **How-To Guide**: Explain step-by-step how to use features
 4. **Insights**: Summarize data trends and key metrics from context
 5. **Workflow Tips**: Suggest efficient workflows (e.g., "To create a full shipment flow, first create the SO, then the booking, then the B/L")
+6. **Data Management**: Add ports to the database when users request it. Use the add_port function tool to create new port entries with code, name, and country.
 
 ═══════════════════════════════════════════════════════
 RULES
@@ -1929,6 +2184,8 @@ RULES
 5. For "how to" questions, provide numbered steps.
 6. Always consider the user's ROLE — they may not have access to all modules.
 7. Never reveal passwords, API keys, or sensitive config.
+8. When adding a port, use the standard UN/LOCODE port code if known (e.g., PKKAR for Karachi, BRSSZ for Santos). If unsure, generate a reasonable 5-letter code from the country ISO + first letters of the port name.
+9. When you successfully add a port using the add_port tool, confirm the action to the user with the port details (code, name, country).
 `;
 
 export const getBobResponse = async (
@@ -1991,13 +2248,54 @@ USER MESSAGE: "${userMessage}"
         const bobPromptHeader = buildSystemPrompt(bobPersona);
         const dynamicBobPrompt = `${bobPromptHeader}\n\n${BOB_SYSTEM_PROMPT.split('PLATFORM MODULE MAP')[1] ? '═══════════════════════════════════════════════════════\nPLATFORM MODULE MAP' + BOB_SYSTEM_PROMPT.split('PLATFORM MODULE MAP')[1] : BOB_SYSTEM_PROMPT}`;
 
+        // ── Function-calling tools for data management ──
+        const addPortTool: FunctionDeclaration = {
+            name: 'add_port',
+            description: 'Add a new port to the ports database. Use this when the user asks to add, create, or register a new port.',
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    code: { type: Type.STRING, description: 'The UN/LOCODE port code (e.g., PKKAR for Karachi, BRSSZ for Santos). 3-5 uppercase letters.' },
+                    name: { type: Type.STRING, description: 'The full port name (e.g., Karachi, Santos, Rotterdam)' },
+                    country: { type: Type.STRING, description: 'The country where the port is located (e.g., Pakistan, Brazil, Netherlands)' },
+                },
+                required: ['code', 'name', 'country']
+            }
+        };
+
+        const tools = context.actions?.addPort ? [{ functionDeclarations: [addPortTool] }] : undefined;
+
         const response = await ai.models.generateContent({
             model: MODEL_ID,
             contents: contextPrompt,
             config: {
-                systemInstruction: dynamicBobPrompt
+                systemInstruction: dynamicBobPrompt,
+                tools
             }
         });
+
+        // ── Handle function calls ──
+        if (response.functionCalls && response.functionCalls.length > 0) {
+            for (const fc of response.functionCalls) {
+                if (fc.name === 'add_port' && context.actions?.addPort) {
+                    const args = fc.args as { code: string; name: string; country: string };
+                    try {
+                        const newPort = {
+                            id: `PRT${Date.now()}`,
+                            companyId: 'ALL',
+                            code: (args.code || '').toUpperCase(),
+                            name: args.name || '',
+                            country: args.country || ''
+                        };
+                        await context.actions.addPort(newPort);
+                        return `✅ Port **${newPort.name}** (${newPort.code}) in **${newPort.country}** has been added to the database!\n\nYou can view it in **Data › Ports**.`;
+                    } catch (err: any) {
+                        console.error('[Bob AI] add_port error:', err);
+                        return `⚠️ I tried to add the port but encountered an error: ${err.message || 'Unknown error'}. Please try adding it manually in **Data › Ports**.`;
+                    }
+                }
+            }
+        }
 
         return response.text || "I'm here to help! What would you like to know?";
     } catch (error) {
@@ -2254,5 +2552,299 @@ Return JSON:
         return { ranking: [], summary: 'Unable to rank offers.' };
     } catch (e) {
         return { ranking: [], summary: 'AI service unavailable for ranking.' };
+    }
+};
+
+// ============================================================================
+// ORDER-SALE ENGINE — Step 5 (Order) & Step 6 (Logistics) AI automation
+// ============================================================================
+
+export interface SalesOrderAutoFill {
+    saleType: 'LOCAL' | 'EXPORT';
+    deliveryMethod: 'PORT_TO_PORT' | 'DOOR_TO_PORT' | 'DOOR_TO_DOOR' | 'PORT_TO_DOOR' | 'PICKUP' | 'DELIVERY';
+    incoterm: string;
+    paymentTerms: string;
+    orderType: 'SPOT' | 'CONTRACT';
+    deliveryDate: string;
+    poa: string;
+    pod: string;
+    pickupLocation: string;
+    notes: string;
+    reasoning: string;
+    confidence: number;
+}
+
+/**
+ * Infer sensible defaults for a Sales Order based on Proposal + Customer + Supplier + Calculations.
+ * Used by the Order-Sale Engine Step 5 "AI Autofill" button.
+ */
+export const autoFillSalesOrder = async (ctx: {
+    proposal: { number?: string; seller?: string; buyer?: string; incoterm?: string; paymentTerms?: string; notes?: string };
+    customer?: { name: string; country?: string; city?: string; paymentTerms?: string; preferredIncoterm?: string };
+    supplier?: { name: string; city?: string; country?: string };
+    calculations: Array<{ productName: string; quantity: number; supplierName?: string; originPort?: string; destinationPort?: string; loadingLocation?: string; incoterm?: string }>;
+    availablePorts: Array<{ code: string; name: string; country?: string }>;
+    paymentTermOptions: string[];
+    companyCountry?: string;
+}): Promise<SalesOrderAutoFill> => {
+    const fallback: SalesOrderAutoFill = {
+        saleType: 'EXPORT', deliveryMethod: 'PORT_TO_PORT', incoterm: ctx.proposal.incoterm || 'FOB',
+        paymentTerms: ctx.proposal.paymentTerms || ctx.customer?.paymentTerms || 'Net 30',
+        orderType: 'SPOT', deliveryDate: 'Prompt',
+        poa: ctx.calculations[0]?.originPort || '', pod: ctx.calculations[0]?.destinationPort || '',
+        pickupLocation: ctx.calculations[0]?.loadingLocation || '',
+        notes: '', reasoning: 'Fallback defaults — AI unavailable.', confidence: 40
+    };
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const totalQty = ctx.calculations.reduce((s, c) => s + (c.quantity || 0), 0);
+        const prompt = `You are a Sales Operations AI for an international B2B commodity trader (textile fibers, plastic resins, recycled materials).
+Convert the following commercial proposal context into a ready-to-file Sales Order with sensible defaults.
+
+PROPOSAL
+- Number: ${ctx.proposal.number || 'N/A'}
+- Seller: ${ctx.proposal.seller || 'N/A'}
+- Buyer: ${ctx.proposal.buyer || 'N/A'}
+- Incoterm on proposal: ${ctx.proposal.incoterm || 'N/A'}
+- Payment Terms on proposal: ${ctx.proposal.paymentTerms || 'N/A'}
+- Notes: ${ctx.proposal.notes || '—'}
+
+CUSTOMER
+- Name: ${ctx.customer?.name || 'Unknown'}
+- Country: ${ctx.customer?.country || 'Unknown'}
+- City: ${ctx.customer?.city || '—'}
+- Preferred Payment Terms: ${ctx.customer?.paymentTerms || '—'}
+- Preferred Incoterm: ${ctx.customer?.preferredIncoterm || '—'}
+
+SUPPLIER
+- Name: ${ctx.supplier?.name || 'Unknown'}
+- City/Country: ${[ctx.supplier?.city, ctx.supplier?.country].filter(Boolean).join(', ') || '—'}
+
+LINE ITEMS (${ctx.calculations.length})
+${ctx.calculations.map(c => `- ${c.productName}: ${c.quantity} lbs · incoterm ${c.incoterm || 'n/a'} · ${c.originPort || '?'} → ${c.destinationPort || '?'}`).join('\n')}
+Total volume: ${totalQty.toLocaleString()} lbs
+
+COMPANY OPERATES FROM: ${ctx.companyCountry || 'USA'}
+
+PAYMENT TERM OPTIONS (must pick from this list): ${ctx.paymentTermOptions.join(', ')}
+
+AVAILABLE PORTS (format "Name (CODE)"): ${ctx.availablePorts.slice(0, 80).map(p => `${p.name} (${p.code})`).join(', ')}
+
+RULES
+1. saleType: "LOCAL" if customer country matches supplier/company country, else "EXPORT".
+2. deliveryMethod: LOCAL→"PICKUP" or "DELIVERY"; EXPORT→"PORT_TO_PORT" (default), "DOOR_TO_PORT" if supplier not at port, "DOOR_TO_DOOR" for DDP, "PORT_TO_DOOR" if customer not at port.
+3. incoterm: keep proposal incoterm unless delivery method forces a change (PICKUP→EXW, DELIVERY→DDP, PORT_TO_PORT→FOB or CFR).
+4. paymentTerms: pick from the provided list — prefer customer preference, else proposal, else "Net 30".
+5. orderType: "CONTRACT" if line items reference recurring shipments or volumes >500k lbs, else "SPOT".
+6. deliveryDate: a short phrase like "Prompt", "30 days ARO", "ASAP", or a rough month like "Dec 2026".
+7. poa: format as "Name (CODE)" from available ports — use calculations[0].originPort as the seed if present.
+8. pod: format as "Name (CODE)" from available ports — use calculations[0].destinationPort as the seed if present.
+9. pickupLocation: supplier city, country (only when delivery method starts with DOOR_).
+10. notes: 1-2 sentence summary combining incoterm, delivery, and any proposal notes.
+11. reasoning: 2-3 sentence explanation of the key decisions.
+12. confidence: 0-100 integer reflecting how confident the AI is in these defaults.
+
+Return JSON ONLY.`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        saleType: { type: Type.STRING },
+                        deliveryMethod: { type: Type.STRING },
+                        incoterm: { type: Type.STRING },
+                        paymentTerms: { type: Type.STRING },
+                        orderType: { type: Type.STRING },
+                        deliveryDate: { type: Type.STRING },
+                        poa: { type: Type.STRING },
+                        pod: { type: Type.STRING },
+                        pickupLocation: { type: Type.STRING },
+                        notes: { type: Type.STRING },
+                        reasoning: { type: Type.STRING },
+                        confidence: { type: Type.NUMBER }
+                    }
+                }
+            }
+        });
+        if (response.text) return { ...fallback, ...JSON.parse(response.text) } as SalesOrderAutoFill;
+        return fallback;
+    } catch (e) {
+        console.error('[autoFillSalesOrder] AI call failed:', e);
+        return fallback;
+    }
+};
+
+export interface FreightQuoteRecommendation {
+    bestQuoteId: string;
+    reasoning: string;
+    ranked: Array<{ quoteId: string; score: number; pros: string[]; cons: string[] }>;
+    transitInsight: string;
+}
+
+/**
+ * Rank a set of matching freight quotes for a given route/weight and pick the best one
+ * balancing rate, transit time, free time, agent reliability, and validity.
+ */
+export const recommendFreightQuote = async (ctx: {
+    route: { originPort: string; destinationPort: string; pickup?: string };
+    totalWeightKg: number;
+    containers: number;
+    incoterm: string;
+    customerCountry?: string;
+    orderType: 'SPOT' | 'CONTRACT';
+    quotes: Array<{ id: string; agentName?: string; carrier?: string; rate: number; currency?: string; freightType?: string; transitTime?: number; freeTime?: number; validUntil?: string; notes?: string }>;
+}): Promise<FreightQuoteRecommendation> => {
+    const fallback: FreightQuoteRecommendation = {
+        bestQuoteId: ctx.quotes.sort((a, b) => a.rate - b.rate)[0]?.id || '',
+        reasoning: 'Lowest rate selected (AI unavailable).',
+        ranked: ctx.quotes.map(q => ({ quoteId: q.id, score: 50, pros: [`Rate: $${q.rate}`], cons: [] })),
+        transitInsight: ''
+    };
+    if (ctx.quotes.length === 0) return { ...fallback, bestQuoteId: '', reasoning: 'No matching quotes on file.' };
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const prompt = `You are a Freight Logistics AI. Pick the best freight quote for this shipment.
+
+SHIPMENT
+- Route: ${ctx.route.originPort} → ${ctx.route.destinationPort}${ctx.route.pickup ? ` (pickup: ${ctx.route.pickup})` : ''}
+- Total weight: ${ctx.totalWeightKg.toLocaleString()} kg
+- Containers: ${ctx.containers} x 40ft HC
+- Incoterm: ${ctx.incoterm}
+- Customer country: ${ctx.customerCountry || 'Unknown'}
+- Order type: ${ctx.orderType}
+
+QUOTES
+${ctx.quotes.map((q, i) => `${i + 1}. [${q.id}] ${q.agentName || 'Agent'} / ${q.carrier || '—'} — $${q.rate} ${q.currency || 'USD'}/container (${q.freightType || 'PORT_PORT'}). Transit: ${q.transitTime || '?'}d, Free time: ${q.freeTime || '?'}d, Valid until: ${q.validUntil || '—'}. Notes: ${q.notes || '—'}`).join('\n')}
+
+Consider:
+- Total landed cost (rate × containers), NOT just unit rate
+- Transit time vs. customer urgency (SPOT = faster preferred)
+- Free time vs. demurrage risk at POD
+- Agent reputation, carrier reliability
+- Expiring quotes (soon-to-expire quotes carry risk)
+- CONTRACT orders prefer agents with repeat-business relationships
+
+Return JSON:
+- bestQuoteId: id of the winning quote
+- reasoning: 2-3 sentence rationale
+- ranked: array of { quoteId, score (1-100), pros (3-4 bullets), cons (2-3 bullets) } — one entry per quote, sorted best to worst
+- transitInsight: 1-2 sentence ETA / demurrage outlook`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        bestQuoteId: { type: Type.STRING },
+                        reasoning: { type: Type.STRING },
+                        ranked: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    quoteId: { type: Type.STRING },
+                                    score: { type: Type.NUMBER },
+                                    pros: { type: Type.ARRAY, items: { type: Type.STRING } },
+                                    cons: { type: Type.ARRAY, items: { type: Type.STRING } }
+                                }
+                            }
+                        },
+                        transitInsight: { type: Type.STRING }
+                    }
+                }
+            }
+        });
+        if (response.text) return JSON.parse(response.text) as FreightQuoteRecommendation;
+        return fallback;
+    } catch (e) {
+        console.error('[recommendFreightQuote] AI call failed:', e);
+        return fallback;
+    }
+};
+
+/**
+ * Generate a polished booking request email for a freight agent.
+ */
+export const generateBookingEmail = async (ctx: {
+    orderNumber: string;
+    shipper: string;
+    supplier: string;
+    customer: string;
+    agentName?: string;
+    incoterm: string;
+    deliveryMethod: string;
+    origin: string;
+    destination: string;
+    pickup?: string;
+    totalWeightKg: number;
+    totalWeightLbs: number;
+    containers: number;
+    products: Array<{ productName: string; quantityLbs: number; quantityKg: number }>;
+    specialNotes?: string;
+    deliveryDate?: string;
+    paymentTerms?: string;
+}): Promise<{ subject: string; body: string }> => {
+    const fallback = {
+        subject: `Booking Request - Order ${ctx.orderNumber} - ${ctx.customer}`,
+        body: `Dear ${ctx.agentName || 'Freight Agent'},\n\nWe would like to request a booking for order ${ctx.orderNumber}.\n\nRoute: ${ctx.origin} → ${ctx.destination}\nContainers: ${ctx.containers} x 40ft HC\nWeight: ${Math.round(ctx.totalWeightKg).toLocaleString()} kg\n\nPlease confirm availability.\n\nBest regards`
+    };
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const prompt = `Write a professional, concise booking request email to a freight agent.
+
+CONTEXT
+- Order #: ${ctx.orderNumber}
+- Shipper (us): ${ctx.shipper}
+- Supplier: ${ctx.supplier}
+- Customer: ${ctx.customer}
+- Freight Agent: ${ctx.agentName || 'Freight Agent'}
+- Incoterm: ${ctx.incoterm}
+- Delivery Method: ${ctx.deliveryMethod.replace(/_/g, ' ')}
+- Origin (POA): ${ctx.origin}
+- Destination (POD): ${ctx.destination}
+${ctx.pickup ? `- Pickup Location: ${ctx.pickup}` : ''}
+- Total weight: ${Math.round(ctx.totalWeightKg).toLocaleString()} kg (${ctx.totalWeightLbs.toLocaleString()} lbs)
+- Containers: ${ctx.containers} x 40ft HC
+- Desired delivery: ${ctx.deliveryDate || 'Prompt'}
+- Payment Terms: ${ctx.paymentTerms || 'N/A'}
+
+PRODUCTS
+${ctx.products.map(p => `- ${p.productName}: ${Math.round(p.quantityLbs).toLocaleString()} lbs (${Math.round(p.quantityKg).toLocaleString()} kg)`).join('\n')}
+
+${ctx.specialNotes ? `SPECIAL INSTRUCTIONS: ${ctx.specialNotes}` : ''}
+
+REQUIREMENTS
+- Professional B2B tone, warm but direct
+- Include all critical logistics info in a clean block layout using plain text (no markdown, no emoji)
+- Ask for: vessel options, earliest ETD, cut-off dates, confirmed ETA, and booking confirmation
+- Request any required pre-alerts or documentation
+- Sign off generically ("Best regards")
+- Keep it under 250 words
+
+Return JSON: { subject: string, body: string }`;
+
+        const response = await ai.models.generateContent({
+            model: MODEL_ID,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: { subject: { type: Type.STRING }, body: { type: Type.STRING } }
+                }
+            }
+        });
+        if (response.text) return JSON.parse(response.text);
+        return fallback;
+    } catch (e) {
+        console.error('[generateBookingEmail] AI call failed:', e);
+        return fallback;
     }
 };

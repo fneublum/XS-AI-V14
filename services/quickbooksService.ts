@@ -5,44 +5,23 @@
  * Handles OAuth connection, invoice syncing, and sync status tracking.
  */
 
-import { getSupabaseClient } from './supabase';
+import { invokeEdgeFunction } from './edgeAuth';
 import type { Invoice, SupplierInvoice, QBSyncStatus, QBConnectionStatus } from '../types';
 
-// Supabase Edge Function base URL
-const FUNCTIONS_BASE = 'https://qfskvevighylzzmyiwre.supabase.co/functions/v1';
-
+// Phase 1c: all QB Edge Function calls now go through `invokeEdgeFunction`,
+// which attaches the server-issued user JWT from sessionStorage and reads
+// the Supabase anon key from Vite env — no more hardcoded JWT in the bundle.
 async function callEdgeFunction(fnName: string, action: string, options: {
     method?: 'GET' | 'POST';
     body?: any;
     params?: Record<string, string>;
 } = {}): Promise<any> {
     const { method = 'GET', body, params = {} } = options;
-
-    const supabase = getSupabaseClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmc2t2ZXZpZ2h5bHp6bXlpd3JlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODE2MzQsImV4cCI6MjA3OTY1NzYzNH0.MZ3S57O9J6LGHaN5zbuNmW8Gt7Hg5MaJSF-U-JhTa0Q';
-    const authToken = session?.access_token || anonKey;
-
-    const urlParams = new URLSearchParams({ action, ...params });
-    const url = `${FUNCTIONS_BASE}/${fnName}?${urlParams.toString()}`;
-
-    const resp = await fetch(url, {
+    return invokeEdgeFunction(fnName, {
         method,
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`,
-            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmc2t2ZXZpZ2h5bHp6bXlpd3JlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODE2MzQsImV4cCI6MjA3OTY1NzYzNH0.MZ3S57O9J6LGHaN5zbuNmW8Gt7Hg5MaJSF-U-JhTa0Q',
-        },
-        body: body ? JSON.stringify(body) : undefined,
+        body,
+        params: { action, ...params },
     });
-
-    const data = await resp.json();
-
-    if (!resp.ok) {
-        throw new Error(data.error || `Edge function error: ${resp.status}`);
-    }
-
-    return data;
 }
 
 // ── OAuth Connection ─────────────────────────────────────────
@@ -314,4 +293,105 @@ export async function checkPaymentStatuses(companyId: string): Promise<{
         updated: data.updated || [],
         errors: data.errors,
     };
+}
+
+// ── Customers & Statements ───────────────────────────────────
+
+export interface QBCustomer {
+    id: string;
+    displayName: string;
+    balance: number;
+    primaryEmail?: string;
+}
+
+export interface QBStatementInvoice {
+    id: string;
+    docNumber: string;
+    txnDate: string;
+    dueDate: string | null;
+    customerName: string;
+    totalAmount: number;
+    balance: number;
+    currency: string;
+}
+
+export interface QBStatementPayment {
+    id: string;
+    txnDate: string;
+    customerName: string;
+    totalAmount: number;
+    appliedAmount: number;
+    unappliedAmount: number;
+    paymentRefNum: string;
+    paymentMethod: string;
+    currency: string;
+    appliedInvoices: string[];
+}
+
+export interface QBStatementReceipt {
+    id: string;
+    kind: 'deposit' | 'payment';
+    txnDate: string;
+    totalAmount: number;
+    appliedAmount: number;
+    unappliedAmount: number;
+    paymentRefNum: string;
+    paymentMethod: string;
+    currency: string;
+    appliedInvoices: string[];
+    paymentIds: string[];
+    depositAccount?: string;
+    paymentCount: number;
+}
+
+export interface QBCustomerStatement {
+    customerName: string;
+    customerId: string | null;
+    startDate: string;
+    endDate: string;
+    invoices: QBStatementInvoice[];
+    payments: QBStatementPayment[];
+    receipts?: QBStatementReceipt[];
+    totals: {
+        totalInvoiced: number;
+        totalPaid: number;
+        outstandingBalance: number;
+    };
+}
+
+let _cachedCustomers: QBCustomer[] | null = null;
+
+/**
+ * Fetches active Customers from QuickBooks for dropdown filters.
+ */
+export async function fetchQBCustomers(companyId: string, forceRefresh = false): Promise<QBCustomer[]> {
+    if (_cachedCustomers && !forceRefresh) return _cachedCustomers;
+
+    const data = await callEdgeFunction('qb-sync', 'query-customers', {
+        params: { companyId },
+    });
+    _cachedCustomers = (data.customers || []) as QBCustomer[];
+    return _cachedCustomers;
+}
+
+/**
+ * Fetches a customer statement (invoices vs payments) from QuickBooks
+ * filtered by customer name and a date range (TxnDate).
+ *
+ * customerName uses QB's LIKE match against DisplayName.
+ * startDate / endDate are ISO dates (YYYY-MM-DD); either can be omitted.
+ */
+export async function fetchCustomerStatement(
+    companyId: string,
+    customerName: string,
+    startDate?: string,
+    endDate?: string,
+): Promise<QBCustomerStatement> {
+    const params: Record<string, string> = { companyId };
+    if (customerName) params.customerName = customerName;
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+
+    const data = await callEdgeFunction('qb-sync', 'customer-statement', { params });
+    return data as QBCustomerStatement;
 }

@@ -2,14 +2,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { MessageCircle, Send, Loader2, RefreshCw, ChevronDown, ChevronUp, Check, CheckCheck, Clock, Trash2, UploadCloud, Mail, LogIn, Plus, ArrowLeft, User, Phone, Search } from 'lucide-react';
 import { getSupabaseClient } from '../services/supabase';
+import { invokeEdgeFunction } from '../services/edgeAuth';
 
 import { getAccountFor, loginFor, loginRequest, initializeMsal, getGoogleAccount, loginForGoogle } from '../services/smailAuth';
 
 // ─── Config ─────────────────────────────────────────────────────────
 const WA_NUMBER = '+19302007070';
 const TEMPLATE_CONTENT_SID = 'HX1111f3f47537923173d927ab7f925ce8';
-const SUPABASE_FN_URL = 'https://qfskvevighylzzmyiwre.supabase.co/functions/v1/whatsapp-send';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmc2t2ZXZpZ2h5bHp6bXlpd3JlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODE2MzQsImV4cCI6MjA3OTY1NzYzNH0.MZ3S57O9J6LGHaN5zbuNmW8Gt7Hg5MaJSF-U-JhTa0Q';
 
 // ─── Types ──────────────────────────────────────────────────────────
 interface WaMessage {
@@ -207,18 +206,19 @@ const WhatsAppChatWidget: React.FC<Props> = ({ currentCompanyId, onOcrUpload }) 
     }, [activeConv, sb]);
 
     // ── Send message via Twilio ─────────────────────────────────────
+    // Phase 1c: goes through invokeEdgeFunction so the Supabase anon key
+    // and server-issued user JWT come from env / sessionStorage — no more
+    // hardcoded JWT in the bundle.
     const callWhatsAppSend = async (payload: any) => {
-        const resp = await fetch(SUPABASE_FN_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            },
-            body: JSON.stringify(payload),
-        });
-        const result = await resp.json();
-        return { ok: resp.ok, result };
+        try {
+            const result = await invokeEdgeFunction('whatsapp-send', {
+                method: 'POST',
+                body: payload,
+            });
+            return { ok: true, result };
+        } catch (err: any) {
+            return { ok: false, result: { error: err?.message || String(err) } };
+        }
     };
 
     // Check if we have a 24h session

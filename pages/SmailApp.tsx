@@ -197,8 +197,8 @@ const SmailApp: React.FC = () => {
                         };
                         reader.readAsDataURL(file);
                     });
-                    const { GoogleGenAI } = await import('@google/genai');
-                    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                    const { GoogleGenAI } = await import('../services/geminiClient');
+                    const ai = new GoogleGenAI();
                     const response = await ai.models.generateContent({
                         model: 'gemini-2.0-flash',
                         contents: [
@@ -235,8 +235,8 @@ const SmailApp: React.FC = () => {
         try {
             const bodyText = selectedEmail.bodyPreview || selectedEmail.body?.content || '';
             const prompt = `Based on this email from ${selectedEmail.from?.emailAddress?.name || 'Unknown'} about "${selectedEmail.subject}", extract the key business terms, product names, quantities, prices, and any relevant data points that would be useful for drafting a reply. Be concise. Email: ${bodyText.substring(0, 2000)}`;
-            const { GoogleGenAI } = await import('@google/genai');
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const { GoogleGenAI } = await import('../services/geminiClient');
+            const ai = new GoogleGenAI();
             const response = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
             setAiLookupResult(response.text || 'No relevant data found.');
         } catch {

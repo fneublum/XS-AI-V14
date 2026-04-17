@@ -31,7 +31,7 @@ Follow these steps to deploy a new version of the application.
    Deploy with the `--quiet` flag:
    // turbo
    ```bash
-   gcloud app deploy --quiet --project=gen-lang-client-0771961463
+   gcloud app deploy --quiet --project=xs-erp
    ```
    
    **If hit 210 version limit:** Delete old versions first:
@@ -41,7 +41,7 @@ Follow these steps to deploy a new version of the application.
    ```
 
 ## 5. Verify Deployment
-   - Visit: https://gen-lang-client-0771961463.uc.r.appspot.com
+   - Visit: https://xs-erp.appspot.com
    - **Hard Refresh**: Cmd+Shift+R (Mac) or Ctrl+Shift+R (Windows)
    - If still seeing old version, try **Incognito/Private window**
    - Verify the version number on the Login page matches your update

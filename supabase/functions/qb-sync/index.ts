@@ -3,12 +3,12 @@
 // URL: https://qfskvevighylzzmyiwre.supabase.co/functions/v1/qb-sync
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildCorsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
+import { requireUser } from '../_shared/auth.ts';
 
-const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey",
-};
+// Per-request CORS headers. The router rebinds this before dispatching.
+// (Keeps all existing handler signatures — they close over this symbol.)
+let corsHeaders: Record<string, string> = {};
 
 const QB_API_BASE = "https://quickbooks.api.intuit.com/v3/company";
 const QB_SANDBOX_API_BASE = "https://sandbox-quickbooks.api.intuit.com/v3/company";
@@ -877,12 +877,328 @@ async function checkPaymentStatuses(req: Request): Promise<Response> {
     }
 }
 
+// ── List QB Customers ────────────────────────────────────────
+
+async function queryCustomers(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const companyId = url.searchParams.get("companyId") || "ALL";
+
+    try {
+        const { accessToken, realmId } = await getValidToken(companyId);
+
+        const query = encodeURIComponent("select Id, DisplayName, Balance, Active, PrimaryEmailAddr from Customer where Active = true MAXRESULTS 1000");
+        const result = await qboRequest("GET", `/${realmId}/query?query=${query}`, accessToken);
+
+        const customers = (result.QueryResponse?.Customer || []).map((c: any) => ({
+            id: c.Id,
+            displayName: c.DisplayName,
+            balance: typeof c.Balance === "number" ? c.Balance : parseFloat(c.Balance || "0"),
+            primaryEmail: c.PrimaryEmailAddr?.Address || "",
+        }));
+
+        return new Response(
+            JSON.stringify({ customers }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    } catch (err: any) {
+        console.error("queryCustomers error:", err);
+        return new Response(
+            JSON.stringify({ error: err.message || "Failed to query customers" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+}
+
+// ── Customer Statement (Invoices vs Payments) ───────────────
+
+async function customerStatement(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const companyId = url.searchParams.get("companyId") || "ALL";
+    const customerName = url.searchParams.get("customerName") || "";
+    const startDate = url.searchParams.get("startDate") || "";
+    const endDate = url.searchParams.get("endDate") || "";
+
+    try {
+        const { accessToken, realmId } = await getValidToken(companyId);
+
+        // Resolve customer id from name (LIKE match)
+        let customerId: string | null = null;
+        let resolvedName = customerName;
+        if (customerName) {
+            const safeName = customerName.replace(/'/g, "\\'").substring(0, 100);
+            const custQuery = encodeURIComponent(`select Id, DisplayName from Customer where DisplayName LIKE '%${safeName}%' MAXRESULTS 5`);
+            const custResult = await qboRequest("GET", `/${realmId}/query?query=${custQuery}`, accessToken);
+            const match = custResult.QueryResponse?.Customer?.[0];
+            if (!match) {
+                return new Response(
+                    JSON.stringify({ error: `Customer not found: ${customerName}` }),
+                    { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            customerId = match.Id;
+            resolvedName = match.DisplayName;
+        }
+
+        // Date clause — QB TxnDate uses ISO (YYYY-MM-DD)
+        const dateClauses: string[] = [];
+        if (startDate) dateClauses.push(`TxnDate >= '${startDate}'`);
+        if (endDate) dateClauses.push(`TxnDate <= '${endDate}'`);
+
+        // Invoices
+        const invWhere: string[] = [];
+        if (customerId) invWhere.push(`CustomerRef = '${customerId}'`);
+        invWhere.push(...dateClauses);
+        const invSql = `select * from Invoice${invWhere.length ? " where " + invWhere.join(" and ") : ""} ORDERBY TxnDate MAXRESULTS 1000`;
+        const invResult = await qboRequest("GET", `/${realmId}/query?query=${encodeURIComponent(invSql)}`, accessToken);
+
+        const invoices = (invResult.QueryResponse?.Invoice || []).map((inv: any) => ({
+            id: inv.Id,
+            docNumber: inv.DocNumber || "",
+            txnDate: inv.TxnDate,
+            dueDate: inv.DueDate || null,
+            customerName: inv.CustomerRef?.name || resolvedName,
+            totalAmount: typeof inv.TotalAmt === "number" ? inv.TotalAmt : parseFloat(inv.TotalAmt || "0"),
+            balance: typeof inv.Balance === "number" ? inv.Balance : parseFloat(inv.Balance || "0"),
+            currency: inv.CurrencyRef?.value || "USD",
+        }));
+
+        // Payments
+        const payWhere: string[] = [];
+        if (customerId) payWhere.push(`CustomerRef = '${customerId}'`);
+        payWhere.push(...dateClauses);
+        const paySql = `select * from Payment${payWhere.length ? " where " + payWhere.join(" and ") : ""} ORDERBY TxnDate MAXRESULTS 1000`;
+        const payResult = await qboRequest("GET", `/${realmId}/query?query=${encodeURIComponent(paySql)}`, accessToken);
+
+        const payments = (payResult.QueryResponse?.Payment || []).map((p: any) => {
+            // Lines that are applied to invoices; sum those to get the applied portion.
+            const appliedLines = (p.Line || []).filter((line: any) =>
+                (line.LinkedTxn || []).some((lt: any) => lt.TxnType === "Invoice")
+            );
+            const appliedInvoices = appliedLines
+                .flatMap((line: any) => line.LinkedTxn || [])
+                .filter((lt: any) => lt.TxnType === "Invoice")
+                .map((lt: any) => lt.TxnId);
+            const appliedAmount = appliedLines.reduce((sum: number, line: any) => {
+                const amt = typeof line.Amount === "number" ? line.Amount : parseFloat(line.Amount || "0");
+                return sum + (isNaN(amt) ? 0 : amt);
+            }, 0);
+            return {
+                id: p.Id,
+                txnDate: p.TxnDate,
+                customerName: p.CustomerRef?.name || resolvedName,
+                // TotalAmt is the gross amount received from the customer (bank deposit
+                // value for this payment), before it is split across invoices.
+                totalAmount: typeof p.TotalAmt === "number" ? p.TotalAmt : parseFloat(p.TotalAmt || "0"),
+                // Portion of the payment actually applied to invoices.
+                appliedAmount,
+                unappliedAmount: typeof p.UnappliedAmt === "number" ? p.UnappliedAmt : parseFloat(p.UnappliedAmt || "0"),
+                paymentRefNum: p.PaymentRefNum || "",
+                paymentMethod: p.PaymentMethodRef?.name || "",
+                currency: p.CurrencyRef?.value || "USD",
+                appliedInvoices,
+                // DepositToAccountRef on Payment indicates the bank account the payment
+                // was booked directly to (used when QB skips the Undeposited Funds step).
+                // We use it as a grouping key for the "same-day bank deposit" heuristic.
+                depositToAccountId: p.DepositToAccountRef?.value || "",
+                depositToAccountName: p.DepositToAccountRef?.name || "",
+            };
+        });
+
+        // Deposits — group payments that were deposited together into a single
+        // bank deposit, so we can display ONE row per bank transaction.
+        // Deposit.Line[].LinkedTxn with TxnType === "Payment" links to Payment ids.
+        // We can't filter Deposits by customer in QBO (deposits span customers),
+        // so we fetch deposits in the date range and then join on payment id.
+        const depWhere: string[] = [];
+        depWhere.push(...dateClauses);
+        const depSql = `select * from Deposit${depWhere.length ? " where " + depWhere.join(" and ") : ""} ORDERBY TxnDate MAXRESULTS 1000`;
+        let deposits: any[] = [];
+        try {
+            const depResult = await qboRequest("GET", `/${realmId}/query?query=${encodeURIComponent(depSql)}`, accessToken);
+            deposits = depResult.QueryResponse?.Deposit || [];
+        } catch (e) {
+            // Deposit entity access can fail in some QB editions; degrade gracefully.
+            console.warn("Deposit query failed, falling back to payment-level receipts:", e);
+            deposits = [];
+        }
+
+        // paymentId -> depositId
+        const paymentToDeposit = new Map<string, string>();
+        const depositMeta = new Map<string, { id: string; txnDate: string; totalAmount: number; account: string }>();
+        for (const d of deposits) {
+            const dTotal = typeof d.TotalAmt === "number" ? d.TotalAmt : parseFloat(d.TotalAmt || "0");
+            depositMeta.set(d.Id, {
+                id: d.Id,
+                txnDate: d.TxnDate,
+                totalAmount: isNaN(dTotal) ? 0 : dTotal,
+                account: d.DepositToAccountRef?.name || "",
+            });
+            for (const line of d.Line || []) {
+                for (const lt of line.LinkedTxn || []) {
+                    if (lt.TxnType === "Payment" && lt.TxnId) {
+                        paymentToDeposit.set(String(lt.TxnId), d.Id);
+                    }
+                }
+            }
+        }
+
+        // Build receipts: one row per bank deposit (grouping its payments from
+        // THIS customer), or one row per standalone payment that isn't in a deposit.
+        type Receipt = {
+            id: string;
+            kind: "deposit" | "payment";
+            txnDate: string;
+            totalAmount: number;
+            appliedAmount: number;
+            unappliedAmount: number;
+            paymentRefNum: string;
+            paymentMethod: string;
+            currency: string;
+            appliedInvoices: string[];
+            paymentIds: string[];
+            depositAccount?: string;
+            paymentCount: number;
+        };
+
+        const byDeposit = new Map<string, typeof payments>();
+        const standalone: typeof payments = [];
+        for (const p of payments) {
+            const depId = paymentToDeposit.get(String(p.id));
+            if (depId && depositMeta.has(depId)) {
+                if (!byDeposit.has(depId)) byDeposit.set(depId, []);
+                byDeposit.get(depId)!.push(p);
+            } else {
+                standalone.push(p);
+            }
+        }
+
+        const receipts: Receipt[] = [];
+        for (const [depId, ps] of byDeposit.entries()) {
+            const meta = depositMeta.get(depId)!;
+            const total = ps.reduce((s, p) => s + (p.totalAmount || 0), 0);
+            const applied = ps.reduce((s, p) => s + (p.appliedAmount || 0), 0);
+            const unapplied = ps.reduce((s, p) => s + (p.unappliedAmount || 0), 0);
+            const methods = Array.from(new Set(ps.map((p) => p.paymentMethod).filter(Boolean)));
+            const refs = Array.from(new Set(ps.map((p) => p.paymentRefNum).filter(Boolean)));
+            const invoiceIds = Array.from(new Set(ps.flatMap((p) => p.appliedInvoices)));
+            receipts.push({
+                id: `dep-${depId}`,
+                kind: "deposit",
+                txnDate: meta.txnDate || ps[0]?.txnDate,
+                totalAmount: total, // this customer's portion of the deposit
+                appliedAmount: applied,
+                unappliedAmount: unapplied,
+                paymentRefNum: refs.join(", "),
+                paymentMethod: methods.join(", "),
+                currency: ps[0]?.currency || "USD",
+                appliedInvoices: invoiceIds,
+                paymentIds: ps.map((p) => p.id),
+                depositAccount: meta.account,
+                paymentCount: ps.length,
+            });
+        }
+        // Heuristic fallback: when QB doesn't expose a matching Deposit (common
+        // when payments are booked directly to a bank account, skipping
+        // Undeposited Funds), group the remaining standalone payments by
+        // (txnDate, depositToAccountId). Two+ payments from the same customer
+        // hitting the same bank account on the same day almost always represent
+        // a single wire/check split across invoices.
+        const byDayAccount = new Map<string, typeof payments>();
+        const trulyStandalone: typeof payments = [];
+        for (const p of standalone) {
+            const key = `${p.txnDate}|${p.depositToAccountId || ""}`;
+            if (!byDayAccount.has(key)) byDayAccount.set(key, []);
+            byDayAccount.get(key)!.push(p);
+        }
+        for (const [key, ps] of byDayAccount.entries()) {
+            if (ps.length < 2) {
+                trulyStandalone.push(...ps);
+                continue;
+            }
+            const total = ps.reduce((s, p) => s + (p.totalAmount || 0), 0);
+            const applied = ps.reduce((s, p) => s + (p.appliedAmount || 0), 0);
+            const unapplied = ps.reduce((s, p) => s + (p.unappliedAmount || 0), 0);
+            const methods = Array.from(new Set(ps.map((p) => p.paymentMethod).filter(Boolean)));
+            const refs = Array.from(new Set(ps.map((p) => p.paymentRefNum).filter(Boolean)));
+            const invoiceIds = Array.from(new Set(ps.flatMap((p) => p.appliedInvoices)));
+            const acctName = ps.find((p) => p.depositToAccountName)?.depositToAccountName || "";
+            receipts.push({
+                id: `grp-${key}`,
+                kind: "deposit",
+                txnDate: ps[0].txnDate,
+                totalAmount: total,
+                appliedAmount: applied,
+                unappliedAmount: unapplied,
+                paymentRefNum: refs.join(", "),
+                paymentMethod: methods.join(", "),
+                currency: ps[0]?.currency || "USD",
+                appliedInvoices: invoiceIds,
+                paymentIds: ps.map((p) => p.id),
+                depositAccount: acctName,
+                paymentCount: ps.length,
+            });
+        }
+        for (const p of trulyStandalone) {
+            receipts.push({
+                id: `pay-${p.id}`,
+                kind: "payment",
+                txnDate: p.txnDate,
+                totalAmount: p.totalAmount,
+                appliedAmount: p.appliedAmount,
+                unappliedAmount: p.unappliedAmount,
+                paymentRefNum: p.paymentRefNum,
+                paymentMethod: p.paymentMethod,
+                currency: p.currency,
+                appliedInvoices: p.appliedInvoices,
+                paymentIds: [p.id],
+                depositAccount: p.depositToAccountName || "",
+                paymentCount: 1,
+            });
+        }
+        receipts.sort((a, b) => (a.txnDate || "").localeCompare(b.txnDate || ""));
+
+        const totalInvoiced = invoices.reduce((s: number, i: any) => s + (i.totalAmount || 0), 0);
+        const totalPaid = payments.reduce((s: number, p: any) => s + (p.totalAmount || 0), 0);
+        const outstandingBalance = invoices.reduce((s: number, i: any) => s + (i.balance || 0), 0);
+
+        return new Response(
+            JSON.stringify({
+                customerName: resolvedName,
+                customerId,
+                startDate,
+                endDate,
+                invoices,
+                payments,
+                receipts,
+                totals: {
+                    totalInvoiced,
+                    totalPaid,
+                    outstandingBalance,
+                },
+            }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    } catch (err: any) {
+        console.error("customerStatement error:", err);
+        return new Response(
+            JSON.stringify({ error: err.message || "Failed to build customer statement" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+}
+
 // ── Main Router ──────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
-    if (req.method === "OPTIONS") {
-        return new Response(null, { status: 204, headers: corsHeaders });
-    }
+    const preflight = handleCorsPreflight(req);
+    if (preflight) return preflight;
+
+    // Rebind per-request CORS so nested handlers pick up the right origin.
+    corsHeaders = buildCorsHeaders(req);
+
+    // All qb-sync actions are client-invoked — require a valid JWT.
+    const auth = await requireUser(req, corsHeaders);
+    if ('response' in auth) return auth.response;
 
     try {
         const url = new URL(req.url);
@@ -903,6 +1219,10 @@ Deno.serve(async (req: Request) => {
                 return await bulkCreateItems(req);
             case "check-payment-status":
                 return await checkPaymentStatuses(req);
+            case "query-customers":
+                return await queryCustomers(req);
+            case "customer-statement":
+                return await customerStatement(req);
             default:
                 return new Response(
                     JSON.stringify({ error: `Unknown action: ${action}` }),
