@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import {
-  Card, CardHeader, CardTitle, Input, Skeleton, EmptyState,
+  Card, CardHeader, CardTitle, Input, Skeleton, EmptyState, Button,
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { useCustomers, Customer } from '../queries/useCustomers';
@@ -29,7 +29,7 @@ const columns: DataTableColumn<Customer>[] = [
 
 const CustomersV2: React.FC = () => {
   const [search, setSearch] = useState('');
-  const { openCustomer } = useEditor();
+  const { openCustomer, openCustomerCreate } = useEditor();
   const customers = useCustomers(search);
 
   return (
@@ -43,18 +43,25 @@ const CustomersV2: React.FC = () => {
               : 'Loading…'}
           </p>
         </div>
+        <Button
+          size="sm"
+          onClick={openCustomerCreate}
+          className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md"
+        >
+          + New customer
+        </Button>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>All customers</CardTitle>
-          <div className="flex-1 max-w-xs">
+          <div className="flex items-center gap-2 ml-auto">
             <Input
               type="search"
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search name or email"
-              className="h-7 text-[12px] bg-[#111111] border-[#1f1f1f] text-slate-200 placeholder:text-slate-500"
+              className="h-7 w-64 text-[12px] bg-[#111111] border-[#1f1f1f] text-slate-200 placeholder:text-slate-500"
             />
           </div>
         </CardHeader>

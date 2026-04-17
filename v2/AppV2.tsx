@@ -46,6 +46,9 @@ const SettingsV2            = lazy(() => import('./routes/SettingsV2'));
 const ConnectionsV2         = lazy(() => import('./routes/ConnectionsV2'));
 const PLV2                  = lazy(() => import('./routes/PLV2'));
 const LogisticsDocsV2       = lazy(() => import('./routes/LogisticsDocsV2'));
+const SopiciCommissionsV2   = lazy(() => import('./routes/SopiciCommissionsV2'));
+const PLInvoiceEngineV2     = lazy(() => import('./routes/PLInvoiceEngineV2'));
+const CostProfitAIV2        = lazy(() => import('./routes/CostProfitAIV2'));
 
 const sections = [
   {
@@ -89,6 +92,9 @@ const sections = [
       { id: 'payables',     label: 'Payables' },
       { id: 'commissions',  label: 'Commissions' },
       { id: 'pl',           label: 'P&L' },
+      { id: 'sopici',       label: 'SO/PI/CI Commissions' },
+      { id: 'pl-invoice',   label: 'P&L Invoice Engine' },
+      { id: 'cost-profit',  label: 'Cost / Profit AI' },
     ],
   },
   {
@@ -136,6 +142,9 @@ const routeTitles: Record<string, string> = {
   'companies':       'Companies',
   'logistics-docs':  'Logistics Docs',
   'pl':              'P&L',
+  'sopici':          'SO/PI/CI Commissions',
+  'pl-invoice':      'P&L Invoice Engine',
+  'cost-profit':     'Cost / Profit AI',
   'ai-dashboard':    'AI Dashboard',
   'ai-upload':       'AI Upload',
   'ai-email':        'AI Email Assistant',
@@ -175,6 +184,9 @@ const routeSection: Record<string, string> = {
   'payables':        'Finance',
   'commissions':     'Finance',
   'pl':              'Finance',
+  'sopici':          'Finance',
+  'pl-invoice':      'Finance',
+  'cost-profit':     'Finance',
   'logistics-docs':  'Logistics',
   'ai-dashboard':    'AI',
   'ai-upload':       'AI',
@@ -208,11 +220,11 @@ const AppV2Inner: React.FC = () => {
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const {
-    editingSalesOrder, openSalesOrder, closeSalesOrder,
-    editingCustomer, closeCustomer,
-    editingSupplier, closeSupplier,
-    editingInvoice, closeInvoice,
-    editingPurchaseOrder, closePurchaseOrder,
+    salesOrder, openSalesOrder, closeSalesOrder,
+    customer, closeCustomer,
+    supplier, closeSupplier,
+    invoice, closeInvoice,
+    purchaseOrder, closePurchaseOrder,
   } = useEditor();
 
   const navigate = useCallback((id: string) => {
@@ -409,6 +421,9 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'email-agent'     && <EmailAgentV2 />}
           {activeId === 'settings'        && <SettingsV2 />}
           {activeId === 'connections'     && <ConnectionsV2 />}
+          {activeId === 'sopici'          && <SopiciCommissionsV2 />}
+          {activeId === 'pl-invoice'      && <PLInvoiceEngineV2 />}
+          {activeId === 'cost-profit'     && <CostProfitAIV2 />}
         </Suspense>
       </AppShell>
 
@@ -420,23 +435,28 @@ const AppV2Inner: React.FC = () => {
       />
 
       <SalesOrderDrawer
-        order={editingSalesOrder}
+        order={salesOrder.entity}
+        mode={salesOrder.mode}
         onOpenChange={open => { if (!open) closeSalesOrder(); }}
       />
       <CustomerDrawer
-        customer={editingCustomer}
+        customer={customer.entity}
+        mode={customer.mode}
         onOpenChange={open => { if (!open) closeCustomer(); }}
       />
       <SupplierDrawer
-        supplier={editingSupplier}
+        supplier={supplier.entity}
+        mode={supplier.mode}
         onOpenChange={open => { if (!open) closeSupplier(); }}
       />
       <InvoiceDrawer
-        invoice={editingInvoice}
+        invoice={invoice.entity}
+        mode={invoice.mode}
         onOpenChange={open => { if (!open) closeInvoice(); }}
       />
       <PurchaseOrderDrawer
-        po={editingPurchaseOrder}
+        po={purchaseOrder.entity}
+        mode={purchaseOrder.mode}
         onOpenChange={open => { if (!open) closePurchaseOrder(); }}
       />
     </>

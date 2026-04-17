@@ -19,6 +19,8 @@ interface ListPageProps<T> {
   searchPlaceholder?: string;
   cardTitle?: string;
   cardAction?: React.ReactNode;
+  /** Rendered next to the page title — typically a "+ New X" button. */
+  headerAction?: React.ReactNode;
   columns: DataTableColumn<T>[];
   getRowId: (row: T) => string;
   data: T[] | undefined;
@@ -34,7 +36,7 @@ interface ListPageProps<T> {
 
 export function ListPage<T>({
   title, subtitle, search, setSearch, searchPlaceholder = 'Search',
-  cardTitle, cardAction, columns, getRowId, data, isLoading, error, onRetry,
+  cardTitle, cardAction, headerAction, columns, getRowId, data, isLoading, error, onRetry,
   onRowClick, emptyTitle, emptyDescription,
   skeletonRows = 6, skeletonCols = [160, 220, 100, 60],
 }: ListPageProps<T>) {
@@ -49,6 +51,7 @@ export function ListPage<T>({
             {subtitle}
           </p>
         </div>
+        {headerAction}
       </div>
 
       <Card>

@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import {
-  Card, CardHeader, CardTitle, Input, Badge, Skeleton, EmptyState,
+  Card, CardHeader, CardTitle, Input, Badge, Skeleton, EmptyState, Button,
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { useSalesOrders, SalesOrder } from '../queries/useSalesOrders';
@@ -87,7 +87,7 @@ const FilterPill: React.FC<{
 const SalesOrdersV2: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [search, setSearch] = useState('');
-  const { openSalesOrder } = useEditor();
+  const { openSalesOrder, openSalesOrderCreate } = useEditor();
 
   // Fetch with no status filter so the pill counts reflect the full list.
   const all = useSalesOrders({ search });
@@ -128,6 +128,13 @@ const SalesOrdersV2: React.FC = () => {
             )}
           </p>
         </div>
+        <Button
+          size="sm"
+          onClick={openSalesOrderCreate}
+          className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md"
+        >
+          + New order
+        </Button>
       </div>
 
       {/* Filters row */}

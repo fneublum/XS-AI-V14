@@ -5,6 +5,7 @@ import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
 import { useInvoices, Invoice } from '../queries/useInvoices';
 import { useEditor } from '../providers/EditorProvider';
+import { Button } from '../primitives';
 
 const fmtMoney = (n: number, currency: string) => {
   try {
@@ -46,7 +47,7 @@ const columns: DataTableColumn<Invoice>[] = [
 
 const InvoicesV2: React.FC = () => {
   const [search, setSearch] = useState('');
-  const { openInvoice } = useEditor();
+  const { openInvoice, openInvoiceCreate } = useEditor();
   const invoices = useInvoices(search);
   const total = (invoices.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
 
@@ -57,6 +58,12 @@ const InvoicesV2: React.FC = () => {
         invoices.data
           ? `${invoices.data.length} shown${total > 0 ? ` · $${Math.round(total).toLocaleString('en-US')}` : ''}${search ? ` · "${search}"` : ''}`
           : 'Loading…'
+      }
+      headerAction={
+        <Button size="sm" onClick={openInvoiceCreate}
+          className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
+          + New invoice
+        </Button>
       }
       search={search}
       setSearch={setSearch}

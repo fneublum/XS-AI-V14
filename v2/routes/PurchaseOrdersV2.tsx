@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import {
-  Card, CardHeader, CardTitle, Input, Skeleton, EmptyState, Badge,
+  Card, CardHeader, CardTitle, Input, Skeleton, EmptyState, Badge, Button,
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { usePurchaseOrders, PurchaseOrder } from '../queries/usePurchaseOrders';
@@ -62,7 +62,7 @@ const columns: DataTableColumn<PurchaseOrder>[] = [
 
 const PurchaseOrdersV2: React.FC = () => {
   const [search, setSearch] = useState('');
-  const { openPurchaseOrder } = useEditor();
+  const { openPurchaseOrder, openPurchaseOrderCreate } = useEditor();
   const pos = usePurchaseOrders(search);
   const total = (pos.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
 
@@ -81,6 +81,10 @@ const PurchaseOrdersV2: React.FC = () => {
               : 'Loading…'}
           </p>
         </div>
+        <Button size="sm" onClick={openPurchaseOrderCreate}
+          className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
+          + New PO
+        </Button>
       </div>
 
       <Card>
