@@ -8,7 +8,7 @@
 // node, but the filter menu needs a comparable primitive). Without
 // opting-in, a column renders as before.
 
-import React, { useMemo, useRef, useState, useEffect, useLayoutEffect } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, Filter, Search, X, CheckCircle2 } from 'lucide-react';
 import { cn } from './utils';
 
@@ -77,7 +77,6 @@ interface HeaderMenuProps<T> {
 
 function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClose }: HeaderMenuProps<T>) {
   const [needle, setNeedle] = useState('');
-  const [align, setAlign] = useState<'left' | 'right'>('right');
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -88,15 +87,6 @@ function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClos
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [onClose]);
-
-  // Flip to left-aligned if the default right-aligned popover would
-  // overflow past the viewport's left edge (happens on the first
-  // column when the sidebar is expanded).
-  useLayoutEffect(() => {
-    if (!menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
-    if (rect.left < 8) setAlign('left');
-  }, []);
 
   const unique = useMemo(() => {
     const seen = new Set<string>();
@@ -116,10 +106,7 @@ function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClos
   return (
     <div
       ref={menuRef}
-      className={
-        'absolute top-full mt-1 w-60 z-50 rounded-md border border-[#1f1f1f] bg-[#0a0a0a] shadow-[0_8px_32px_rgba(0,0,0,0.6)] overflow-hidden ' +
-        (align === 'left' ? 'left-0' : 'right-0')
-      }
+      className="absolute top-full left-0 mt-1 w-60 z-50 rounded-md border border-[#1f1f1f] bg-[#0a0a0a] shadow-[0_8px_32px_rgba(0,0,0,0.6)] overflow-hidden"
       onClick={e => e.stopPropagation()}
     >
       <div className="p-2 border-b border-[#1f1f1f]">
