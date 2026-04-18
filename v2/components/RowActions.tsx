@@ -12,8 +12,11 @@ interface Props {
   onEdit?: () => void;
   onDelete?: () => void;
   onEmail?: () => void;
-  /** Opens the Delivery Documents flow (Invoices only). */
+  /** Opens a "documents" flow for the row — Delivery Docs on Invoices,
+   *  Proforma on Sales Orders, etc. */
   onDeliveryDocs?: () => void;
+  /** Custom tooltip/aria for the documents icon. Default: "Delivery documents". */
+  deliveryDocsLabel?: string;
   disabled?: boolean;
 }
 
@@ -34,7 +37,9 @@ const stop = (fn?: () => void) => (e: React.MouseEvent) => {
 };
 
 export const RowActions: React.FC<Props> = ({
-  onView, onEdit, onDelete, onEmail, onDeliveryDocs, disabled,
+  onView, onEdit, onDelete, onEmail, onDeliveryDocs,
+  deliveryDocsLabel = 'Delivery documents',
+  disabled,
 }) => (
   <div className="flex items-center justify-end gap-0.5">
     {onDeliveryDocs && (
@@ -42,8 +47,8 @@ export const RowActions: React.FC<Props> = ({
         type="button"
         onClick={stop(onDeliveryDocs)}
         disabled={disabled}
-        title="Delivery documents"
-        aria-label="Delivery documents"
+        title={deliveryDocsLabel}
+        aria-label={deliveryDocsLabel}
         className={iconBtn}
       >
         <FileText size={14} />

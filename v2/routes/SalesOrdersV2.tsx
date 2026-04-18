@@ -11,6 +11,7 @@ import { useRowDelete } from '../components/useRowDelete';
 import { EmailComposeDrawer, EmailDraft } from '../components/EmailComposeDrawer';
 import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
+import { ProformaDocsModal } from '../components/ProformaDocsModal';
 import { useSalesOrders, SalesOrder } from '../queries/useSalesOrders';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
@@ -192,6 +193,7 @@ const SalesOrdersV2: React.FC = () => {
   const [search, setSearch] = useState('');
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
+  const [proformaDocsOrder, setProformaDocsOrder] = useState<SalesOrder | null>(null);
   const { openSalesOrder, openSalesOrderCreate } = useEditor();
   const insert = useEntityInsert<Record<string, unknown>>({
     table: 'sales_orders',
@@ -232,6 +234,8 @@ const SalesOrdersV2: React.FC = () => {
       onView={() => openSalesOrder(row)}
       onEdit={() => openSalesOrder(row)}
       onEmail={() => setEmailDraft(buildEmailDraft(row))}
+      onDeliveryDocs={() => setProformaDocsOrder(row)}
+      deliveryDocsLabel="Proforma documents"
       onDelete={() => confirmDelete(row)}
     />
   );
@@ -366,6 +370,10 @@ const SalesOrdersV2: React.FC = () => {
         open={!!emailDraft}
         onOpenChange={(o) => !o && setEmailDraft(null)}
         draft={emailDraft}
+      />
+      <ProformaDocsModal
+        order={proformaDocsOrder}
+        onOpenChange={(o) => !o && setProformaDocsOrder(null)}
       />
       {aiUploadOpen && (
         <AiUploadModal<SODraft>
