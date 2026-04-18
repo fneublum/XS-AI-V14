@@ -17,6 +17,7 @@ import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import { useEditor } from '../providers/EditorProvider';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { shortName, tooltipName } from '../lib/formatName';
 
 const fmtCurrency = (n: number, currency: string) => {
   try {
@@ -43,7 +44,7 @@ const columns: DataTableColumn<PurchaseOrder>[] = [
     value: r => r.id, cell: r => r.id.slice(0, 12) },
   { id: 'supplier', header: 'Supplier', sortable: true, filterable: true,
     value: r => r.supplierName,
-    cell: r => <span className="text-slate-100">{r.supplierName}</span> },
+    cell: r => <span className="text-slate-100" title={tooltipName(r.supplierName)}>{shortName(r.supplierName)}</span> },
   { id: 'status', header: 'Status', sortable: true, filterable: true,
     value: r => r.status,
     cell: r => <Badge variant={statusTone(r.status)} dot>{r.status}</Badge> },

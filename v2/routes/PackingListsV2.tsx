@@ -15,6 +15,7 @@ import { useEntityInsert } from '../queries/useEntityMutations';
 import { EmailComposeDrawer, EmailDraft } from '../components/EmailComposeDrawer';
 import { usePackingLists, PackingList } from '../queries/usePackingLists';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { shortName, tooltipName } from '../lib/formatName';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (status: string): BadgeTone => {
@@ -37,7 +38,7 @@ const columns: DataTableColumn<PackingList>[] = [
     cell: r => <span className="text-slate-500">{r.soNumber ?? '—'}</span> },
   { id: 'consignee', header: 'Consignee', sortable: true, filterable: true,
     value: r => r.consignee ?? '',
-    cell: r => <span className="text-slate-100">{r.consignee ?? '—'}</span> },
+    cell: r => <span className="text-slate-100" title={tooltipName(r.consignee)}>{shortName(r.consignee)}</span> },
   { id: 'container', header: 'Container', mono: true, sortable: true, filterable: true,
     value: r => r.containerNumber ?? '', cell: r => r.containerNumber ?? '—' },
   { id: 'carrier', header: 'Carrier', sortable: true, filterable: true,

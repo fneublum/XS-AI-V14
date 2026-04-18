@@ -23,6 +23,7 @@ import { useToast } from '../primitives/Toast';
 import { Button, Input, FormField, Label } from '../primitives';
 import { DeliveryDocsModal } from '../components/DeliveryDocsModal';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { shortName, tooltipName } from '../lib/formatName';
 
 const fmtMoney = (n: number, currency: string) => {
   try {
@@ -37,7 +38,10 @@ const columns: DataTableColumn<Invoice>[] = [
     value: r => r.invoiceNumber, cell: r => r.invoiceNumber },
   { id: 'sold', header: 'Sold to', sortable: true, filterable: true,
     value: r => r.soldTo ?? r.billToName ?? '',
-    cell: r => <span className="text-slate-100">{r.soldTo ?? r.billToName ?? '—'}</span> },
+    cell: r => {
+      const full = r.soldTo ?? r.billToName;
+      return <span className="text-slate-100" title={tooltipName(full)}>{shortName(full)}</span>;
+    } },
   { id: 'so', header: 'SO', mono: true, sortable: true, filterable: true,
     value: r => r.soNumber ?? '',
     cell: r => <span className="text-slate-500">{r.soNumber ?? '—'}</span> },

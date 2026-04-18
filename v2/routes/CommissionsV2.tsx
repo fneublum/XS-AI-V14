@@ -8,6 +8,7 @@ import { useRowCrud } from '../components/useRowCrud';
 import { FieldDef } from '../components/QuickCreateDrawer';
 import { useCommissions, CommissionRow } from '../queries/useCommissions';
 import { useEditor } from '../providers/EditorProvider';
+import { shortName, tooltipName } from '../lib/formatName';
 
 const fmtPct = (n: number | null): string => {
   if (n === null) return '—';
@@ -34,7 +35,7 @@ const columns: DataTableColumn<CommissionRow>[] = [
     cell: r => <span className="text-slate-500">{r.invoiceNumber ?? '—'}</span> },
   { id: 'customer', header: 'Customer', sortable: true, filterable: true,
     value: r => r.customerName,
-    cell: r => <span className="text-slate-100">{r.customerName}</span> },
+    cell: r => <span className="text-slate-100" title={tooltipName(r.customerName)}>{shortName(r.customerName)}</span> },
   { id: 'seller', header: 'Seller', sortable: true, filterable: true,
     value: r => r.sellerName ?? '', cell: r => r.sellerName ?? '—' },
   { id: 'rate', header: 'Rate', align: 'right', mono: true, sortable: true,

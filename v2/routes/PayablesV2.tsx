@@ -14,6 +14,7 @@ import { useCompany } from '../providers/CompanyProvider';
 import { useToast } from '../primitives/Toast';
 import { usePayables, Payable } from '../queries/usePayables';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { shortName, tooltipName } from '../lib/formatName';
 
 const fmtMoney = (n: number, currency: string) => {
   try {
@@ -28,7 +29,7 @@ const columns: DataTableColumn<Payable>[] = [
     value: r => r.invoiceNumber, cell: r => r.invoiceNumber },
   { id: 'supplier', header: 'Supplier', sortable: true, filterable: true,
     value: r => r.supplier ?? '',
-    cell: r => <span className="text-slate-100">{r.supplier ?? '—'}</span> },
+    cell: r => <span className="text-slate-100" title={tooltipName(r.supplier)}>{shortName(r.supplier)}</span> },
   { id: 'terms', header: 'Terms', sortable: true, filterable: true,
     value: r => r.paymentTerms ?? '',
     cell: r => <span className="text-slate-400">{r.paymentTerms ?? '—'}</span> },

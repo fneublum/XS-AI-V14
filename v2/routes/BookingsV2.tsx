@@ -14,6 +14,7 @@ import { useToast } from '../primitives/Toast';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useBookings, Booking } from '../queries/useBookings';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { shortName, tooltipName } from '../lib/formatName';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (status: string): BadgeTone => {
@@ -30,7 +31,7 @@ const columns: DataTableColumn<Booking>[] = [
     value: r => r.bookingNumber, cell: r => r.bookingNumber },
   { id: 'customer', header: 'Customer', sortable: true, filterable: true,
     value: r => r.customer ?? '',
-    cell: r => <span className="text-slate-100">{r.customer ?? '—'}</span> },
+    cell: r => <span className="text-slate-100" title={tooltipName(r.customer)}>{shortName(r.customer)}</span> },
   { id: 'vessel', header: 'Vessel / Voyage', sortable: true, filterable: true,
     value: r => r.vesselVoyage ?? '',
     cell: r => <span className="font-mono text-[11.5px] text-slate-300">{r.vesselVoyage ?? '—'}</span> },

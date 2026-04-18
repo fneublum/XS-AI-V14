@@ -18,6 +18,7 @@ import { useCompany } from '../providers/CompanyProvider';
 import { cn } from '../primitives/utils';
 import { useEditor } from '../providers/EditorProvider';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { shortName, tooltipName } from '../lib/formatName';
 
 const fmtCurrency = (n: number, currency: string) => {
   try {
@@ -44,7 +45,8 @@ const columns: DataTableColumn<SalesOrder>[] = [
   { id: 'orderNumber', header: 'Order', mono: true, sortable: true, filterable: true,
     value: r => r.orderNumber, cell: r => r.orderNumber },
   { id: 'customer', header: 'Customer', sortable: true, filterable: true,
-    value: r => r.customerName, cell: r => r.customerName },
+    value: r => r.customerName,
+    cell: r => <span title={tooltipName(r.customerName)}>{shortName(r.customerName)}</span> },
   { id: 'status', header: 'Status', sortable: true, filterable: true,
     value: r => r.status,
     cell: r => <Badge variant={statusTone(r.status)} dot>{r.status}</Badge> },

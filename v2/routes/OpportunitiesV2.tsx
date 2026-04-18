@@ -8,6 +8,7 @@ import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
 import { useRowCrud } from '../components/useRowCrud';
 import { useOpportunities, Opportunity } from '../queries/useOpportunities';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { shortName, tooltipName } from '../lib/formatName';
 
 const fmtMoney = (n: number | null) =>
   n === null || n === undefined
@@ -30,7 +31,7 @@ const stageTone = (stage: string): BadgeTone => {
 const columns: DataTableColumn<Opportunity>[] = [
   { id: 'customer', header: 'Customer', sortable: true, filterable: true,
     value: r => r.customerName,
-    cell: r => <span className="text-slate-100 font-medium">{r.customerName}</span> },
+    cell: r => <span className="text-slate-100 font-medium" title={tooltipName(r.customerName)}>{shortName(r.customerName)}</span> },
   { id: 'product', header: 'Product', sortable: true, filterable: true,
     value: r => r.productName ?? '', cell: r => r.productName ?? '—' },
   { id: 'stage', header: 'Stage', sortable: true, filterable: true,

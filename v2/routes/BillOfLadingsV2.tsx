@@ -14,6 +14,7 @@ import { useToast } from '../primitives/Toast';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useBillOfLadings, BillOfLading } from '../queries/useBillOfLadings';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { shortName, tooltipName } from '../lib/formatName';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (status: string): BadgeTone => {
@@ -30,9 +31,10 @@ const columns: DataTableColumn<BillOfLading>[] = [
     value: r => r.blNumber, cell: r => r.blNumber },
   { id: 'shipper', header: 'Shipper', sortable: true, filterable: true,
     value: r => r.shipper ?? '',
-    cell: r => <span className="text-slate-100">{r.shipper ?? '—'}</span> },
+    cell: r => <span className="text-slate-100" title={tooltipName(r.shipper)}>{shortName(r.shipper)}</span> },
   { id: 'consignee', header: 'Consignee', sortable: true, filterable: true,
-    value: r => r.consignee ?? '', cell: r => r.consignee ?? '—' },
+    value: r => r.consignee ?? '',
+    cell: r => <span title={tooltipName(r.consignee)}>{shortName(r.consignee)}</span> },
   { id: 'route', header: 'POL → POD', sortable: true, filterable: true,
     value: r => `${r.portLoading ?? ''} → ${r.portDischarge ?? ''}`,
     cell: r => (

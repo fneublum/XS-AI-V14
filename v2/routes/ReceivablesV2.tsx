@@ -9,6 +9,7 @@ import { FieldDef } from '../components/QuickCreateDrawer';
 import { useReceivables, Receivable } from '../queries/useReceivables';
 import { useEditor } from '../providers/EditorProvider';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { shortName, tooltipName } from '../lib/formatName';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const paymentTone = (status: string): BadgeTone => {
@@ -28,7 +29,7 @@ const columns: DataTableColumn<Receivable>[] = [
     cell: r => <span className="text-slate-500">{r.invoiceNumber ?? '—'}</span> },
   { id: 'customer', header: 'Customer', sortable: true, filterable: true,
     value: r => r.customerName,
-    cell: r => <span className="text-slate-100">{r.customerName}</span> },
+    cell: r => <span className="text-slate-100" title={tooltipName(r.customerName)}>{shortName(r.customerName)}</span> },
   { id: 'payment', header: 'Payment', sortable: true, filterable: true,
     value: r => r.paymentStatus,
     cell: r => <Badge variant={paymentTone(r.paymentStatus)} dot>{r.paymentStatus}</Badge> },
