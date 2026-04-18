@@ -32,17 +32,9 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-/** Pre-open the window synchronously so popup blockers allow it. */
-const openPreview = (doc: any, filename: string) => {
-  const win = window.open('', '_blank');
+const docToBlobUrl = (doc: any): string => {
   const blob = doc.output('blob');
-  const url = URL.createObjectURL(blob);
-  if (win) {
-    win.location.href = url;
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  } else {
-    doc.save(filename);
-  }
+  return URL.createObjectURL(blob);
 };
 
 const downloadDoc = (doc: any, filename: string) => doc.save(filename);
@@ -118,6 +110,7 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange }) => {
 
   const [busy, setBusy] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Email preview draft.
   interface Attachment { name: string; contentBytes: string; contentType: string }
@@ -143,6 +136,15 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange }) => {
     return (own || logos.data[0]).url || null;
   }, [logos.data, currentCompanyId]);
 
+  // Cleanup blob URL when the outer modal closes. MUST live above
+  // the early-return below to keep hook order stable across renders.
+  useEffect(() => {
+    if (!order && previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+  }, [order, previewUrl]);
+
   if (!order) return null;
 
   const buildDoc = () => generateProformaPdf(toProformaOrder(order), {
@@ -158,8 +160,14 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange }) => {
     setBusy(action);
     try {
       const doc = buildDoc();
-      if (action === 'preview') openPreview(doc, filename);
-      else                      downloadDoc(doc, filename);
+      if (action === 'preview') {
+        // In-app iframe preview — matches v1 behavior and bypasses
+        // browser PDF auto-download on blob URLs opened in new tabs.
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(docToBlobUrl(doc));
+      } else {
+        downloadDoc(doc, filename);
+      }
     } catch (err) {
       toast.push({
         kind: 'error',
@@ -339,6 +347,53 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange }) => {
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+
+      {/* PDF preview — inline iframe so the browser never auto-
+          downloads what the user wanted to preview. */}
+      <Dialog.Root
+        open={!!previewUrl}
+        onOpenChange={(o) => {
+          if (!o && previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+            setPreviewUrl(null);
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[55] bg-black/70 backdrop-blur-[2px]" />
+          <Dialog.Content className="fixed left-1/2 top-[3%] -translate-x-1/2 z-[65] w-[min(96vw,960px)] h-[92vh] rounded-md border border-[#1f1f1f] bg-[#0a0a0a] shadow-[0_16px_48px_rgba(0,0,0,0.6)] flex flex-col">
+            <div className="px-4 py-2.5 border-b border-[#1f1f1f] flex items-center gap-2">
+              <FileText size={13} className="text-indigo-300 shrink-0" />
+              <Dialog.Title className="text-[13px] font-semibold text-slate-100 truncate">
+                Proforma_{order.orderNumber}.pdf
+              </Dialog.Title>
+              <div className="ml-auto flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => runAction('download')}
+                  title="Download"
+                  className={iconBtn}
+                >
+                  <Download size={13} />
+                </button>
+                <Dialog.Close
+                  aria-label="Close preview"
+                  className={iconBtn}
+                >
+                  <XIcon size={13} />
+                </Dialog.Close>
+              </div>
+            </div>
+            {previewUrl && (
+              <iframe
+                src={previewUrl}
+                title="Proforma preview"
+                className="flex-1 w-full bg-white rounded-b-md"
+              />
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Email preview */}
       <Dialog.Root open={emailPreviewOpen} onOpenChange={setEmailPreviewOpen}>

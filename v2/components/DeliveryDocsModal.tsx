@@ -48,21 +48,9 @@ const toPdfInvoice = (inv: Invoice): PdfInvoice => ({
   date: inv.invoiceDate ?? undefined,
 } as PdfInvoice);
 
-// Pre-open the new tab synchronously inside the click handler, then
-// write the blob URL to its location once the PDF is ready. Popup
-// blockers allow a user-gesture window.open — deferring it until
-// after the async work gets blocked in many browsers.
-const openPreview = (doc: any, filename: string) => {
-  const win = window.open('', '_blank');
+const docToBlobUrl = (doc: any): string => {
   const blob = doc.output('blob');
-  const url = URL.createObjectURL(blob);
-  if (win) {
-    win.location.href = url;
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  } else {
-    // Last resort — popup was blocked even with the sync pre-open.
-    doc.save(filename);
-  }
+  return URL.createObjectURL(blob);
 };
 
 const downloadDoc = (doc: any, filename: string) => doc.save(filename);
@@ -127,6 +115,8 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
   const [halfMode, setHalfMode] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewFilename, setPreviewFilename] = useState<string>('');
 
   // Email preview state — mirrors v1 PLInvoiceEngine so the user can
   // review To / CC / Subject / Body + see attachments before sending.
@@ -154,6 +144,15 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
     const own = logos.data.find(i => i.companyId === currentCompanyId);
     return (own || logos.data[0]).url || null;
   }, [logos.data, currentCompanyId]);
+
+  // Revoke the blob URL when the outer modal closes. MUST live above
+  // the early-return to keep hook order stable across renders.
+  useEffect(() => {
+    if (!invoice && previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+  }, [invoice, previewUrl]);
 
   if (!invoice) return null;
 
@@ -191,8 +190,14 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
     setBusy(key);
     try {
       const doc = docFactory(kind);
-      if (action === 'preview') openPreview(doc, filename);
-      else downloadDoc(doc, filename);
+      if (action === 'preview') {
+        // Inline iframe preview — avoids browser PDF auto-download.
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(docToBlobUrl(doc));
+        setPreviewFilename(filename);
+      } else {
+        downloadDoc(doc, filename);
+      }
     } catch (err) {
       toast.push({
         kind: 'error',
@@ -557,6 +562,54 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+
+      {/* Inline PDF preview */}
+      <Dialog.Root
+        open={!!previewUrl}
+        onOpenChange={(o) => {
+          if (!o && previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+            setPreviewUrl(null);
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[55] bg-black/70 backdrop-blur-[2px]" />
+          <Dialog.Content className="fixed left-1/2 top-[3%] -translate-x-1/2 z-[65] w-[min(96vw,960px)] h-[92vh] rounded-md border border-[#1f1f1f] bg-[#0a0a0a] shadow-[0_16px_48px_rgba(0,0,0,0.6)] flex flex-col">
+            <div className="px-4 py-2.5 border-b border-[#1f1f1f] flex items-center gap-2">
+              <FileText size={13} className="text-indigo-300 shrink-0" />
+              <Dialog.Title className="text-[13px] font-semibold text-slate-100 truncate">
+                {previewFilename}
+              </Dialog.Title>
+              <div className="ml-auto flex items-center gap-1">
+                {previewUrl && (
+                  <a
+                    href={previewUrl}
+                    download={previewFilename}
+                    title="Download"
+                    className={iconBtn}
+                  >
+                    <Download size={13} />
+                  </a>
+                )}
+                <Dialog.Close
+                  aria-label="Close preview"
+                  className={iconBtn}
+                >
+                  <XIcon size={13} />
+                </Dialog.Close>
+              </div>
+            </div>
+            {previewUrl && (
+              <iframe
+                src={previewUrl}
+                title="PDF preview"
+                className="flex-1 w-full bg-white rounded-b-md"
+              />
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Email preview modal — mirror of v1 PLInvoiceEngine preview */}
       <Dialog.Root open={emailPreviewOpen} onOpenChange={setEmailPreviewOpen}>
