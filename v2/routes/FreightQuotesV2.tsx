@@ -2,12 +2,16 @@
 
 import React, { useState } from 'react';
 import { Sparkles } from 'lucide-react';
-import { Badge, Button } from '../primitives';
+import { Badge, Button, Input, FormField, Label } from '../primitives';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
 import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
-import { FreightQuoteAiUploadModal } from '../components/FreightQuoteAiUploadModal';
+import { AiUploadModal } from '../components/AiUploadModal';
+import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { useRowCrud } from '../components/useRowCrud';
+import { useEntityInsert } from '../queries/useEntityMutations';
+import { useToast } from '../primitives/Toast';
+import { useCompany } from '../providers/CompanyProvider';
 import { useFreightQuotes, FreightQuote } from '../queries/useFreightQuotes';
 import { formatDate as fmtDate } from '../lib/formatDate';
 
@@ -137,11 +141,100 @@ const fields: FieldDef[] = [
     defaultValue: 'ACTIVE' },
 ];
 
+interface FQDraft {
+  agentName: string;
+  carrier: string;
+  freightType: string;
+  originPort: string;
+  originPortCode: string;
+  destinationPort: string;
+  destinationPortCode: string;
+  rate: string;
+  currency: string;
+  freeTime: string;
+  transitTime: string;
+  validUntil: string;
+  status: string;
+  notes: string;
+}
+
+const emptyFQDraft = (): FQDraft => ({
+  agentName: '', carrier: '', freightType: '',
+  originPort: '', originPortCode: '',
+  destinationPort: '', destinationPortCode: '',
+  rate: '', currency: 'USD', freeTime: '', transitTime: '',
+  validUntil: '', status: 'ACTIVE', notes: '',
+});
+
+const FQ_PROMPT = `You are extracting fields from a FREIGHT QUOTE (ocean, air, or trucking).
+Return a JSON object with exactly these keys. Missing values must be null.
+
+{
+  "agentName":           string | null,
+  "carrier":             string | null,
+  "freightType":         "OCEAN" | "AIR" | "TRUCK" | "RAIL" | null,
+  "originPort":          string | null,
+  "originPortCode":      string | null,   // 5-char UN/LOCODE
+  "destinationPort":     string | null,
+  "destinationPortCode": string | null,
+  "rate":                number | null,
+  "currency":            string | null,
+  "freeTime":            number | null,
+  "transitTime":         number | null,
+  "validUntil":          string | null,   // YYYY-MM-DD
+  "status":              "ACTIVE" | "PENDING" | "EXPIRED" | null,
+  "notes":               string | null
+}
+
+Return ONLY valid JSON.`;
+
+function normalizeFQJson(parsed: Record<string, unknown>): FQDraft {
+  const str = (k: string): string => {
+    const v = parsed[k];
+    return typeof v === 'string' ? v.trim() : '';
+  };
+  const num = (k: string): string => {
+    const v = parsed[k];
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+    if (typeof v === 'string') {
+      const n = Number(v.replace(/[^0-9.\-]/g, ''));
+      return Number.isFinite(n) && v.trim() !== '' ? String(n) : '';
+    }
+    return '';
+  };
+  const ft = str('freightType').toUpperCase();
+  const status = str('status').toUpperCase();
+  return {
+    agentName:           str('agentName'),
+    carrier:             str('carrier'),
+    freightType:         (['OCEAN','AIR','TRUCK','RAIL'].includes(ft) ? ft : ''),
+    originPort:          str('originPort'),
+    originPortCode:      str('originPortCode').toUpperCase().slice(0, 5),
+    destinationPort:     str('destinationPort'),
+    destinationPortCode: str('destinationPortCode').toUpperCase().slice(0, 5),
+    rate:                num('rate'),
+    currency:            str('currency').toUpperCase() || 'USD',
+    freeTime:            num('freeTime'),
+    transitTime:         num('transitTime'),
+    validUntil:          str('validUntil'),
+    status:              (['ACTIVE','PENDING','EXPIRED'].includes(status) ? status : 'ACTIVE'),
+    notes:               str('notes'),
+  };
+}
+
 const FreightQuotesV2: React.FC = () => {
+  const toast = useToast();
+  const { currentCompanyId } = useCompany();
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
   const quotes = useFreightQuotes(search);
+  const insert = useEntityInsert<Record<string, unknown>>({
+    table: 'freight_quotes',
+    listQueryKeys: ['freightQuotes', 'logisticsDocs'],
+    idPrefix: 'FQ',
+    withCreatedAt: false,
+  });
 
   const { rowActions, drawers, openView } = useRowCrud<FreightQuote>({
     table: 'freight_quotes',
@@ -202,14 +295,185 @@ const FreightQuotesV2: React.FC = () => {
         fields={fields}
       />
       {aiUploadOpen && (
-        <FreightQuoteAiUploadModal
+        <AiUploadModal<FQDraft>
           open={aiUploadOpen}
           onOpenChange={setAiUploadOpen}
+          config={{
+            title: 'AI upload — freight quote',
+            description: 'Drop a PDF / image, pick a file, or paste text or a screenshot.',
+            emptyDraft: emptyFQDraft,
+            fromExtracted: (d) => d,
+            extractSpec: { prompt: FQ_PROMPT, normalize: normalizeFQJson },
+            extractSummary: (d) =>
+              [d.agentName, d.originPortCode, d.destinationPortCode].filter(Boolean).join(' · '),
+            validate: (d) => d.agentName.trim() === '' ? 'Agent is required.' : null,
+            renderReview: (d, setD) => (
+              <div className="grid grid-cols-2 gap-3">
+                <FormField className="col-span-2">
+                  <FieldLabel>Agent *</FieldLabel>
+                  <SupabaseSelectField
+                    source={{ table: 'cargo_agents', valueColumn: 'name', labelColumn: 'name', secondaryColumn: 'country', scopeByCompany: true }}
+                    value={d.agentName}
+                    onPick={v => setD({ ...d, agentName: v })} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Carrier</FieldLabel>
+                  <SupabaseSelectField
+                    source={{ table: 'carriers', valueColumn: 'name', labelColumn: 'name', secondaryColumn: 'scac', scopeByCompany: true }}
+                    value={d.carrier}
+                    onPick={v => setD({ ...d, carrier: v })} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Type</FieldLabel>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(['OCEAN','AIR','TRUCK','RAIL'] as const).map(opt => (
+                      <button key={opt} type="button"
+                        onClick={() => setD({ ...d, freightType: opt })}
+                        className={d.freightType === opt
+                          ? 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
+                          : 'px-2.5 py-1 rounded-md text-[11px] text-slate-400 border border-[#1f1f1f] hover:text-slate-200 hover:border-[#2a2a2a]'}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </FormField>
+                <FormField>
+                  <FieldLabel>POA (origin port)</FieldLabel>
+                  <SupabaseSelectField
+                    source={{
+                      table: 'ports', valueColumn: 'code', labelColumn: 'name',
+                      secondaryColumn: 'country',
+                      writeAlso: [{ sourceColumn: 'name', targetKey: 'originPort' }],
+                    }}
+                    value={d.originPortCode} mono
+                    onPick={(v, extras) => setD({
+                      ...d,
+                      originPortCode: v,
+                      originPort: extras.originPort ?? d.originPort,
+                    })} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>POD (destination port)</FieldLabel>
+                  <SupabaseSelectField
+                    source={{
+                      table: 'ports', valueColumn: 'code', labelColumn: 'name',
+                      secondaryColumn: 'country',
+                      writeAlso: [{ sourceColumn: 'name', targetKey: 'destinationPort' }],
+                    }}
+                    value={d.destinationPortCode} mono
+                    onPick={(v, extras) => setD({
+                      ...d,
+                      destinationPortCode: v,
+                      destinationPort: extras.destinationPort ?? d.destinationPort,
+                    })} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Origin port (name)</FieldLabel>
+                  <Input value={d.originPort}
+                    onChange={e => setD({ ...d, originPort: e.target.value })}
+                    className={inputCls} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Destination port (name)</FieldLabel>
+                  <Input value={d.destinationPort}
+                    onChange={e => setD({ ...d, destinationPort: e.target.value })}
+                    className={inputCls} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Rate</FieldLabel>
+                  <Input type="number" value={d.rate}
+                    onChange={e => setD({ ...d, rate: e.target.value })}
+                    className={inputCls + ' font-mono tabular-nums'} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Currency</FieldLabel>
+                  <Input value={d.currency}
+                    onChange={e => setD({ ...d, currency: e.target.value.toUpperCase() })}
+                    className={inputCls + ' font-mono'} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Free time (days)</FieldLabel>
+                  <Input type="number" value={d.freeTime}
+                    onChange={e => setD({ ...d, freeTime: e.target.value })}
+                    className={inputCls + ' font-mono tabular-nums'} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Transit (days)</FieldLabel>
+                  <Input type="number" value={d.transitTime}
+                    onChange={e => setD({ ...d, transitTime: e.target.value })}
+                    className={inputCls + ' font-mono tabular-nums'} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Valid until</FieldLabel>
+                  <Input type="date" value={d.validUntil}
+                    onChange={e => setD({ ...d, validUntil: e.target.value })}
+                    className={inputCls} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Status</FieldLabel>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(['ACTIVE','PENDING','ACCEPTED','EXPIRED','REJECTED'] as const).map(opt => (
+                      <button key={opt} type="button"
+                        onClick={() => setD({ ...d, status: opt })}
+                        className={d.status === opt
+                          ? 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
+                          : 'px-2.5 py-1 rounded-md text-[11px] text-slate-400 border border-[#1f1f1f] hover:text-slate-200 hover:border-[#2a2a2a]'}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </FormField>
+                <FormField className="col-span-2">
+                  <FieldLabel>Notes</FieldLabel>
+                  <textarea value={d.notes}
+                    onChange={e => setD({ ...d, notes: e.target.value })}
+                    rows={2}
+                    className="w-full bg-[#111111] border border-[#1f1f1f] rounded-md px-2 py-1.5 text-[12.5px] text-slate-200 resize-y" />
+                </FormField>
+              </div>
+            ),
+            save: async (d) => {
+              const payload: Record<string, unknown> = {
+                agent_name:            d.agentName.trim() || null,
+                carrier:               d.carrier.trim() || null,
+                freight_type:          d.freightType.trim() || null,
+                origin_port:           d.originPort.trim() || null,
+                origin_port_code:      d.originPortCode.trim().toUpperCase() || null,
+                destination_port:      d.destinationPort.trim() || null,
+                destination_port_code: d.destinationPortCode.trim().toUpperCase() || null,
+                rate:                  d.rate.trim() === '' ? null : Number(d.rate),
+                currency:              d.currency.trim().toUpperCase() || 'USD',
+                free_time:             d.freeTime.trim() === '' ? null : Number(d.freeTime),
+                transit_time:          d.transitTime.trim() === '' ? null : Number(d.transitTime),
+                valid_until:           d.validUntil.trim() || null,
+                status:                d.status.trim().toUpperCase() || 'ACTIVE',
+                observation:           d.notes.trim() || null,
+                date_added:            new Date().toISOString().slice(0, 10),
+              };
+              if (currentCompanyId && currentCompanyId !== 'ALL') {
+                payload.company_id = currentCompanyId;
+              }
+              await insert.mutateAsync(payload);
+              toast.push({
+                kind: 'success',
+                title: 'Freight quote saved',
+                description: `${d.agentName} · ${d.originPortCode || d.originPort} → ${d.destinationPortCode || d.destinationPort}`,
+              });
+            },
+          }}
         />
       )}
       {drawers}
     </>
   );
 };
+
+const inputCls = 'h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200';
+
+const FieldLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <Label className="text-[11px] text-slate-500 uppercase tracking-wider font-medium">
+    {children}
+  </Label>
+);
 
 export default FreightQuotesV2;
