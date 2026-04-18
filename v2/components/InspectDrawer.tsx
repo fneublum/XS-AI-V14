@@ -12,6 +12,7 @@ import {
 import { useToast } from '../primitives/Toast';
 import { useEntityUpdate } from '../queries/useEntityMutations';
 import { FieldDef } from './QuickCreateDrawer';
+import { SupabaseSelectField } from './SupabaseSelectField';
 
 export type InspectMode = 'view' | 'edit';
 
@@ -72,13 +73,14 @@ export const InspectDrawer: React.FC<Props> = ({
     const patch: Record<string, unknown> = { id: rowId };
     for (const f of fields) {
       const raw = values[f.key]?.trim() ?? '';
+      const col = f.dbKey ?? f.key;
       if (raw === '') {
-        patch[f.key] = null;
+        patch[col] = null;
       } else if (f.type === 'number') {
         const n = Number(raw);
-        patch[f.key] = Number.isFinite(n) ? n : null;
+        patch[col] = Number.isFinite(n) ? n : null;
       } else {
-        patch[f.key] = raw;
+        patch[col] = raw;
       }
     }
     update.mutate(patch as never, {
@@ -144,7 +146,17 @@ export const InspectDrawer: React.FC<Props> = ({
                     <Label className="text-[11px] text-slate-500 uppercase tracking-wider font-medium">
                       {f.label}
                     </Label>
-                    {f.type === 'select' ? (
+                    {f.source ? (
+                      <SupabaseSelectField
+                        source={f.source}
+                        value={values[f.key] ?? ''}
+                        mono={f.mono}
+                        placeholder={f.placeholder}
+                        onPick={(v, extras) => {
+                          setValues(prev => ({ ...prev, [f.key]: v, ...extras }));
+                        }}
+                      />
+                    ) : f.type === 'select' ? (
                       <div className="flex flex-wrap gap-1.5">
                         {(f.options ?? []).map(opt => (
                           <button

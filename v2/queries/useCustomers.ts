@@ -52,9 +52,12 @@ interface Raw {
   pod: string | null;
 }
 
-function scopeByCompany<Q extends { eq: Function; or: Function }>(q: Q, companyId: string): Q {
+function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
+  // The `customers` table does not have a `sharedWith` column in this
+  // environment — previous multi-tenant sharing filter was removed to
+  // stop a 400 on every Customers load.
   if (companyId === 'ALL') return q;
-  return q.or(`"companyId".eq.${companyId},"sharedWith".cs.{${companyId}}`) as Q;
+  return q.eq('"companyId"', companyId) as Q;
 }
 
 export function useCustomers(search?: string) {

@@ -13,6 +13,7 @@ import {
 import { useToast } from '../primitives/Toast';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useCompany } from '../providers/CompanyProvider';
+import { SupabaseSelectField, FieldSource } from './SupabaseSelectField';
 
 export type FieldType = 'text' | 'number' | 'date' | 'select' | 'textarea';
 
@@ -29,7 +30,21 @@ export interface FieldDef {
   min?: number;
   max?: number;
   step?: number;
+  /**
+   * DB column name if it differs from `key`. Reading still uses `key`
+   * (because row objects are camelCase-mapped) but writing to the DB
+   * uses `dbKey`. Needed for tables that are snake_case end-to-end,
+   * like `freight_quotes`.
+   */
+  dbKey?: string;
+  /**
+   * When present, this field becomes a Supabase-backed searchable
+   * dropdown sourced from the given table. See SupabaseSelectField.
+   */
+  source?: FieldSource;
 }
+
+export type { FieldSource };
 
 interface Props {
   open: boolean;
@@ -41,6 +56,12 @@ interface Props {
   listQueryKeys: string[];
   fields: FieldDef[];
   scopeByCompany?: boolean;
+  /**
+   * DB column to write the current companyId to when scopeByCompany
+   * is true. Defaults to `companyId`. Set to `company_id` for
+   * snake_case tables.
+   */
+  companyIdColumn?: string;
   /** Extra fields merged into the insert payload (e.g. hardcoded status). */
   extras?: Record<string, unknown>;
   /** Success message override. Default: "Created". */
@@ -52,7 +73,8 @@ const inputMono  = 'font-mono tabular-nums';
 
 export const QuickCreateDrawer: React.FC<Props> = ({
   open, onOpenChange, title, description, table, idPrefix, listQueryKeys,
-  fields, scopeByCompany = false, extras, successMessage,
+  fields, scopeByCompany = false, companyIdColumn = 'companyId',
+  extras, successMessage,
 }) => {
   const toast = useToast();
   const { currentCompanyId } = useCompany();
@@ -89,17 +111,18 @@ export const QuickCreateDrawer: React.FC<Props> = ({
     const payload: Record<string, unknown> = { ...extras };
     for (const f of fields) {
       const raw = values[f.key]?.trim() ?? '';
+      const col = f.dbKey ?? f.key;
       if (raw === '') {
-        payload[f.key] = null;
+        payload[col] = null;
       } else if (f.type === 'number') {
         const n = Number(raw);
-        payload[f.key] = Number.isFinite(n) ? n : null;
+        payload[col] = Number.isFinite(n) ? n : null;
       } else {
-        payload[f.key] = raw;
+        payload[col] = raw;
       }
     }
     if (scopeByCompany && currentCompanyId !== 'ALL') {
-      payload.companyId = currentCompanyId;
+      payload[companyIdColumn] = currentCompanyId;
     }
 
     insert.mutate(payload as never, {
@@ -166,7 +189,17 @@ export const QuickCreateDrawer: React.FC<Props> = ({
                   {f.required && <span className="text-red-400 ml-1">*</span>}
                 </Label>
 
-                {f.type === 'select' ? (
+                {f.source ? (
+                  <SupabaseSelectField
+                    source={f.source}
+                    value={values[f.key] ?? ''}
+                    mono={f.mono}
+                    placeholder={f.placeholder}
+                    onPick={(v, extras) => {
+                      setValues(prev => ({ ...prev, [f.key]: v, ...extras }));
+                    }}
+                  />
+                ) : f.type === 'select' ? (
                   <div className="flex flex-wrap gap-1.5">
                     {(f.options ?? []).map(opt => (
                       <button
