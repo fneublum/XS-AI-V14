@@ -14,6 +14,7 @@ import { QuickCreateDrawer } from '../components/QuickCreateDrawer';
 import { RowActions } from '../components/RowActions';
 import { useLogisticsDocs, LogisticsDoc } from '../queries/useLogisticsDocs';
 import { useEntityDelete } from '../queries/useEntityMutations';
+import { formatDate as fmtDate } from '../lib/formatDate';
 
 const kindLabel: Record<LogisticsDoc['kind'], string> = {
   BL: 'Bill of Lading',
@@ -39,12 +40,6 @@ const kindTable: Record<LogisticsDoc['kind'], { table: string; listQueryKeys: st
   BK: { table: 'bookings',       listQueryKeys: ['bookings',      'logisticsDocs'] },
 };
 
-const fmtDate = (iso: string): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
-};
 
 const columns: DataTableColumn<LogisticsDoc>[] = [
   { id: 'kind', header: 'Type', sortable: true, filterable: true,

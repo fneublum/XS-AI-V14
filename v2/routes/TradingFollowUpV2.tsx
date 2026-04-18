@@ -16,6 +16,7 @@ import { useCustomers, Customer } from '../queries/useCustomers';
 import { useSalesOrders, SalesOrder } from '../queries/useSalesOrders';
 import { useInvoices, Invoice } from '../queries/useInvoices';
 import { BASIC_PRESETS, PresetId, computeRange } from '../lib/datePresets';
+import { formatDate } from '../lib/formatDate';
 
 // ─── Helpers (ported from v1 SalesFollowUp) ──────────────────────
 
@@ -77,12 +78,6 @@ const formatCurrency = (val: number | null | undefined, currency = 'USD'): strin
   }
 };
 
-const formatDate = (dateStr: string | null | undefined): string => {
-  if (!dateStr) return '—';
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-};
 
 const DEFAULT_PRESET: PresetId = 'last_12_months';
 

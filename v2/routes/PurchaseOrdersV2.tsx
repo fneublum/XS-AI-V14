@@ -10,6 +10,7 @@ import { useRowDelete } from '../components/useRowDelete';
 import { EmailComposeDrawer, EmailDraft } from '../components/EmailComposeDrawer';
 import { usePurchaseOrders, PurchaseOrder } from '../queries/usePurchaseOrders';
 import { useEditor } from '../providers/EditorProvider';
+import { formatDate as fmtDate } from '../lib/formatDate';
 
 const fmtCurrency = (n: number, currency: string) => {
   try {
@@ -19,13 +20,6 @@ const fmtCurrency = (n: number, currency: string) => {
   } catch {
     return `${currency} ${n.toLocaleString('en-US')}`;
   }
-};
-
-const fmtDate = (iso: string): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
 };
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';

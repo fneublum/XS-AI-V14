@@ -8,13 +8,7 @@ import { useRowCrud } from '../components/useRowCrud';
 import { FieldDef } from '../components/QuickCreateDrawer';
 import { useReceivables, Receivable } from '../queries/useReceivables';
 import { useEditor } from '../providers/EditorProvider';
-
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
-};
+import { formatDate as fmtDate } from '../lib/formatDate';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const paymentTone = (status: string): BadgeTone => {

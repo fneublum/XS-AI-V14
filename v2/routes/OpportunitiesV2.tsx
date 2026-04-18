@@ -7,18 +7,12 @@ import { ListPage } from '../components/ListPage';
 import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
 import { useRowCrud } from '../components/useRowCrud';
 import { useOpportunities, Opportunity } from '../queries/useOpportunities';
+import { formatDate as fmtDate } from '../lib/formatDate';
 
 const fmtMoney = (n: number | null) =>
   n === null || n === undefined
     ? '—'
     : `$${Math.round(n).toLocaleString('en-US')}`;
-
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
-};
 
 const fmtPct = (n: number | null) =>
   n === null || n === undefined ? '—' : `${Math.round(n)}%`;

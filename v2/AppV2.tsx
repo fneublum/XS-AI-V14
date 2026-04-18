@@ -5,6 +5,7 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from
 import { AuthProvider, useAuth } from './providers/AuthProvider';
 import { CompanyProvider, useCompany } from './providers/CompanyProvider';
 import { useCompanies } from './queries/useCompanies';
+import { formatDate } from './lib/formatDate';
 import { QueryProvider } from './providers/QueryProvider';
 import { ToastProvider, useToast } from './primitives/Toast';
 import { EditorProvider, useEditor } from './providers/EditorProvider';
@@ -335,9 +336,7 @@ const AppV2Inner: React.FC = () => {
       }
       const companyName = list.find(c => c.id === resolvedId)?.name
         ?? (currentCompanyId === 'ALL' ? 'All accessible' : currentCompanyId);
-      const dateLabel = new Date().toLocaleDateString(undefined, {
-        weekday: 'long', month: 'short', day: 'numeric',
-      });
+      const dateLabel = formatDate(new Date().toISOString());
       return [
         { id: 'greeting', label: `Hello, ${firstName}` },
         { id: 'company',  label: companyName },

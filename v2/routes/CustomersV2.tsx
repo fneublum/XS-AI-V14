@@ -9,6 +9,7 @@ import { RowActions } from '../components/RowActions';
 import { useRowDelete } from '../components/useRowDelete';
 import { useCustomers, Customer } from '../queries/useCustomers';
 import { useEditor } from '../providers/EditorProvider';
+import { formatDate as fmtDate } from '../lib/formatDate';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (s: string | null): BadgeTone => {
@@ -18,13 +19,6 @@ const statusTone = (s: string | null): BadgeTone => {
   if (u.includes('RISK')) return 'warning';
   if (u === 'INACTIVE') return 'neutral';
   return 'info';
-};
-
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
 };
 
 const CustomersV2: React.FC = () => {

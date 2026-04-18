@@ -7,13 +7,7 @@ import { ListPage } from '../components/ListPage';
 import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
 import { useRowCrud } from '../components/useRowCrud';
 import { useShipments, Shipment } from '../queries/useShipments';
-
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
-};
+import { formatDate as fmtDate } from '../lib/formatDate';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (status: string): BadgeTone => {

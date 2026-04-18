@@ -16,6 +16,7 @@ import { useInvoices, Invoice } from '../queries/useInvoices';
 import { useEditor } from '../providers/EditorProvider';
 import { Button } from '../primitives';
 import { DeliveryDocsModal } from '../components/DeliveryDocsModal';
+import { formatDate as fmtDate } from '../lib/formatDate';
 
 const fmtMoney = (n: number, currency: string) => {
   try {
@@ -23,13 +24,6 @@ const fmtMoney = (n: number, currency: string) => {
       style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0,
     });
   } catch { return `${currency} ${n.toLocaleString('en-US')}`; }
-};
-
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
 };
 
 const columns: DataTableColumn<Invoice>[] = [

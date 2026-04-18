@@ -9,6 +9,7 @@ import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
 import { FreightQuoteAiUploadModal } from '../components/FreightQuoteAiUploadModal';
 import { useRowCrud } from '../components/useRowCrud';
 import { useFreightQuotes, FreightQuote } from '../queries/useFreightQuotes';
+import { formatDate as fmtDate } from '../lib/formatDate';
 
 const fmtMoney = (n: number | null, currency: string) => {
   if (n === null) return '—';
@@ -19,18 +20,6 @@ const fmtMoney = (n: number | null, currency: string) => {
   } catch {
     return `${currency} ${n.toLocaleString('en-US')}`;
   }
-};
-
-// Compact date format requested by the user — DDMMMYY with no spaces
-// or separators, e.g. "19Apr26". Keeps the column narrow.
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  const dd  = String(d.getDate()).padStart(2, '0');
-  const mmm = d.toLocaleDateString('en-US', { month: 'short' });
-  const yy  = String(d.getFullYear()).slice(-2);
-  return `${dd}${mmm}${yy}`;
 };
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';

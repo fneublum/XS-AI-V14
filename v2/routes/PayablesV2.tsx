@@ -7,6 +7,7 @@ import { ListPage } from '../components/ListPage';
 import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
 import { useRowCrud } from '../components/useRowCrud';
 import { usePayables, Payable } from '../queries/usePayables';
+import { formatDate as fmtDate } from '../lib/formatDate';
 
 const fmtMoney = (n: number, currency: string) => {
   try {
@@ -14,13 +15,6 @@ const fmtMoney = (n: number, currency: string) => {
       style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0,
     });
   } catch { return `${currency} ${n.toLocaleString('en-US')}`; }
-};
-
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
 };
 
 const columns: DataTableColumn<Payable>[] = [

@@ -3,6 +3,7 @@
 import React from 'react';
 import { Badge, Skeleton, EmptyState, CardHeader, CardTitle } from '../primitives';
 import { useAiActivity } from '../queries/useAiActivity';
+import { formatDate } from '../lib/formatDate';
 
 const fmtRelative = (iso: string): string => {
   const d = new Date(iso);
@@ -15,7 +16,7 @@ const fmtRelative = (iso: string): string => {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  return formatDate(iso);
 };
 
 interface ActivityFeedProps {
