@@ -33,6 +33,7 @@ export interface ProformaOrder {
   companyId?: string | null;
   orderNumber: string;
   orderDate?: string | null;
+  createdAt?: string | null;
   customerId?: string | null;
   customerName: string;
   notifyPartyId?: string | null;
@@ -45,6 +46,21 @@ export interface ProformaOrder {
   bankId?: string | null;
   items?: ProformaLineItem[];
 }
+
+// Parse ISO YYYY-MM-DD (or full ISO timestamp) as LOCAL time so the
+// rendered date doesn't shift by a day in western timezones.
+const formatOrderDate = (iso: string | null | undefined): string => {
+  if (!iso) return '';
+  const short = iso.length >= 10 ? iso.slice(0, 10) : iso;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(short);
+  if (!m) {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
+  }
+  const [, y, mo, day] = m;
+  const d = new Date(Number(y), Number(mo) - 1, Number(day));
+  return d.toLocaleDateString();
+};
 
 export interface ProformaPdfCtx {
   company: PdfCompany | undefined;
@@ -229,10 +245,10 @@ export function generateProformaPdf(order: ProformaOrder, ctx: ProformaPdfCtx): 
   doc.text('DATE', col3X, col3Y);
   doc.setFontSize(9);
   doc.setTextColor(darkGray);
-  doc.text(
-    order.orderDate ? new Date(order.orderDate).toLocaleDateString() : '',
-    col3X + 15, col3Y,
-  );
+  // Fall back to createdAt when orderDate was never set — matches v1.
+  const displayDate = formatOrderDate(order.orderDate)
+                   || formatOrderDate(order.createdAt);
+  doc.text(displayDate, col3X + 15, col3Y);
 
   const linkedBooking = bookings.find(
     b => (b as { salesOrderId?: string | null }).salesOrderId === order.id,

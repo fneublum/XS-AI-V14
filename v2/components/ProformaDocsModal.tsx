@@ -55,6 +55,7 @@ const toProformaOrder = (so: SalesOrder): ProformaOrder => ({
   companyId:        so.companyId,
   orderNumber:      so.orderNumber,
   orderDate:        so.orderDate,
+  createdAt:        so.createdAt,
   customerId:       so.customerId,
   customerName:     so.customerName,
   notifyPartyId:    so.notifyPartyId,
