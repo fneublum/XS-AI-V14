@@ -14,6 +14,7 @@ import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/us
 import { LineItemsEditor, LineItem, computeSubtotal, sanitizeItems } from './LineItemsEditor';
 import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
 import { DeliveryDocsModal } from './DeliveryDocsModal';
+import { SupabaseSelectField } from './SupabaseSelectField';
 import type { EditorMode } from '../providers/EditorProvider';
 
 const INCOTERMS = ['FOB', 'CFR', 'CIF', 'EXW', 'DAP', 'DDP', 'FCA', 'CPT', 'CIP', 'FAS'];
@@ -484,10 +485,17 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
             </div>
             <FormField>
               <Label className={labelClass}>Payment terms</Label>
-              <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)}
-                className={inputClass + ' w-full appearance-none'}>
-                {PAYMENT_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
+              <SupabaseSelectField
+                source={{
+                  table: 'payment_terms',
+                  valueColumn: 'description',
+                  labelColumn: 'description',
+                  secondaryColumn: 'code',
+                  scopeByCompany: true,
+                }}
+                value={paymentTerms}
+                onPick={v => setPaymentTerms(v)}
+              />
             </FormField>
           </div>
 
@@ -497,7 +505,14 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
             <div className="grid grid-cols-2 gap-2">
               <FormField>
                 <Label className={labelClass}>Carrier</Label>
-                <Input value={carrier} onChange={e => setCarrier(e.target.value)} className={inputClass} />
+                <SupabaseSelectField
+                  source={{
+                    table: 'carriers', valueColumn: 'name', labelColumn: 'name',
+                    secondaryColumn: 'scac', scopeByCompany: true,
+                  }}
+                  value={carrier}
+                  onPick={v => setCarrier(v)}
+                />
               </FormField>
               <FormField>
                 <Label className={labelClass}>Transport ref</Label>
@@ -508,13 +523,25 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
             <div className="grid grid-cols-3 gap-2">
               <FormField>
                 <Label className={labelClass}>POA (origin)</Label>
-                <Input value={poa} onChange={e => setPoa(e.target.value)}
-                  className={inputClass + ' font-mono tabular-nums'} />
+                <SupabaseSelectField
+                  source={{
+                    table: 'ports', valueColumn: 'name', labelColumn: 'name',
+                    secondaryColumn: 'code',
+                  }}
+                  value={poa}
+                  onPick={v => setPoa(v)}
+                />
               </FormField>
               <FormField>
                 <Label className={labelClass}>POD (destination)</Label>
-                <Input value={pod} onChange={e => setPod(e.target.value)}
-                  className={inputClass + ' font-mono tabular-nums'} />
+                <SupabaseSelectField
+                  source={{
+                    table: 'ports', valueColumn: 'name', labelColumn: 'name',
+                    secondaryColumn: 'code',
+                  }}
+                  value={pod}
+                  onPick={v => setPod(v)}
+                />
               </FormField>
               <FormField>
                 <Label className={labelClass}>Containers</Label>
