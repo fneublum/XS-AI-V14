@@ -108,16 +108,29 @@ const parseItems = (raw: unknown): LineItem[] => {
     let arr: unknown = raw;
     if (typeof raw === 'string') arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
-    return arr.map((r: any) => ({
-      productId: r?.productId ?? undefined,
-      productName: r?.productName ?? r?.name ?? '',
-      customerDescription: r?.customerDescription ?? r?.description ?? '',
-      hsCode: r?.hsCode ?? '',
-      grade: r?.grade ?? '',
-      quantity: Number(r?.quantity) || 0,
-      unitPrice: Number(r?.unitPrice ?? r?.price) || 0,
-      total: Number(r?.total) || ((Number(r?.quantity) || 0) * (Number(r?.unitPrice ?? r?.price) || 0)),
-    }));
+    return arr.map((r: any) => {
+      // Legacy invoice rows store product label as `productDescription`
+      // or `description` (not `productName`). Mirror v1 SalesFollowUp's
+      // fallback chain so older invoices still render a product label.
+      const productName = String(
+        r?.productName ?? r?.name ?? r?.productDescription ?? r?.description ?? r?.product ?? '',
+      ).trim();
+      // Quantity can be stored as `quantity`, `qty`, `qtyLbs`,
+      // `quantityLbs`, or `grossLbs` depending on the source form.
+      const quantity = Number(r?.quantity ?? r?.qty ?? r?.qtyLbs ?? r?.quantityLbs ?? r?.grossLbs) || 0;
+      const unitPrice = Number(r?.unitPrice ?? r?.price ?? r?.unitPriceLbs) || 0;
+      const total = Number(r?.total ?? r?.amount) || quantity * unitPrice;
+      return {
+        productId: r?.productId ?? undefined,
+        productName,
+        customerDescription: r?.customerDescription ?? r?.description ?? '',
+        hsCode: r?.hsCode ?? '',
+        grade: r?.grade ?? '',
+        quantity,
+        unitPrice,
+        total,
+      };
+    });
   } catch { return []; }
 };
 
