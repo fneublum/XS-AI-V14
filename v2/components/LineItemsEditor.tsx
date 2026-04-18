@@ -41,6 +41,15 @@ const cellInput =
 const cellInputMono = cellInput + ' font-mono tabular-nums';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const round4 = (n: number) => Math.round(n * 10000) / 10000;
+
+// Stored values are LBS-based. The KG inputs are derived on display
+// and converted back on edit so there's only one canonical column.
+const LB_TO_KG = 0.453592;
+const lbsToKgs   = (lbs: number): number => Math.round(lbs * LB_TO_KG);
+const kgsToLbs   = (kgs: number): number => round2(kgs / LB_TO_KG);
+const pricePerLbToKg = (p: number): number => round2(p / LB_TO_KG);
+const pricePerKgToLb = (p: number): number => round4(p * LB_TO_KG);
 
 const fmtMoney = (n: number, currency = 'USD') => {
   try {
@@ -124,8 +133,8 @@ export const LineItemsEditor: React.FC<Props> = ({
               {showHsCode && (
                 <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left w-[90px]">HS code</th>
               )}
-              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-right w-[90px]">Qty (lbs)</th>
-              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-right w-[110px]">Unit price</th>
+              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-right w-[120px]">Qty (lbs / kgs)</th>
+              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-right w-[140px]">Rate ($/lb · $/kg)</th>
               <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-right w-[120px]">Total</th>
               {!readOnly && <th className="w-8" />}
             </tr>
@@ -216,32 +225,84 @@ export const LineItemsEditor: React.FC<Props> = ({
                     )}
                   </td>
                 )}
-                <td className="px-2 py-1 text-right">
+                <td className="px-2 py-1 text-right align-top">
                   {readOnly ? (
-                    <span className="font-mono tabular-nums text-slate-200">{(Number(it.quantity) || 0).toLocaleString('en-US')}</span>
+                    <div className="font-mono tabular-nums text-slate-200">
+                      <div>{(Number(it.quantity) || 0).toLocaleString('en-US')} lbs</div>
+                      <div className="text-slate-500 text-[10.5px]">
+                        {lbsToKgs(Number(it.quantity) || 0).toLocaleString('en-US')} kgs
+                      </div>
+                    </div>
                   ) : (
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={it.quantity}
-                      onChange={e => update(i, { quantity: Number(e.target.value) || 0 })}
-                      className={cellInputMono + ' text-right'}
-                    />
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={it.quantity}
+                          onChange={e => update(i, { quantity: Number(e.target.value) || 0 })}
+                          className={cellInputMono + ' text-right flex-1'}
+                          title="Quantity in pounds"
+                        />
+                        <span className="text-[10px] text-slate-500 w-6 text-left">lbs</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={lbsToKgs(Number(it.quantity) || 0)}
+                          onChange={e => {
+                            const kgs = Number(e.target.value) || 0;
+                            update(i, { quantity: kgsToLbs(kgs) });
+                          }}
+                          className={cellInputMono + ' text-right flex-1'}
+                          title="Quantity in kilograms"
+                        />
+                        <span className="text-[10px] text-slate-500 w-6 text-left">kgs</span>
+                      </div>
+                    </div>
                   )}
                 </td>
-                <td className="px-2 py-1 text-right">
+                <td className="px-2 py-1 text-right align-top">
                   {readOnly ? (
-                    <span className="font-mono tabular-nums text-slate-200">{fmtMoney(Number(it.unitPrice) || 0, currency)}</span>
+                    <div className="font-mono tabular-nums text-slate-200">
+                      <div>{fmtMoney(Number(it.unitPrice) || 0, currency)} /lb</div>
+                      <div className="text-slate-500 text-[10.5px]">
+                        {fmtMoney(pricePerLbToKg(Number(it.unitPrice) || 0), currency)} /kg
+                      </div>
+                    </div>
                   ) : (
-                    <Input
-                      type="number"
-                      min={0}
-                      step={0.0001}
-                      value={it.unitPrice}
-                      onChange={e => update(i, { unitPrice: Number(e.target.value) || 0 })}
-                      className={cellInputMono + ' text-right'}
-                    />
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.0001}
+                          value={it.unitPrice}
+                          onChange={e => update(i, { unitPrice: Number(e.target.value) || 0 })}
+                          className={cellInputMono + ' text-right flex-1'}
+                          title="Price per pound"
+                        />
+                        <span className="text-[10px] text-slate-500 w-6 text-left">/lb</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          value={pricePerLbToKg(Number(it.unitPrice) || 0)}
+                          onChange={e => {
+                            const pkg = Number(e.target.value) || 0;
+                            update(i, { unitPrice: pricePerKgToLb(pkg) });
+                          }}
+                          className={cellInputMono + ' text-right flex-1'}
+                          title="Price per kilogram"
+                        />
+                        <span className="text-[10px] text-slate-500 w-6 text-left">/kg</span>
+                      </div>
+                    </div>
                   )}
                 </td>
                 <td className="px-2 py-1 text-right font-mono tabular-nums text-slate-100">
@@ -269,7 +330,8 @@ export const LineItemsEditor: React.FC<Props> = ({
                 + (showHsCode ? 1 : 0)
               } />
               <td className="px-2 py-1 text-right text-slate-500 uppercase tracking-wider text-[10px]">
-                Total {totalQty.toLocaleString('en-US')} lbs
+                <div>Total {totalQty.toLocaleString('en-US')} lbs</div>
+                <div>{lbsToKgs(totalQty).toLocaleString('en-US')} kgs</div>
               </td>
               <td className="px-2 py-1 text-right text-[10px] text-slate-500 uppercase tracking-wider">Subtotal</td>
               <td className="px-2 py-1 text-right font-mono tabular-nums text-indigo-300 font-semibold">
