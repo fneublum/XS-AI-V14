@@ -1,5 +1,10 @@
 // Phase 2A — AI Orchestrator configuration.
-// Gated OFF by default. Flip `enabled` to true after Phase 2A verification.
+//
+// Enabled as of Phase 2A activation. Defaults route every task to
+// Gemini because `gemini-proxy` is already deployed (Phase 1c) —
+// Anthropic routing switches on once `anthropic-proxy` is deployed
+// + ANTHROPIC_API_KEY is set in Supabase Edge Function secrets.
+// See supabase/functions/anthropic-proxy/index.ts for the deploy.
 
 import type { AiProvider, TaskType } from './types';
 
@@ -28,24 +33,30 @@ export interface OrchestratorConfig {
   };
 }
 
+// Routing intent — once anthropic-proxy is live, flip ANTHROPIC_READY
+// to true and the reasoning / planning tasks will prefer Claude. Until
+// then everything stays on Gemini so no call silently fails.
+const ANTHROPIC_READY = false;
+
 export const orchestratorConfig: OrchestratorConfig = {
-  enabled: false,
-  defaultProvider: 'anthropic',
+  enabled: true,
+  defaultProvider: 'gemini',
   routing: {
-    // Reasoning / planning → Claude Opus 4.7.
-    parseIntent: 'anthropic',
-    reasonEmailReply: 'anthropic',
-    agentStep: 'anthropic',
-    generateInsight: 'anthropic',
+    // Reasoning / planning → Claude Opus 4.7 when deployed, else fall
+    // back to Gemini so nothing 500s during the rollout.
+    parseIntent:      ANTHROPIC_READY ? 'anthropic' : 'gemini',
+    reasonEmailReply: ANTHROPIC_READY ? 'anthropic' : 'gemini',
+    agentStep:        ANTHROPIC_READY ? 'anthropic' : 'gemini',
+    generateInsight:  ANTHROPIC_READY ? 'anthropic' : 'gemini',
     // Extraction / classification → Gemini (cheaper, fast multimodal).
     extractFromEmail: 'gemini',
-    extractFromPdf: 'gemini',
+    extractFromPdf:   'gemini',
     classifyDocument: 'gemini',
-    summarize: 'gemini',
+    summarize:        'gemini',
   },
   models: {
     anthropic: 'claude-opus-4-7',
-    gemini: 'gemini-3-pro-preview',
+    gemini: 'gemini-2.0-flash',
   },
   cache: {
     enabled: true,
