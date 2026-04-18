@@ -88,7 +88,7 @@ const buildSections = (
     id: 'trading',
     label: 'Trading',
     items: [
-      { id: 'purchase-orders', label: 'Purchase Orders' },
+      { id: 'purchase-orders', label: 'Purchase & cost' },
       { id: 'sales-orders',    label: 'Sales Orders (Proformas)', hint: 'O' },
       { id: 'pl-invoice',      label: 'Packing list & Invoice' },
       { id: 'invoices',        label: 'Invoice & docs' },
@@ -135,7 +135,7 @@ const routeTitles: Record<string, string> = {
   'ai-sales':        'AI Sales',
   'ai-logistics':    'AI Logistics',
   // Trading
-  'purchase-orders': 'Purchase Orders',
+  'purchase-orders': 'Purchase & cost',
   'sales-orders':    'Sales Orders (Proformas)',
   'pl-invoice':      'Packing list & Invoice',
   'invoices':        'Invoice & docs',
