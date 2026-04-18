@@ -53,8 +53,16 @@ const columns: DataTableColumn<Opportunity>[] = [
 ];
 
 const fields: FieldDef[] = [
-  { key: 'customerName',      label: 'Customer', required: true, fullWidth: true },
-  { key: 'productName',       label: 'Product' },
+  { key: 'customerName', label: 'Customer', required: true, fullWidth: true,
+    source: {
+      table: 'customers', valueColumn: 'name', labelColumn: 'name',
+      secondaryColumn: 'country', scopeByCompany: true,
+    } },
+  { key: 'productName', label: 'Product',
+    source: {
+      table: 'products', valueColumn: 'name', labelColumn: 'name',
+      secondaryColumn: 'grade', scopeByCompany: true,
+    } },
   { key: 'stage',             label: 'Stage', required: true, type: 'select',
     options: ['LEAD', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION', 'WON', 'LOST'],
     defaultValue: 'LEAD' },

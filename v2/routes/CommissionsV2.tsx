@@ -62,8 +62,16 @@ const columns: DataTableColumn<CommissionRow>[] = [
 const fields: FieldDef[] = [
   { key: 'orderNumber',             label: 'Order #', mono: true },
   { key: 'invoiceNumber',           label: 'Invoice #', mono: true },
-  { key: 'customerName',            label: 'Customer', fullWidth: true },
-  { key: 'sellerName',              label: 'Seller' },
+  { key: 'customerName', label: 'Customer', fullWidth: true,
+    source: {
+      table: 'customers', valueColumn: 'name', labelColumn: 'name',
+      secondaryColumn: 'country', scopeByCompany: true,
+    } },
+  { key: 'sellerName', label: 'Seller',
+    source: {
+      table: 'cargo_agents', valueColumn: 'name', labelColumn: 'name',
+      secondaryColumn: 'country', scopeByCompany: true,
+    } },
   { key: 'commissionRate',          label: 'Rate (%)', type: 'number', mono: true, min: 0, max: 100, step: 0.01 },
   { key: 'commissionAmount',        label: 'Commission ($)', type: 'number', mono: true, min: 0, step: 0.01 },
   { key: 'commissionPaymentStatus', label: 'Payout', type: 'select',

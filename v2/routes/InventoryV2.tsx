@@ -38,7 +38,11 @@ const columns: DataTableColumn<InventoryItem>[] = [
 ];
 
 const fields: FieldDef[] = [
-  { key: 'productName',       label: 'Product', required: true, fullWidth: true },
+  { key: 'productName', label: 'Product', required: true, fullWidth: true,
+    source: {
+      table: 'products', valueColumn: 'name', labelColumn: 'name',
+      secondaryColumn: 'grade', scopeByCompany: true,
+    } },
   { key: 'grade',             label: 'Grade' },
   { key: 'quantityLBS',       label: 'Quantity (lbs)', type: 'number', mono: true, min: 0, step: 1 },
   { key: 'warehouseLocation', label: 'Warehouse' },

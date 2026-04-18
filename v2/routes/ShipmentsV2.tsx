@@ -52,9 +52,21 @@ const columns: DataTableColumn<Shipment>[] = [
 const fields: FieldDef[] = [
   { key: 'containerNumber', label: 'Container', mono: true },
   { key: 'blNumber',        label: 'B/L #', mono: true },
-  { key: 'carrier',         label: 'Carrier' },
-  { key: 'origin',          label: 'Origin' },
-  { key: 'destination',     label: 'Destination' },
+  { key: 'carrier', label: 'Carrier',
+    source: {
+      table: 'carriers', valueColumn: 'name', labelColumn: 'name',
+      secondaryColumn: 'scac', scopeByCompany: true,
+    } },
+  { key: 'origin', label: 'Origin', mono: true,
+    source: {
+      table: 'ports', valueColumn: 'name', labelColumn: 'name',
+      secondaryColumn: 'code',
+    } },
+  { key: 'destination', label: 'Destination', mono: true,
+    source: {
+      table: 'ports', valueColumn: 'name', labelColumn: 'name',
+      secondaryColumn: 'code',
+    } },
   { key: 'status',          label: 'Status', required: true, type: 'select',
     options: ['BOOKED', 'IN TRANSIT', 'DELIVERED', 'DELAYED', 'CANCELLED'],
     defaultValue: 'BOOKED' },

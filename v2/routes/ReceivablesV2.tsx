@@ -56,7 +56,11 @@ const columns: DataTableColumn<Receivable>[] = [
 const fields: FieldDef[] = [
   { key: 'orderNumber',    label: 'Order #', mono: true },
   { key: 'invoiceNumber',  label: 'Invoice #', mono: true },
-  { key: 'customerName',   label: 'Customer', fullWidth: true },
+  { key: 'customerName', label: 'Customer', fullWidth: true,
+    source: {
+      table: 'customers', valueColumn: 'name', labelColumn: 'name',
+      secondaryColumn: 'country', scopeByCompany: true,
+    } },
   { key: 'paymentStatus',  label: 'Payment status', type: 'select',
     options: ['PENDING', 'PARTIAL', 'PAID', 'OVERDUE', 'CANCELLED'] },
   { key: 'invoiceStatus',  label: 'Invoice status', type: 'select',

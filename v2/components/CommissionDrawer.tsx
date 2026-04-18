@@ -11,6 +11,7 @@ import {
 import { CommissionRow } from '../queries/useCommissions';
 import { useUpdateCommission, useDeleteCommission } from '../queries/useCommissionMutations';
 import { useToast } from '../primitives/Toast';
+import { SupabaseSelectField } from './SupabaseSelectField';
 
 const PAYMENT_STATUS = ['PENDING', 'PARTIAL', 'PAID', 'OVERDUE', 'CANCELLED'];
 const INVOICE_STATUS = ['UNINVOICED', 'INVOICED', 'SENT', 'VOID'];
@@ -192,8 +193,14 @@ export const CommissionDrawer: React.FC<Props> = ({ commission, onOpenChange }) 
           <div className="grid grid-cols-2 gap-3">
             <FormField>
               <Label>Seller</Label>
-              <Input value={seller} onChange={e => setSeller(e.target.value)}
-                className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200" />
+              <SupabaseSelectField
+                source={{
+                  table: 'cargo_agents', valueColumn: 'name', labelColumn: 'name',
+                  secondaryColumn: 'country', scopeByCompany: true,
+                }}
+                value={seller}
+                onPick={v => setSeller(v)}
+              />
             </FormField>
             <FormField>
               <Label>Commission rate (%)</Label>
