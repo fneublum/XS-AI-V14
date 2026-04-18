@@ -30,6 +30,14 @@ import { sendEmail } from '../../services/emailService';
 interface Props {
   order: SalesOrder | null;
   onOpenChange: (open: boolean) => void;
+  /**
+   * When set, skip the "Proforma Documents" list modal and jump
+   * straight to the target flow as soon as the PDF is built:
+   *   - 'preview' → inline iframe preview
+   *   - 'email'   → email preview draft
+   * The outer list modal stays hidden in this mode.
+   */
+  autoAction?: 'preview' | 'email';
 }
 
 const docToBlobUrl = (doc: any): string => {
@@ -79,7 +87,7 @@ const iconBtn =
   'p-1.5 rounded-sm text-slate-500 hover:text-slate-100 hover:bg-[#161616] ' +
   'transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 
-export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange }) => {
+export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange, autoAction }) => {
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const companies = useCompanies();
@@ -136,14 +144,95 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange }) => {
     return (own || logos.data[0]).url || null;
   }, [logos.data, currentCompanyId]);
 
-  // Cleanup blob URL when the outer modal closes. MUST live above
-  // the early-return below to keep hook order stable across renders.
+  // Cleanup blob URL when the outer modal closes.
   useEffect(() => {
     if (!order && previewUrl) {
       URL.revokeObjectURL(previewUrl);
       setPreviewUrl(null);
     }
   }, [order, previewUrl]);
+
+  // Auto-run preview or email flow when the parent passes
+  // `autoAction`. Guard with a ref so we only fire once per order.
+  const autoFiredRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (!order || !autoAction) {
+      autoFiredRef.current = null;
+      return;
+    }
+    if (autoFiredRef.current === order.id) return;
+    autoFiredRef.current = order.id;
+    // Defer one tick so the rest of the effects (logos, banks, etc.)
+    // have a chance to populate before the PDF is built.
+    const t = setTimeout(() => {
+      if (autoAction === 'preview') {
+        try {
+          if (previewUrl) URL.revokeObjectURL(previewUrl);
+          const doc = generateProformaPdf(toProformaOrder(order), {
+            company,
+            customers: customers.data ?? [],
+            bookings:  bookings.data  ?? [],
+            banks:     banks.data     ?? [],
+            logoUrl, stampUrl,
+          });
+          setPreviewUrl(docToBlobUrl(doc));
+        } catch (err) {
+          toast.push({
+            kind: 'error',
+            title: 'Proforma preview failed',
+            description: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } else if (autoAction === 'email') {
+        // prepareEmail is defined below — call via microtask wrapper.
+        // Build the email draft + open the preview inline.
+        try {
+          const doc = generateProformaPdf(toProformaOrder(order), {
+            company,
+            customers: customers.data ?? [],
+            bookings:  bookings.data  ?? [],
+            banks:     banks.data     ?? [],
+            logoUrl, stampUrl,
+          });
+          const filename = `Proforma_${order.orderNumber}.pdf`;
+          const attachments = [{
+            name: filename,
+            contentBytes: docToBase64(doc),
+            contentType: 'application/pdf',
+          }];
+          const customer = customers.data?.find(c => c.id === order.customerId)
+                        || customers.data?.find(c => c.name === order.customerName);
+          const companyName = company?.name || 'EC4 Enterprises';
+          const subject = `Proforma Invoice #${order.orderNumber} - ${order.customerName}`;
+          const body = [
+            `Dear ${order.customerName},`, '',
+            'Please find attached the Proforma Invoice for the following order:', '',
+            `• Order #: ${order.orderNumber}`,
+            order.incoterm    ? `• Incoterm: ${order.incoterm}${order.pod ? ' ' + order.pod : ''}` : '',
+            order.paymentTerms ? `• Payment terms: ${order.paymentTerms}` : '',
+            order.deliveryDate ? `• Shipping date: ${order.deliveryDate}` : '',
+            `• Total: $${Number(order.totalAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            '', 'Please review and confirm.', '',
+            'Best regards,', companyName,
+          ].filter(Boolean).join('\n');
+          setEmailDraft({
+            to: customer?.email ?? '',
+            cc: '', subject, htmlBody: body, attachments,
+          });
+          setEmailPreviewOpen(true);
+        } catch (err) {
+          toast.push({
+            kind: 'error',
+            title: 'Email draft build failed',
+            description: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }, 20);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.id, autoAction, company, logoUrl, stampUrl,
+      customers.data, bookings.data, banks.data]);
 
   if (!order) return null;
 
@@ -271,8 +360,14 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange }) => {
     }
   };
 
+  // When autoAction is set we suppress the outer list modal and let
+  // the iframe / email preview dialogs drive visibility. Closing any
+  // inner dialog bubbles up via onOpenChange.
+  const showListModal = !!order && !autoAction;
+
   return (
-    <Dialog.Root open={!!order} onOpenChange={onOpenChange}>
+    <>
+      <Dialog.Root open={showListModal} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px]" />
         <Dialog.Content className="fixed left-1/2 top-[8%] -translate-x-1/2 z-50 w-[min(96vw,540px)] rounded-md border border-[#1f1f1f] bg-[#0a0a0a] shadow-[0_16px_48px_rgba(0,0,0,0.6)] flex flex-col max-h-[80vh]">
@@ -496,6 +591,7 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange }) => {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
-    </Dialog.Root>
+      </Dialog.Root>
+    </>
   );
 };

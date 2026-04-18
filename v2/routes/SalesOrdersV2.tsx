@@ -193,7 +193,9 @@ const SalesOrdersV2: React.FC = () => {
   const [search, setSearch] = useState('');
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
-  const [proformaDocsOrder, setProformaDocsOrder] = useState<SalesOrder | null>(null);
+  const [proformaDocsOrder, setProformaDocsOrder]       = useState<SalesOrder | null>(null);
+  const [proformaViewOrder, setProformaViewOrder]       = useState<SalesOrder | null>(null);
+  const [proformaEmailOrder, setProformaEmailOrder]     = useState<SalesOrder | null>(null);
   const { openSalesOrder, openSalesOrderCreate } = useEditor();
   const insert = useEntityInsert<Record<string, unknown>>({
     table: 'sales_orders',
@@ -229,11 +231,15 @@ const SalesOrdersV2: React.FC = () => {
     rowLabel: r => r.orderNumber,
   });
 
+  // View action previews the Proforma PDF; Email action opens the
+  // Proforma email draft (with PDF attached). Edit still opens the
+  // bespoke drawer. The separate Documents icon keeps the combined
+  // preview+download+email modal as a convenience.
   const rowActions = (row: SalesOrder) => (
     <RowActions
-      onView={() => openSalesOrder(row)}
+      onView={() => setProformaViewOrder(row)}
       onEdit={() => openSalesOrder(row)}
-      onEmail={() => setEmailDraft(buildEmailDraft(row))}
+      onEmail={() => setProformaEmailOrder(row)}
       onDeliveryDocs={() => setProformaDocsOrder(row)}
       deliveryDocsLabel="Proforma documents"
       onDelete={() => confirmDelete(row)}
@@ -374,6 +380,16 @@ const SalesOrdersV2: React.FC = () => {
       <ProformaDocsModal
         order={proformaDocsOrder}
         onOpenChange={(o) => !o && setProformaDocsOrder(null)}
+      />
+      <ProformaDocsModal
+        order={proformaViewOrder}
+        autoAction="preview"
+        onOpenChange={(o) => !o && setProformaViewOrder(null)}
+      />
+      <ProformaDocsModal
+        order={proformaEmailOrder}
+        autoAction="email"
+        onOpenChange={(o) => !o && setProformaEmailOrder(null)}
       />
       {aiUploadOpen && (
         <AiUploadModal<SODraft>
