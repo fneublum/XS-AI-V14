@@ -13,6 +13,7 @@ import { SalesOrder } from '../queries/useSalesOrders';
 import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { LineItemsEditor, LineItem, computeSubtotal, sanitizeItems } from './LineItemsEditor';
 import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
+import { SupabaseSelectField } from './SupabaseSelectField';
 import type { EditorMode } from '../providers/EditorProvider';
 
 const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'REJECTED', 'FULFILLED', 'BOOKED'];
@@ -411,10 +412,17 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
             </div>
             <FormField>
               <Label className={labelClass}>Payment terms</Label>
-              <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)}
-                className={inputClass + ' w-full appearance-none'}>
-                {PAYMENT_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
+              <SupabaseSelectField
+                source={{
+                  table: 'payment_terms',
+                  valueColumn: 'description',
+                  labelColumn: 'description',
+                  secondaryColumn: 'code',
+                  scopeByCompany: true,
+                }}
+                value={paymentTerms}
+                onPick={v => setPaymentTerms(v)}
+              />
             </FormField>
           </div>
 
@@ -444,13 +452,25 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
             <div className="grid grid-cols-3 gap-2">
               <FormField>
                 <Label className={labelClass}>POA (origin)</Label>
-                <Input value={poa} onChange={e => setPoa(e.target.value)}
-                  className={inputClass + ' font-mono tabular-nums'} placeholder="Santos" />
+                <SupabaseSelectField
+                  source={{
+                    table: 'ports', valueColumn: 'name', labelColumn: 'name',
+                    secondaryColumn: 'code',
+                  }}
+                  value={poa}
+                  onPick={v => setPoa(v)}
+                />
               </FormField>
               <FormField>
                 <Label className={labelClass}>POD (destination)</Label>
-                <Input value={pod} onChange={e => setPod(e.target.value)}
-                  className={inputClass + ' font-mono tabular-nums'} placeholder="Houston" />
+                <SupabaseSelectField
+                  source={{
+                    table: 'ports', valueColumn: 'name', labelColumn: 'name',
+                    secondaryColumn: 'code',
+                  }}
+                  value={pod}
+                  onPick={v => setPod(v)}
+                />
               </FormField>
               <FormField>
                 <Label className={labelClass}>Pickup location</Label>
