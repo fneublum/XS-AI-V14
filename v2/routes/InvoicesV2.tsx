@@ -384,7 +384,6 @@ const InvoicesV2: React.FC = () => {
                 billToName:    d.billToName || d.soldTo || null,
                 soNumber:      d.soNumber || null,
                 incoterm:      d.incoterm || null,
-                incoterms:     d.incoterm || null,
                 paymentTerms:  d.paymentTerms || null,
                 carrier:       d.carrier || null,
                 poa:           d.poa || null,

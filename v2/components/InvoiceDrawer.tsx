@@ -200,7 +200,8 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
     billToName: billToName || null,
     paymentTerms: paymentTerms || null,
     incoterm: incoterm || null,
-    incoterms: incoterm || null,
+    // NOTE: legacy `incoterms` (plural) column does not exist on the
+    // live `invoices` schema. Only write the canonical `incoterm`.
     currency,
     freightTerms: freightTerms || null,
     carrier: carrier || null,
