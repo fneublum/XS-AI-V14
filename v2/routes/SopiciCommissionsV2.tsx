@@ -22,6 +22,7 @@ import { useEditor } from '../providers/EditorProvider';
 import { CommissionPipeline } from '../components/CommissionPipeline';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { cn } from '../primitives/utils';
+import { shortName, tooltipName } from '../lib/formatName';
 
 const fmtMoney = (n: number): string => `$${Math.round(n).toLocaleString('en-US')}`;
 const fmtPct = (n: number | null): string => {
@@ -35,8 +36,9 @@ const listColumns: DataTableColumn<CommissionRow>[] = [
   { id: 'invoice',  header: 'Invoice', mono: true,
     cell: r => <span className="text-slate-500">{r.invoiceNumber ?? '—'}</span> },
   { id: 'customer', header: 'Customer',
-    cell: r => <span className="text-slate-100">{r.customerName}</span> },
-  { id: 'seller',   header: 'Seller', cell: r => r.sellerName ?? '—' },
+    cell: r => <span className="text-slate-100" title={tooltipName(r.customerName)}>{shortName(r.customerName)}</span> },
+  { id: 'seller',   header: 'Seller',
+    cell: r => <span title={tooltipName(r.sellerName)}>{shortName(r.sellerName)}</span> },
   { id: 'rate',     header: 'Rate', align: 'right', mono: true,
     cell: r => fmtPct(r.commissionRate) },
   { id: 'amount',   header: 'Commission', align: 'right', mono: true,

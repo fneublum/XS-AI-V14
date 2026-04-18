@@ -9,6 +9,7 @@ import React from 'react';
 import { Badge } from '../primitives';
 import { CommissionRow } from '../queries/useCommissions';
 import { cn } from '../primitives/utils';
+import { shortName, tooltipName } from '../lib/formatName';
 
 type Stage = 'DRAFT' | 'APPROVED' | 'INVOICED' | 'PAID' | 'ISSUE';
 
@@ -106,12 +107,14 @@ export const CommissionPipeline: React.FC<Props> = ({ rows, onCardClick }) => {
                         </span>
                       )}
                     </div>
-                    <div className="text-[12px] text-slate-100 font-medium truncate">
-                      {r.customerName}
+                    <div className="text-[12px] text-slate-100 font-medium truncate"
+                         title={tooltipName(r.customerName)}>
+                      {shortName(r.customerName)}
                     </div>
                     {r.sellerName && (
-                      <div className="text-[10.5px] text-slate-500 truncate mt-0.5">
-                        via {r.sellerName}
+                      <div className="text-[10.5px] text-slate-500 truncate mt-0.5"
+                           title={tooltipName(r.sellerName)}>
+                        via {shortName(r.sellerName)}
                       </div>
                     )}
                     <div className="flex items-center justify-between mt-2 text-[11px]">
