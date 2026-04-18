@@ -46,7 +46,7 @@ export function useFreightQuotes(search?: string) {
       const supabase = getSupabaseClient();
       let q = scopeByCompany(
         supabase.from('freight_quotes')
-          .select('id, agentName, carrier, freightType, originPort, destinationPort, rate, currency, validUntil, transitTime, status')
+          .select('*')
           .order('validUntil', { ascending: false, nullsFirst: false })
           .limit(200),
         currentCompanyId,

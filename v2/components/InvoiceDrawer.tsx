@@ -13,6 +13,7 @@ import { Invoice } from '../queries/useInvoices';
 import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { LineItemsEditor, LineItem, computeSubtotal, sanitizeItems } from './LineItemsEditor';
 import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
+import { DeliveryDocsModal } from './DeliveryDocsModal';
 import type { EditorMode } from '../providers/EditorProvider';
 
 const INCOTERMS = ['FOB', 'CFR', 'CIF', 'EXW', 'DAP', 'DDP', 'FCA', 'CPT', 'CIP', 'FAS'];
@@ -41,11 +42,9 @@ const fmtMoney = (n: number, currency: string) => {
   } catch { return `${currency} ${n.toFixed(2)}`; }
 };
 
-const openDeliveryDocsInV1 = (invoiceId: string) => {
-  try { sessionStorage.setItem('xs_pending_delivery_docs', invoiceId); }
-  catch { /* noop */ }
-  window.location.href = '/?v2=0';
-};
+// Native DeliveryDocsModal handles the flow inline; the modal itself
+// keeps a "Open in v1" escape hatch for PL / SLI / BOL until those
+// generators are extracted.
 
 interface Props {
   invoice: Invoice | null;
@@ -111,6 +110,7 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [emailDraft, setEmailDraft]       = useState<EmailDraft | null>(null);
+  const [docsOpen, setDocsOpen]           = useState(false);
 
   const update = useEntityUpdate<{ id: string } & Record<string, unknown>>({
     table: 'invoices', listQueryKeys: ['invoices', 'receivables'],
@@ -314,7 +314,7 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
             {mode === 'edit' && invoice && (
               <Button
                 variant="secondary" size="sm"
-                onClick={() => openDeliveryDocsInV1(invoice.id)}
+                onClick={() => setDocsOpen(true)}
                 disabled={pending}
                 className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
               >
@@ -625,6 +625,11 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
         open={!!emailDraft}
         onOpenChange={(o) => !o && setEmailDraft(null)}
         draft={emailDraft}
+      />
+
+      <DeliveryDocsModal
+        invoice={docsOpen ? invoice : null}
+        onOpenChange={(o) => !o && setDocsOpen(false)}
       />
     </>
   );

@@ -110,7 +110,7 @@ export function useSalesOrders({
       let q = scopeByCompany(
         supabase
           .from('sales_orders')
-          .select('id, companyId, customerId, customerName, orderNumber, orderDate, orderType, status, items, totalAmount, currency, paymentTerms, incoterm, notes, createdBy, approvedBy, createdAt, saleType, deliveryMethod, deliveryAddress, deliveryDate, pod, poa, pickupLocation, bankId, notifyPartyId, notifyPartyName')
+          .select('*')
           .order('createdAt', { ascending: false })
           .limit(limit),
         currentCompanyId,

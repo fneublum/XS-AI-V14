@@ -54,7 +54,7 @@ export function useSuppliers(search?: string) {
       const supabase = getSupabaseClient();
       let q = scopeByCompany(
         supabase.from('suppliers')
-          .select('id, companyId, name, taxId, contactPerson, email, phone, location, city, state, zip, country, categories, rating, paymentTerms')
+          .select('*')
           .order('name', { ascending: true })
           .limit(500),
         currentCompanyId,

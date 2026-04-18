@@ -94,12 +94,9 @@ export function useProducts(search?: string) {
     ['products', currentCompanyId, needle],
     async () => {
       const supabase = getSupabaseClient();
-      // NOTE: the live `products` table is narrower than types.ts —
-      // `description` and `productType` are only in the type but not
-      // in the DB schema. Select what's actually there.
       let q = scopeByCompany(
         supabase.from('products')
-          .select('id, companyId, name, supplierProductName, sku, category, grade, hsCode, supplier, price, stockStatus, specs, tdsFile, tdsUrl, sharedWith, imageIds')
+          .select('*')
           .order('name', { ascending: true })
           .limit(500),
         currentCompanyId,

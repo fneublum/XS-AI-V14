@@ -65,9 +65,13 @@ export function useCustomers(search?: string) {
     ['customers', currentCompanyId, needle],
     async () => {
       const supabase = getSupabaseClient();
+      // Use select=* because the live DB occasionally drifts from
+      // services/schema.ts (columns added by migration but never
+      // back-ported into the schema file, or vice versa). Listing
+      // columns explicitly risks a 400 on the first missing field.
       let q = scopeByCompany(
         supabase.from('customers')
-          .select('id, companyId, name, nickname, taxId, contactPerson, email, phone, location, city, state, zip, country, creditLimit, paymentTerms, status, totalVolumeLBS, lastOrderDate, sharedWith, pod')
+          .select('*')
           .order('name', { ascending: true })
           .limit(500),
         currentCompanyId,

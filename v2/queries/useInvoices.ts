@@ -134,7 +134,7 @@ export function useInvoices(search?: string) {
       // drawer. `items` on `invoices` is a text column, parsed below.
       let q = scopeByCompany(
         supabase.from('invoices')
-          .select('id, companyId, invoiceNumber, invoiceDate, dateOrder, shipperName, shipperAddress, soldTo, shipTo, consignee, billToName, paymentTerms, incoterm, incoterms, customerPo, carrier, transportRef, freightTerms, items, grossWeight, netWeight, tareWeight, totalQuantity, subtotal, totalAmount, currency, remitTo, bankName, bankAddress, swiftCode, routingNumber, accountNumber, originalDocument, supplier, shipper, date, bookingNumber, pod, poa, plNumber, soNumber, memo, containers, createdAt')
+          .select('*')
           .order('invoiceDate', { ascending: false, nullsFirst: false })
           .limit(200),
         currentCompanyId,

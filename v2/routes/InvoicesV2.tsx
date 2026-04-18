@@ -15,6 +15,7 @@ import { EmailComposeDrawer, EmailDraft } from '../components/EmailComposeDrawer
 import { useInvoices, Invoice } from '../queries/useInvoices';
 import { useEditor } from '../providers/EditorProvider';
 import { Button } from '../primitives';
+import { DeliveryDocsModal } from '../components/DeliveryDocsModal';
 
 const fmtMoney = (n: number, currency: string) => {
   try {
@@ -76,17 +77,14 @@ const buildEmailDraft = (r: Invoice): EmailDraft => ({
   contextLabel: `Invoice ${r.invoiceNumber}`,
 });
 
-const openDeliveryDocsInV1 = (inv: Invoice) => {
-  // Hands off to v1 PLInvoiceEngine — see its useEffect that reads
-  // `xs_pending_delivery_docs` and auto-opens the Documents Modal.
-  try { sessionStorage.setItem('xs_pending_delivery_docs', inv.id); }
-  catch { /* noop */ }
-  window.location.href = '/?v2=0';
-};
+// The row action now opens the native v2 Delivery Docs modal instead of
+// handing off to v1. The modal itself still offers a "Open full v1 flow"
+// escape hatch for PL / SLI / BOL pieces that aren't native yet.
 
 const InvoicesV2: React.FC = () => {
   const [search, setSearch] = useState('');
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
+  const [deliveryDocsInv, setDeliveryDocsInv] = useState<Invoice | null>(null);
   const { openInvoice, openInvoiceCreate } = useEditor();
   const invoices = useInvoices(search);
   const total = (invoices.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
@@ -102,7 +100,7 @@ const InvoicesV2: React.FC = () => {
       onView={() => openInvoice(row)}
       onEdit={() => openInvoice(row)}
       onEmail={() => setEmailDraft(buildEmailDraft(row))}
-      onDeliveryDocs={() => openDeliveryDocsInV1(row)}
+      onDeliveryDocs={() => setDeliveryDocsInv(row)}
       onDelete={() => confirmDelete(row)}
     />
   );
@@ -141,6 +139,10 @@ const InvoicesV2: React.FC = () => {
         open={!!emailDraft}
         onOpenChange={(o) => !o && setEmailDraft(null)}
         draft={emailDraft}
+      />
+      <DeliveryDocsModal
+        invoice={deliveryDocsInv}
+        onOpenChange={(o) => !o && setDeliveryDocsInv(null)}
       />
     </>
   );

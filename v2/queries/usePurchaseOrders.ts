@@ -68,7 +68,7 @@ export function usePurchaseOrders(search?: string) {
       let q = scopeByCompany(
         supabase
           .from('purchase_orders')
-          .select('id, companyId, supplierId, supplierName, status, orderDate, expectedDeliveryDate, paymentTerms, items, totalAmount, currency, notes')
+          .select('*')
           .order('orderDate', { ascending: false, nullsFirst: false })
           .limit(200),
         currentCompanyId,

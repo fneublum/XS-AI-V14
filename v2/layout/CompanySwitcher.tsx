@@ -11,7 +11,11 @@ import { useCompanies, Company } from '../queries/useCompanies';
 import { useAuth } from '../providers/AuthProvider';
 import { cn } from '../primitives/utils';
 
-const ALL_OPTION: Company = { id: 'ALL', name: 'All accessible' };
+const ALL_OPTION: Company = {
+  id: 'ALL', name: 'All accessible',
+  nickname: null, address: null, city: null, state: null, zip: null,
+  country: null, phone: null, ein: null,
+};
 
 export const CompanySwitcher: React.FC = () => {
   const { currentCompanyId, setCurrentCompanyId } = useCompany();
