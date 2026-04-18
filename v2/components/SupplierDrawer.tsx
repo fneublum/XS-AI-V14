@@ -10,6 +10,7 @@ import { useCompanies } from '../queries/useCompanies';
 import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
+import { SupabaseSelectField } from './SupabaseSelectField';
 import type { EditorMode } from '../providers/EditorProvider';
 
 const PAYMENT_TERMS = [
@@ -342,9 +343,17 @@ export const SupplierDrawer: React.FC<Props> = ({ supplier, mode, onOpenChange }
             <div className="grid grid-cols-2 gap-2">
               <FormField>
                 <Label className={labelClass}>Payment terms</Label>
-                <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} className={inputClass + ' w-full appearance-none'}>
-                  {PAYMENT_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
+                <SupabaseSelectField
+                  source={{
+                    table: 'payment_terms',
+                    valueColumn: 'description',
+                    labelColumn: 'description',
+                    secondaryColumn: 'code',
+                    scopeByCompany: true,
+                  }}
+                  value={paymentTerms}
+                  onPick={v => setPaymentTerms(v)}
+                />
               </FormField>
               <FormField>
                 <Label className={labelClass}>Rating (0–5)</Label>

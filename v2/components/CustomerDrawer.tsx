@@ -10,6 +10,7 @@ import { useCompanies } from '../queries/useCompanies';
 import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
+import { SupabaseSelectField } from './SupabaseSelectField';
 import type { EditorMode } from '../providers/EditorProvider';
 
 interface Props {
@@ -335,7 +336,14 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
               </FormField>
               <FormField>
                 <Label className={labelClass}>POD (Port of Destination)</Label>
-                <Input value={pod} onChange={e => setPod(e.target.value)} className={inputClass + ' font-mono tabular-nums'} placeholder="Santos (BRSSZ)" />
+                <SupabaseSelectField
+                  source={{
+                    table: 'ports', valueColumn: 'name', labelColumn: 'name',
+                    secondaryColumn: 'code',
+                  }}
+                  value={pod}
+                  onPick={v => setPod(v)}
+                />
               </FormField>
             </div>
           </div>
@@ -350,9 +358,17 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
               </FormField>
               <FormField>
                 <Label className={labelClass}>Payment terms</Label>
-                <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} className={inputClass + ' w-full appearance-none'}>
-                  {PAYMENT_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
+                <SupabaseSelectField
+                  source={{
+                    table: 'payment_terms',
+                    valueColumn: 'description',
+                    labelColumn: 'description',
+                    secondaryColumn: 'code',
+                    scopeByCompany: true,
+                  }}
+                  value={paymentTerms}
+                  onPick={v => setPaymentTerms(v)}
+                />
               </FormField>
             </div>
             <div className="grid grid-cols-2 gap-2">
