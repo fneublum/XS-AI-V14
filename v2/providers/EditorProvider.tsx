@@ -11,6 +11,7 @@ import { Customer } from '../queries/useCustomers';
 import { Supplier } from '../queries/useSuppliers';
 import { Invoice } from '../queries/useInvoices';
 import { PurchaseOrder } from '../queries/usePurchaseOrders';
+import { CommissionRow } from '../queries/useCommissions';
 
 export type EditorMode = 'edit' | 'create';
 
@@ -47,6 +48,10 @@ interface EditorContextValue {
   openPurchaseOrderCreate: () => void;
   closePurchaseOrder: () => void;
 
+  commission: Slot<CommissionRow>;
+  openCommission: (c: CommissionRow) => void;
+  closeCommission: () => void;
+
   // Legacy getters (kept so existing drawer components don't need to
   // change their destructure).
   editingSalesOrder: SalesOrder | null;
@@ -54,6 +59,7 @@ interface EditorContextValue {
   editingSupplier: Supplier | null;
   editingInvoice: Invoice | null;
   editingPurchaseOrder: PurchaseOrder | null;
+  editingCommission: CommissionRow | null;
 }
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -135,6 +141,7 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [supplier,      setSupplier] = useState<Slot<Supplier>>(emptySlot);
   const [invoice,       setInvoice]  = useState<Slot<Invoice>>(emptySlot);
   const [purchaseOrder, setPO]       = useState<Slot<PurchaseOrder>>(emptySlot);
+  const [commission, setCommission]  = useState<Slot<CommissionRow>>(emptySlot);
 
   const value = useMemo<EditorContextValue>(() => ({
     salesOrder,
@@ -162,13 +169,18 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     openPurchaseOrderCreate: ()  => setPO({ entity: EMPTY_PURCHASE_ORDER, mode: 'create' }),
     closePurchaseOrder:      ()  => setPO(emptySlot),
 
+    commission,
+    openCommission:  (c) => setCommission({ entity: c, mode: 'edit' }),
+    closeCommission: ()  => setCommission(emptySlot),
+
     // Legacy getters.
     editingSalesOrder:    salesOrder.entity,
     editingCustomer:      customer.entity,
     editingSupplier:      supplier.entity,
     editingInvoice:       invoice.entity,
     editingPurchaseOrder: purchaseOrder.entity,
-  }), [salesOrder, customer, supplier, invoice, purchaseOrder]);
+    editingCommission:    commission.entity,
+  }), [salesOrder, customer, supplier, invoice, purchaseOrder, commission]);
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
 };

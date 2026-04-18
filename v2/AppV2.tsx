@@ -15,6 +15,7 @@ import { CustomerDrawer }      from './components/CustomerDrawer';
 import { SupplierDrawer }      from './components/SupplierDrawer';
 import { InvoiceDrawer }       from './components/InvoiceDrawer';
 import { PurchaseOrderDrawer } from './components/PurchaseOrderDrawer';
+import { CommissionDrawer } from './components/CommissionDrawer';
 import { ShortcutsHelp, ShortcutGroup } from './layout/ShortcutsHelp';
 import { getSupabaseClient } from '../services/supabase';
 import { SalesOrder } from './queries/useSalesOrders';
@@ -259,6 +260,7 @@ const AppV2Inner: React.FC = () => {
     supplier, closeSupplier,
     invoice, closeInvoice,
     purchaseOrder, closePurchaseOrder,
+    commission, closeCommission,
   } = useEditor();
 
   const navigate = useCallback((id: string) => {
@@ -512,6 +514,10 @@ const AppV2Inner: React.FC = () => {
         po={purchaseOrder.entity}
         mode={purchaseOrder.mode}
         onOpenChange={open => { if (!open) closePurchaseOrder(); }}
+      />
+      <CommissionDrawer
+        commission={commission.entity}
+        onOpenChange={open => { if (!open) closeCommission(); }}
       />
     </>
   );

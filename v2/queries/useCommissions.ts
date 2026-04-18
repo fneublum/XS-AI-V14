@@ -8,6 +8,7 @@ export interface CommissionRow {
   id: string;
   orderNumber: string;
   invoiceNumber: string | null;
+  invoiceStatus: string | null;
   customerName: string;
   sellerName: string | null;
   orderTotal: number;
@@ -23,6 +24,7 @@ interface Raw {
   id: string;
   orderNumber: string | null;
   invoiceNumber: string | null;
+  invoiceStatus: string | null;
   customerName: string | null;
   sellerName: string | null;
   orderTotal: number | string | null;
@@ -48,7 +50,7 @@ export function useCommissions(search?: string) {
       const supabase = getSupabaseClient();
       let q = scopeByCompany(
         supabase.from('commission_sales_orders')
-          .select('id, orderNumber, invoiceNumber, customerName, sellerName, orderTotal, commissionRate, commissionAmount, commissionType, paymentStatus, commissionPaymentStatus, createdAt')
+          .select('id, orderNumber, invoiceNumber, invoiceStatus, customerName, sellerName, orderTotal, commissionRate, commissionAmount, commissionType, paymentStatus, commissionPaymentStatus, createdAt')
           .order('createdAt', { ascending: false, nullsFirst: false })
           .limit(200),
         currentCompanyId,
@@ -63,6 +65,7 @@ export function useCommissions(search?: string) {
         id: r.id,
         orderNumber: r.orderNumber ?? r.id,
         invoiceNumber: r.invoiceNumber,
+        invoiceStatus: r.invoiceStatus,
         customerName: r.customerName ?? '—',
         sellerName: r.sellerName,
         orderTotal: Number(r.orderTotal) || 0,
