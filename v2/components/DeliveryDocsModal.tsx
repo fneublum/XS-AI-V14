@@ -35,6 +35,7 @@ import { generateSliPdf } from '../services/pdf/sliPdf';
 import { applyAdjustments } from '../services/pdf/priceAdjust';
 import { findCompany, PdfInvoice, InvoicePdfCtx } from '../services/pdf/types';
 import { sendEmail } from '../../services/emailService';
+import { Send } from 'lucide-react';
 
 interface Props {
   invoice: Invoice | null;
@@ -47,12 +48,21 @@ const toPdfInvoice = (inv: Invoice): PdfInvoice => ({
   date: inv.invoiceDate ?? undefined,
 } as PdfInvoice);
 
+// Pre-open the new tab synchronously inside the click handler, then
+// write the blob URL to its location once the PDF is ready. Popup
+// blockers allow a user-gesture window.open — deferring it until
+// after the async work gets blocked in many browsers.
 const openPreview = (doc: any, filename: string) => {
+  const win = window.open('', '_blank');
   const blob = doc.output('blob');
   const url = URL.createObjectURL(blob);
-  const win = window.open(url, '_blank', 'noopener,noreferrer');
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  if (!win) doc.save(filename);
+  if (win) {
+    win.location.href = url;
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } else {
+    // Last resort — popup was blocked even with the sync pre-open.
+    doc.save(filename);
+  }
 };
 
 const downloadDoc = (doc: any, filename: string) => doc.save(filename);
@@ -117,6 +127,15 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
   const [halfMode, setHalfMode] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+
+  // Email preview state — mirrors v1 PLInvoiceEngine so the user can
+  // review To / CC / Subject / Body + see attachments before sending.
+  interface Attachment { name: string; contentBytes: string; contentType: string }
+  interface EmailDraft { to: string; cc: string; subject: string; htmlBody: string; attachments: Attachment[] }
+  const [emailDraft, setEmailDraft] = useState<EmailDraft>({
+    to: '', cc: '', subject: '', htmlBody: '', attachments: [],
+  });
+  const [emailPreviewOpen, setEmailPreviewOpen] = useState(false);
 
   useEffect(() => {
     if (!invoice) return;
@@ -185,19 +204,20 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
     }
   };
 
-  // ─── Email selected — real send with attachments ────────────
-  const emailSelected = async () => {
+  // ─── Email selected — build attachments + open preview modal
+  // Mirror v1 PLInvoiceEngine: build a draft, open a review UI with
+  // editable To / CC / Subject / Body + attachment list. Nothing is
+  // sent until the user hits Send in the preview.
+  const emailSelected = () => {
     const selectedCount = Object.values(selection).filter(Boolean).length;
     if (selectedCount === 0) {
       toast.push({ kind: 'warning', title: 'Select at least one document' });
       return;
     }
-
-    setSending(true);
     try {
       const inv = adjustedInvoice();
       const ctx = buildCtx();
-      const attachments: { name: string; contentBytes: string; contentType: string }[] = [];
+      const attachments: Attachment[] = [];
 
       if (selection.invoice) {
         const doc = generateInvoicePdf(inv, ctx, false);
@@ -223,8 +243,7 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
           contentType: 'application/pdf',
         });
       }
-      // BOL is stored as a data URL on the invoice row — skip in BR mode
-      // to match v1 behavior (BR-mode shipments don't attach BOL).
+      // BOL data-URL fallback, skipped in BR mode to match v1.
       const bolUrl = (invoice as any).bolUrl || (invoice as any).bolurl;
       if (selection.bol && !brMode && bolUrl && typeof bolUrl === 'string' && bolUrl.startsWith('data:')) {
         const payload = bolUrl.split(',')[1];
@@ -237,18 +256,17 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
         });
       }
 
-      // Build recipient list + subject + body.
       const customer = customers.data?.find(c =>
         c.name === invoice.billToName || c.name === invoice.soldTo,
       );
-      const toList = customer?.email ? [customer.email] : [];
+      const toAddress = customer?.email ?? '';
       const companyName = company?.name || 'X-Solution';
 
       const subject = brMode
         ? `BR Documents - Invoice #${inv.invoiceNumber}`
         : `Shipping Documents - Invoice #${invoice.invoiceNumber}`;
 
-      const bodyLines = [
+      const body = [
         brMode ? 'Dear Partner,' : `Dear ${customer?.name || 'Customer'},`,
         '',
         'Please find attached the documents for your order:',
@@ -262,37 +280,44 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
         '',
         'Best regards,',
         companyName,
-      ].filter(Boolean);
+      ].filter(Boolean).join('\n');
 
-      const htmlBody = `<div style="font-family: Arial, sans-serif; max-width: 600px;">${bodyLines.map(l => l || '<br>').join('<br>')}</div>`;
+      setEmailDraft({
+        to: toAddress,
+        cc: '',
+        subject,
+        htmlBody: body,
+        attachments,
+      });
+      setEmailPreviewOpen(true);
+    } catch (err) {
+      toast.push({
+        kind: 'error',
+        title: 'Email draft build failed',
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
 
-      if (toList.length === 0) {
-        // No recipient stored on the customer — open compose drawer so
-        // the user can type it in. Include attachments via download
-        // fallback until a contact record exists.
-        toast.push({
-          kind: 'warning',
-          title: 'No recipient email on file',
-          description: 'Add the email to the customer record or type it in the compose drawer. Documents downloaded for manual attach.',
-        });
-        attachments.forEach(a => {
-          // data:application/pdf;base64,...
-          const href = `data:${a.contentType};base64,${a.contentBytes}`;
-          const link = document.createElement('a');
-          link.href = href;
-          link.download = a.name;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-        });
-        return;
-      }
+  // Send the drafted email via the shared email service.
+  const sendEmailFromPreview = async () => {
+    if (!emailDraft.to.trim()) {
+      toast.push({ kind: 'warning', title: 'Recipient required' });
+      return;
+    }
+    setSending(true);
+    try {
+      const toList = emailDraft.to.split(/[;,]/).map(e => e.trim()).filter(Boolean);
+      const ccList = emailDraft.cc.split(/[;,]/).map(e => e.trim()).filter(Boolean);
+      const escaped = emailDraft.htmlBody.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const htmlBody = `<div style="font-family: Arial, sans-serif; max-width: 640px; white-space: pre-wrap; color:#0f172a; line-height:1.6;">${escaped}</div>`;
 
       const result = await sendEmail({
         to: toList,
-        subject,
+        cc: ccList.length > 0 ? ccList : undefined,
+        subject: emailDraft.subject,
         htmlBody,
-        attachments,
+        attachments: emailDraft.attachments,
       });
 
       if (result.success) {
@@ -301,7 +326,8 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
           title: `Sent via ${result.provider}`,
           description: toList.join(', '),
         });
-        onOpenChange(false);
+        setEmailPreviewOpen(false);
+        setTimeout(() => onOpenChange(false), 400);
       } else {
         toast.push({
           kind: 'error',
@@ -531,6 +557,116 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+
+      {/* Email preview modal — mirror of v1 PLInvoiceEngine preview */}
+      <Dialog.Root open={emailPreviewOpen} onOpenChange={setEmailPreviewOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-[2px]" />
+          <Dialog.Content className="fixed left-1/2 top-[6%] -translate-x-1/2 z-[70] w-[min(96vw,720px)] rounded-md border border-[#1f1f1f] bg-[#0a0a0a] shadow-[0_16px_48px_rgba(0,0,0,0.6)] flex flex-col max-h-[86vh]">
+            <div className="px-5 py-4 border-b border-[#1f1f1f] flex items-start gap-3">
+              <div className="p-1.5 rounded-md bg-indigo-600/10 text-indigo-300">
+                <Mail size={14} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <Dialog.Title className="text-[14px] font-semibold text-slate-100">
+                  Email preview
+                </Dialog.Title>
+                <Dialog.Description className="text-[12px] text-slate-500 mt-0.5">
+                  Review and send — routes through your signed-in Outlook or Gmail. PDFs are attached.
+                </Dialog.Description>
+              </div>
+              <Dialog.Close
+                aria-label="Close"
+                className="text-slate-500 hover:text-slate-100 transition-colors p-1 -m-1"
+              >
+                <XIcon size={14} />
+              </Dialog.Close>
+            </div>
+
+            <div className="px-5 py-4 overflow-y-auto space-y-3">
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-1">
+                  To
+                </label>
+                <input
+                  type="text"
+                  value={emailDraft.to}
+                  onChange={e => setEmailDraft(d => ({ ...d, to: e.target.value }))}
+                  placeholder="recipient@example.com"
+                  className="w-full px-2.5 py-1.5 text-[12.5px] bg-[#0f0f0f] border border-[#1f1f1f] rounded-md text-slate-200 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-1">
+                  CC
+                </label>
+                <input
+                  type="text"
+                  value={emailDraft.cc}
+                  onChange={e => setEmailDraft(d => ({ ...d, cc: e.target.value }))}
+                  placeholder="Optional — comma or semicolon separated"
+                  className="w-full px-2.5 py-1.5 text-[12.5px] bg-[#0f0f0f] border border-[#1f1f1f] rounded-md text-slate-200 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-1">
+                  Subject
+                </label>
+                <input
+                  type="text"
+                  value={emailDraft.subject}
+                  onChange={e => setEmailDraft(d => ({ ...d, subject: e.target.value }))}
+                  className="w-full px-2.5 py-1.5 text-[12.5px] bg-[#0f0f0f] border border-[#1f1f1f] rounded-md text-slate-200 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-1">
+                  Message
+                </label>
+                <textarea
+                  value={emailDraft.htmlBody}
+                  onChange={e => setEmailDraft(d => ({ ...d, htmlBody: e.target.value }))}
+                  rows={10}
+                  className="w-full px-2.5 py-1.5 text-[12.5px] bg-[#0f0f0f] border border-[#1f1f1f] rounded-md text-slate-200 focus:outline-none focus:border-indigo-500 resize-y"
+                />
+              </div>
+              {emailDraft.attachments.length > 0 && (
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-1">
+                    Attachments ({emailDraft.attachments.length})
+                  </label>
+                  <div className="rounded-md border border-[#1f1f1f] bg-[#0f0f0f] divide-y divide-[#1f1f1f]">
+                    {emailDraft.attachments.map((att, idx) => (
+                      <div key={idx} className="flex items-center gap-2 px-3 py-2 text-[11.5px]">
+                        <FileText size={12} className="text-indigo-300 shrink-0" />
+                        <span className="font-mono truncate text-slate-200">{att.name}</span>
+                        <span className="ml-auto text-slate-500 tabular-nums">
+                          {Math.round(att.contentBytes.length * 0.75 / 1024)} KB
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t border-[#1f1f1f] flex items-center gap-2 justify-end">
+              <Dialog.Close className="px-3 py-1.5 text-[12px] text-slate-400 hover:text-slate-100 rounded-md hover:bg-[#141414] transition-colors">
+                Cancel
+              </Dialog.Close>
+              <Button
+                size="sm"
+                onClick={sendEmailFromPreview}
+                disabled={sending || !emailDraft.to.trim()}
+                loading={sending}
+                className="bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40 h-7 px-3 text-[12px] font-medium rounded-md"
+              >
+                {sending ? 'Sending…' : <><Send size={12} /> Send email</>}
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </Dialog.Root>
   );
 };
