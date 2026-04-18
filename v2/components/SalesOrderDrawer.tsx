@@ -485,9 +485,19 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
             <Label className={labelClass}>Banking &amp; notify</Label>
             <div className="grid grid-cols-2 gap-2">
               <FormField>
-                <Label className={labelClass}>Bank ID</Label>
-                <Input value={bankId} onChange={e => setBankId(e.target.value)}
-                  className={inputClass + ' font-mono tabular-nums'} placeholder="BK-0001" />
+                <Label className={labelClass}>Bank (pay-to)</Label>
+                <SupabaseSelectField
+                  source={{
+                    table: 'banks',
+                    valueColumn: 'id',
+                    labelColumn: 'name',
+                    secondaryColumn: 'code',
+                    scopeByCompany: true,
+                    companyIdColumn: 'company_id',
+                  }}
+                  value={bankId}
+                  onPick={v => setBankId(v)}
+                />
               </FormField>
               <FormField>
                 <Label className={labelClass}>Notify party (customer)</Label>

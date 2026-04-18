@@ -28,6 +28,9 @@ export interface FieldSource {
   limit?: number;
   /** Scope by the current companyId + include ALL rows. */
   scopeByCompany?: boolean;
+  /** Column to scope on when `scopeByCompany` is true. Defaults to
+   *  `companyId`. Use `company_id` for snake_case tables. */
+  companyIdColumn?: string;
   /**
    * After the user picks a row, write these additional source-row
    * columns into sibling FieldDef keys on the form. Lets a single
@@ -69,7 +72,8 @@ export const SupabaseSelectField: React.FC<Props> = ({
         .order(order, { ascending: true })
         .limit(source.limit ?? 500);
       if (source.scopeByCompany && currentCompanyId && currentCompanyId !== 'ALL') {
-        q = q.or(`companyId.eq.${currentCompanyId},companyId.eq.ALL`) as typeof q;
+        const col = source.companyIdColumn ?? 'companyId';
+        q = q.or(`${col}.eq.${currentCompanyId},${col}.eq.ALL`) as typeof q;
       }
       const { data, error } = await q;
       if (error) throw new Error(error.message);
