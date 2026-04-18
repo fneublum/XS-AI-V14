@@ -18,6 +18,8 @@ import { PurchaseOrderDrawer } from './components/PurchaseOrderDrawer';
 import { CommissionDrawer } from './components/CommissionDrawer';
 import { ProductDrawer }    from './components/ProductDrawer';
 import { ShortcutsHelp, ShortcutGroup } from './layout/ShortcutsHelp';
+import { DataMenuModal } from './layout/DataMenuModal';
+import { SettingsMenuModal } from './layout/SettingsMenuModal';
 import { getSupabaseClient } from '../services/supabase';
 import { SalesOrder } from './queries/useSalesOrders';
 
@@ -39,6 +41,9 @@ const ReceivablesV2     = lazy(() => import('./routes/ReceivablesV2'));
 const PayablesV2        = lazy(() => import('./routes/PayablesV2'));
 const CommissionsV2     = lazy(() => import('./routes/CommissionsV2'));
 const CustomerBalancesV2 = lazy(() => import('./routes/CustomerBalancesV2'));
+const AiSalesV2          = lazy(() => import('./routes/AiSalesV2'));
+const TradingFollowUpV2  = lazy(() => import('./routes/TradingFollowUpV2'));
+const AgentFollowUpV2    = lazy(() => import('./routes/AgentFollowUpV2'));
 const AdminUsersV2      = lazy(() => import('./routes/AdminUsersV2'));
 const AdminCompaniesV2  = lazy(() => import('./routes/AdminCompaniesV2'));
 const AiDashboardV2         = lazy(() => import('./routes/AiDashboardV2'));
@@ -55,25 +60,45 @@ const PLInvoiceEngineV2     = lazy(() => import('./routes/PLInvoiceEngineV2'));
 const CostProfitAIV2        = lazy(() => import('./routes/CostProfitAIV2'));
 const LoginV2               = lazy(() => import('./routes/LoginV2'));
 
-const sections = [
+// Sidebar layout — matches the 2026-04-18 spec. Workspace holds the
+// overview + AI surfaces, Trading / Agent Sales / Logistics / Finance
+// hold the transactional views, and Data / Settings open pop-up menus
+// instead of routing. The pop-ups dispatch into v2 routes where they
+// exist and hand off to v1 otherwise (see DataMenuModal + the
+// xs_pending_v1_nav handshake in App.tsx).
+const buildSections = (
+  openDataMenu: () => void,
+  openSettingsMenu: () => void,
+): import('./layout/Sidebar').SidebarSection[] => [
   {
     id: 'workspace',
     label: 'Workspace',
     items: [
-      { id: 'dashboard',       label: 'Dashboard',       hint: 'D' },
-      { id: 'customers',       label: 'Customers',       hint: 'C' },
-      { id: 'suppliers',       label: 'Suppliers' },
-      { id: 'sales-orders',    label: 'Sales Orders',    hint: 'O' },
-      { id: 'purchase-orders', label: 'Purchase Orders' },
-      { id: 'opportunities',   label: 'Opportunities' },
+      { id: 'dashboard',    label: 'Dashboard',          hint: 'D' },
+      { id: 'ai-email',     label: 'AI Email Assistant' },
+      { id: 'ai-upload',    label: 'AI Upload' },
+      { id: 'ai-sales',     label: 'AI Sales' },
+      { id: 'ai-logistics', label: 'AI Logistics' },
     ],
   },
   {
-    id: 'catalog',
-    label: 'Catalog',
+    id: 'trading',
+    label: 'Trading',
     items: [
-      { id: 'products',  label: 'Products',  hint: 'R' },
-      { id: 'inventory', label: 'Inventory', hint: 'I' },
+      { id: 'purchase-orders', label: 'Purchase Orders' },
+      { id: 'sales-orders',    label: 'Sales Orders (Proformas)', hint: 'O' },
+      { id: 'pl-invoice',      label: 'Packing list & Invoice' },
+      { id: 'invoices',        label: 'Invoice & docs' },
+      { id: 'trading-followup', label: 'Trading Follow Up' },
+    ],
+  },
+  {
+    id: 'agent-sales',
+    label: 'Agent Sales',
+    items: [
+      { id: 'sopici',          label: 'Agent Sales Orders' },
+      { id: 'commissions',     label: 'Commission Invoices' },
+      { id: 'agent-followup',  label: 'Agent Follow Up' },
     ],
   },
   {
@@ -82,83 +107,74 @@ const sections = [
     items: [
       { id: 'freight-quotes', label: 'Freight Quotes', hint: 'Q' },
       { id: 'bookings',       label: 'Bookings',       hint: 'B' },
-      { id: 'shipments',      label: 'Shipments' },
       { id: 'bol',            label: 'Bill of Ladings' },
-      { id: 'packing-lists',  label: 'Packing Lists' },
-      { id: 'logistics-docs', label: 'Logistics Docs' },
     ],
   },
   {
     id: 'finance',
     label: 'Finance',
     items: [
-      { id: 'invoices',     label: 'Invoices' },
-      { id: 'receivables',  label: 'Receivables' },
-      { id: 'payables',     label: 'Payables' },
+      { id: 'payables',          label: 'Payables' },
+      { id: 'receivables',       label: 'Receivables' },
       { id: 'customer-balances', label: 'Customer Balances' },
-      { id: 'commissions',  label: 'Commissions' },
-      { id: 'pl',           label: 'P&L' },
-      { id: 'sopici',       label: 'SO/PI/CI Commissions' },
-      { id: 'pl-invoice',   label: 'P&L Invoice Engine' },
-      { id: 'cost-profit',  label: 'Cost / Profit AI' },
     ],
   },
   {
-    id: 'ai',
-    label: 'AI',
-    items: [
-      { id: 'ai-dashboard',     label: 'AI Dashboard' },
-      { id: 'ai-upload',        label: 'AI Upload' },
-      { id: 'ai-email',         label: 'AI Email Assistant' },
-      { id: 'ai-logistics',     label: 'AI Logistics Manager' },
-      { id: 'email-agent',      label: 'Email Agent' },
-    ],
-  },
-  {
+    // Data + Settings are click-through menus — `onClick` wins over
+    // `onSelect(id)` in Sidebar.tsx so they don't route.
     id: 'admin',
-    label: 'Admin',
     items: [
-      { id: 'users',       label: 'Users' },
-      { id: 'companies',   label: 'Companies' },
-      { id: 'settings',    label: 'Settings' },
-      { id: 'connections', label: 'Connections' },
+      { id: '__data',     label: 'Data',     onClick: openDataMenu },
+      { id: '__settings', label: 'Settings', onClick: openSettingsMenu },
     ],
   },
 ];
 
 const routeTitles: Record<string, string> = {
   'dashboard':       'Dashboard',
-  'customers':       'Customers',
-  'suppliers':       'Suppliers',
-  'sales-orders':    'Sales Orders',
+  // Workspace
+  'ai-email':        'AI Email Assistant',
+  'ai-upload':       'AI Upload',
+  'ai-sales':        'AI Sales',
+  'ai-logistics':    'AI Logistics',
+  // Trading
   'purchase-orders': 'Purchase Orders',
-  'opportunities':   'Opportunities',
-  'products':        'Products',
-  'inventory':       'Inventory',
+  'sales-orders':    'Sales Orders (Proformas)',
+  'pl-invoice':      'Packing list & Invoice',
+  'invoices':        'Invoice & docs',
+  'trading-followup': 'Trading Follow Up',
+  // Agent Sales
+  'sopici':          'Agent Sales Orders',
+  'commissions':     'Commission Invoices',
+  'agent-followup':  'Agent Follow Up',
+  // Logistics
   'freight-quotes':  'Freight Quotes',
   'bookings':        'Bookings',
-  'shipments':       'Shipments',
   'bol':             'Bill of Ladings',
-  'packing-lists':   'Packing Lists',
-  'invoices':        'Invoices',
-  'receivables':     'Receivables',
+  // Finance
   'payables':        'Payables',
+  'receivables':     'Receivables',
   'customer-balances': 'Customer Balances',
-  'commissions':     'Commissions',
+  // Reachable via Data modal or command palette — not in the sidebar
+  // tree but still valid routes.
+  'customers':       'Customers',
+  'suppliers':       'Suppliers',
+  'products':        'Products',
+  'inventory':       'Inventory',
+  'opportunities':   'Opportunities',
+  'shipments':       'Shipments',
+  'packing-lists':   'Packing Lists',
+  'logistics-docs':  'Logistics Docs',
+  // Reachable via Settings modal
   'users':           'Users',
   'companies':       'Companies',
-  'logistics-docs':  'Logistics Docs',
+  'connections':     'Connections',
+  'settings':        'Settings',
+  // Finance deep-linked from other places
   'pl':              'P&L',
-  'sopici':          'SO/PI/CI Commissions',
-  'pl-invoice':      'P&L Invoice Engine',
   'cost-profit':     'Cost / Profit AI',
   'ai-dashboard':    'AI Dashboard',
-  'ai-upload':       'AI Upload',
-  'ai-email':        'AI Email Assistant',
-  'ai-logistics':    'AI Logistics Manager',
   'email-agent':     'Email Agent',
-  'settings':        'Settings',
-  'connections':     'Connections',
 };
 
 const routeHotkeys: Record<string, string> = {
@@ -174,37 +190,47 @@ const routeHotkeys: Record<string, string> = {
 // Section each route belongs to, for breadcrumbs.
 const routeSection: Record<string, string> = {
   'dashboard':       'Overview',
-  'customers':       'Workspace',
-  'suppliers':       'Workspace',
-  'sales-orders':    'Workspace',
-  'purchase-orders': 'Workspace',
-  'opportunities':   'Workspace',
-  'products':        'Catalog',
-  'inventory':       'Catalog',
+  // Workspace
+  'ai-email':        'Workspace',
+  'ai-upload':       'Workspace',
+  'ai-sales':        'Workspace',
+  'ai-logistics':    'Workspace',
+  'ai-dashboard':    'Workspace',
+  'email-agent':     'Workspace',
+  // Trading
+  'purchase-orders': 'Trading',
+  'sales-orders':    'Trading',
+  'pl-invoice':      'Trading',
+  'invoices':        'Trading',
+  'trading-followup': 'Trading',
+  // Agent Sales
+  'sopici':          'Agent Sales',
+  'commissions':     'Agent Sales',
+  'agent-followup':  'Agent Sales',
+  // Logistics
   'freight-quotes':  'Logistics',
   'bookings':        'Logistics',
-  'shipments':       'Logistics',
   'bol':             'Logistics',
+  'shipments':       'Logistics',
   'packing-lists':   'Logistics',
-  'invoices':        'Finance',
-  'receivables':     'Finance',
-  'payables':        'Finance',
-  'customer-balances': 'Finance',
-  'commissions':     'Finance',
-  'pl':              'Finance',
-  'sopici':          'Finance',
-  'pl-invoice':      'Finance',
-  'cost-profit':     'Finance',
   'logistics-docs':  'Logistics',
-  'ai-dashboard':    'AI',
-  'ai-upload':       'AI',
-  'ai-email':        'AI',
-  'ai-logistics':    'AI',
-  'email-agent':     'AI',
-  'users':           'Admin',
-  'companies':       'Admin',
-  'settings':        'Admin',
-  'connections':     'Admin',
+  // Finance
+  'payables':        'Finance',
+  'receivables':     'Finance',
+  'customer-balances': 'Finance',
+  'pl':              'Finance',
+  'cost-profit':     'Finance',
+  // Data
+  'customers':       'Data',
+  'suppliers':       'Data',
+  'products':        'Data',
+  'inventory':       'Data',
+  'opportunities':   'Data',
+  // Settings
+  'users':           'Settings',
+  'companies':       'Settings',
+  'connections':     'Settings',
+  'settings':        'Settings',
 };
 
 const Fallback: React.FC = () => (
@@ -256,6 +282,8 @@ const AppV2Inner: React.FC = () => {
   });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [dataMenuOpen, setDataMenuOpen] = useState(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const { user, loading: authLoading } = useAuth();
@@ -448,7 +476,7 @@ const AppV2Inner: React.FC = () => {
   return (
     <>
       <AppShell
-        sections={sections}
+        sections={buildSections(() => setDataMenuOpen(true), () => setSettingsMenuOpen(true))}
         activeId={activeId}
         onNavigate={navigate}
         workspace={{ name: 'XS-ERP', subtitle: 'v12' }}
@@ -497,6 +525,9 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'sopici'          && <SopiciCommissionsV2 />}
           {activeId === 'pl-invoice'      && <PLInvoiceEngineV2 />}
           {activeId === 'cost-profit'     && <CostProfitAIV2 />}
+          {activeId === 'ai-sales'        && <AiSalesV2 />}
+          {activeId === 'trading-followup' && <TradingFollowUpV2 navigate={navigate} />}
+          {activeId === 'agent-followup'  && <AgentFollowUpV2 navigate={navigate} />}
         </Suspense>
       </AppShell>
 
@@ -505,6 +536,18 @@ const AppV2Inner: React.FC = () => {
         onOpenChange={setPaletteOpen}
         commands={commands}
         dataProviders={dataProviders}
+      />
+
+      <DataMenuModal
+        open={dataMenuOpen}
+        onOpenChange={setDataMenuOpen}
+        navigate={navigate}
+      />
+
+      <SettingsMenuModal
+        open={settingsMenuOpen}
+        onOpenChange={setSettingsMenuOpen}
+        navigate={navigate}
       />
 
       <ShortcutsHelp

@@ -160,6 +160,16 @@ const App: React.FC = () => {
                 sessionStorage.removeItem('xs_pending_finance_balances');
                 return ['FINANCE', 'BALANCES'];
             }
+            // Generic handoff from the v2 Data / Settings pop-up menus.
+            // Payload shape: { module: 'DATA', submodule: 'PORTS' }.
+            const rawNav = sessionStorage.getItem('xs_pending_v1_nav');
+            if (rawNav) {
+                sessionStorage.removeItem('xs_pending_v1_nav');
+                try {
+                    const parsed = JSON.parse(rawNav) as { module?: string; submodule?: string };
+                    if (parsed.module) return [parsed.module, parsed.submodule ?? ''];
+                } catch { /* noop */ }
+            }
         } catch { /* noop */ }
         return ['DASHBOARD', ''];
     };

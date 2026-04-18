@@ -1,8 +1,9 @@
 // Phase 3B — v2 Dashboard with live Supabase data.
 
 import React, { useState } from 'react';
+import { Bot, MessageCircle, Upload, ArrowRight } from 'lucide-react';
 import {
-  StatCard, StatGrid, Card, CardHeader, CardTitle, Badge,
+  StatCard, StatGrid, Card, CardHeader, CardTitle, Badge, Button,
   Skeleton, EmptyState,
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
@@ -85,10 +86,12 @@ const DashboardV2: React.FC = () => {
   const revenueDelta = stats.data?.revenueDeltaPct;
   const orderDelta = stats.data?.orderDelta;
 
+  const openV1Dashboard = () => { window.location.href = '/?v2=0'; };
+
   return (
     <div className="max-w-6xl">
       {/* Header */}
-      <div className="flex items-baseline justify-between mb-8">
+      <div className="flex items-baseline justify-between mb-6">
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
             Dashboard
@@ -105,6 +108,36 @@ const DashboardV2: React.FC = () => {
           <RangeButton active={range === '90d'} onClick={() => setRange('90d')}>90d</RangeButton>
         </div>
       </div>
+
+      {/* v1 handoff panel — AI Agent / WhatsApp / OCR live in v1's Dashboard */}
+      <Card className="mb-6">
+        <div className="p-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={openV1Dashboard}
+            className="flex items-center gap-2 px-3 py-2 rounded-md bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/30 text-indigo-200 text-[12.5px] font-medium transition-colors"
+          >
+            <Bot size={14} /> AI Agent assistant <ArrowRight size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={openV1Dashboard}
+            className="flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-600/10 hover:bg-emerald-600/20 border border-emerald-500/30 text-emerald-200 text-[12.5px] font-medium transition-colors"
+          >
+            <MessageCircle size={14} /> WhatsApp window <ArrowRight size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={openV1Dashboard}
+            className="flex items-center gap-2 px-3 py-2 rounded-md bg-amber-600/10 hover:bg-amber-600/20 border border-amber-500/30 text-amber-200 text-[12.5px] font-medium transition-colors"
+          >
+            <Upload size={14} /> Upload / drop to OCR <ArrowRight size={12} />
+          </button>
+          <div className="ml-auto text-[11px] text-slate-500">
+            Full dashboard experience lives in v1 until the native port lands.
+          </div>
+        </div>
+      </Card>
 
       {/* Stat grid */}
       <div className="mb-8">

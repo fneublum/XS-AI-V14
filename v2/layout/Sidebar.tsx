@@ -16,6 +16,9 @@ export interface SidebarItem {
   hint?: string;
   count?: number;
   disabled?: boolean;
+  /** Override the default `onSelect(id)` — use for items that open a
+   *  modal or jump to an external surface instead of routing. */
+  onClick?: () => void;
 }
 
 export interface SidebarSection {
@@ -92,7 +95,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <li key={item.id}>
                   <button
                     type="button"
-                    onClick={() => !item.disabled && onSelect(item.id)}
+                    onClick={() => {
+                      if (item.disabled) return;
+                      if (item.onClick) item.onClick();
+                      else onSelect(item.id);
+                    }}
                     disabled={item.disabled}
                     aria-current={active ? 'page' : undefined}
                     title={collapsed ? item.label : undefined}
