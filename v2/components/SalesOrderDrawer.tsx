@@ -20,7 +20,7 @@ const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'REJECTED', 'FULFILLED', 'BOOKED'
 const ORDER_TYPES = ['SPOT', 'CONTRACT'];
 const SALE_TYPES = ['LOCAL', 'EXPORT'];
 const INCOTERMS = ['FOB', 'CFR', 'CIF', 'EXW', 'DAP', 'DDP', 'FCA', 'CPT', 'CIP', 'FAS'];
-const DELIVERY_METHODS = ['PICKUP', 'DELIVERY', 'DOOR_TO_PORT', 'PORT_TO_DOOR', 'DOOR_TO_DOOR'];
+const DELIVERY_METHODS = ['PICKUP', 'DELIVERY', 'DOOR_TO_PORT', 'PORT_TO_DOOR', 'DOOR_TO_DOOR', 'PORT_TO_PORT'];
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'BRL', 'MXN', 'CNY', 'INR'];
 const PAYMENT_TERMS = [
   'Net 30 Days', 'Net 60 Days', 'Prepaid', 'L/C at Sight', 'L/C 60 Days',
