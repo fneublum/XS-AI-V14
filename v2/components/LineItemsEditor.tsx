@@ -240,7 +240,7 @@ export const LineItemsEditor: React.FC<Props> = ({
                           type="number"
                           min={0}
                           step={1}
-                          value={it.quantity}
+                          value={it.quantity || ''}
                           onChange={e => update(i, { quantity: Number(e.target.value) || 0 })}
                           className={cellInputMono + ' text-right flex-1'}
                           title="Quantity in pounds"
@@ -252,7 +252,7 @@ export const LineItemsEditor: React.FC<Props> = ({
                           type="number"
                           min={0}
                           step={1}
-                          value={lbsToKgs(Number(it.quantity) || 0)}
+                          value={lbsToKgs(Number(it.quantity) || 0) || ''}
                           onChange={e => {
                             const kgs = Number(e.target.value) || 0;
                             update(i, { quantity: kgsToLbs(kgs) });
@@ -280,7 +280,7 @@ export const LineItemsEditor: React.FC<Props> = ({
                           type="number"
                           min={0}
                           step={0.0001}
-                          value={it.unitPrice}
+                          value={it.unitPrice || ''}
                           onChange={e => update(i, { unitPrice: Number(e.target.value) || 0 })}
                           className={cellInputMono + ' text-right flex-1'}
                           title="Price per pound"
@@ -292,7 +292,7 @@ export const LineItemsEditor: React.FC<Props> = ({
                           type="number"
                           min={0}
                           step={0.01}
-                          value={pricePerLbToKg(Number(it.unitPrice) || 0)}
+                          value={pricePerLbToKg(Number(it.unitPrice) || 0) || ''}
                           onChange={e => {
                             const pkg = Number(e.target.value) || 0;
                             update(i, { unitPrice: pricePerKgToLb(pkg) });
