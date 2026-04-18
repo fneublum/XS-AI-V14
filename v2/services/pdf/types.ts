@@ -123,6 +123,10 @@ export interface PdfInvoice {
   shipperName?: string | null;
   supplier?: string | null;
   originState?: string | null;
+  carrier?: string | null;
+  currency?: string | null;
+  totalAmount?: number | null;
+  subtotal?: number | null;
 }
 
 export const findLinkedPL = (
