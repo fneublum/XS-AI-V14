@@ -193,7 +193,6 @@ const SalesOrdersV2: React.FC = () => {
   const [search, setSearch] = useState('');
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
-  const [proformaDocsOrder, setProformaDocsOrder]       = useState<SalesOrder | null>(null);
   const [proformaViewOrder, setProformaViewOrder]       = useState<SalesOrder | null>(null);
   const [proformaEmailOrder, setProformaEmailOrder]     = useState<SalesOrder | null>(null);
   const { openSalesOrder, openSalesOrderCreate } = useEditor();
@@ -231,17 +230,13 @@ const SalesOrdersV2: React.FC = () => {
     rowLabel: r => r.orderNumber,
   });
 
-  // View action previews the Proforma PDF; Email action opens the
-  // Proforma email draft (with PDF attached). Edit still opens the
-  // bespoke drawer. The separate Documents icon keeps the combined
-  // preview+download+email modal as a convenience.
+  // View previews the Proforma PDF; Email opens the Proforma email
+  // draft. Edit still opens the bespoke drawer.
   const rowActions = (row: SalesOrder) => (
     <RowActions
       onView={() => setProformaViewOrder(row)}
       onEdit={() => openSalesOrder(row)}
       onEmail={() => setProformaEmailOrder(row)}
-      onDeliveryDocs={() => setProformaDocsOrder(row)}
-      deliveryDocsLabel="Proforma documents"
       onDelete={() => confirmDelete(row)}
     />
   );
@@ -376,10 +371,6 @@ const SalesOrdersV2: React.FC = () => {
         open={!!emailDraft}
         onOpenChange={(o) => !o && setEmailDraft(null)}
         draft={emailDraft}
-      />
-      <ProformaDocsModal
-        order={proformaDocsOrder}
-        onOpenChange={(o) => !o && setProformaDocsOrder(null)}
       />
       <ProformaDocsModal
         order={proformaViewOrder}
