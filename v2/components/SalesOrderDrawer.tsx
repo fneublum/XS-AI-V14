@@ -370,6 +370,27 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
                 </select>
               </FormField>
             </div>
+            <div className="grid grid-cols-3 gap-2">
+              <FormField>
+                <Label className={labelClass}>Notify party (customer)</Label>
+                <select value={notifyPartyId}
+                  onChange={e => selectNotifyParty(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  <option value="">— none —</option>
+                  {[...availableCustomers].sort((a, b) => a.name.localeCompare(b.name))
+                    .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </FormField>
+              <FormField className="col-span-2">
+                <Label className={labelClass}>Notify party name</Label>
+                <Input
+                  value={notifyPartyName}
+                  onChange={e => setNotifyPartyName(e.target.value)}
+                  className={inputClass}
+                  placeholder="Override or clear"
+                />
+              </FormField>
+            </div>
           </div>
 
           {/* Line items */}
@@ -480,39 +501,24 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
             </div>
           </div>
 
-          {/* Banking + notify */}
+          {/* Banking (Notify party moved up to the Header section) */}
           <div className={sectionClass}>
-            <Label className={labelClass}>Banking &amp; notify</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <FormField>
-                <Label className={labelClass}>Bank (pay-to)</Label>
-                <SupabaseSelectField
-                  source={{
-                    table: 'banks',
-                    valueColumn: 'id',
-                    labelColumn: 'name',
-                    secondaryColumn: 'code',
-                    scopeByCompany: true,
-                    companyIdColumn: 'company_id',
-                  }}
-                  value={bankId}
-                  onPick={v => setBankId(v)}
-                />
-              </FormField>
-              <FormField>
-                <Label className={labelClass}>Notify party (customer)</Label>
-                <select value={notifyPartyId}
-                  onChange={e => selectNotifyParty(e.target.value)}
-                  className={inputClass + ' w-full appearance-none'}>
-                  <option value="">— none —</option>
-                  {[...availableCustomers].sort((a, b) => a.name.localeCompare(b.name))
-                    .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </FormField>
-            </div>
-            {notifyPartyName && (
-              <p className="text-[11px] text-slate-500">Notify: {notifyPartyName}</p>
-            )}
+            <Label className={labelClass}>Banking</Label>
+            <FormField>
+              <Label className={labelClass}>Bank (pay-to)</Label>
+              <SupabaseSelectField
+                source={{
+                  table: 'banks',
+                  valueColumn: 'id',
+                  labelColumn: 'name',
+                  secondaryColumn: 'code',
+                  scopeByCompany: true,
+                  companyIdColumn: 'company_id',
+                }}
+                value={bankId}
+                onPick={v => setBankId(v)}
+              />
+            </FormField>
           </div>
 
           {/* Notes + signatures */}
