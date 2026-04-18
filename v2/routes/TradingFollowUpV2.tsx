@@ -46,10 +46,22 @@ const formatQty = (lbs: number, unit: Unit): string => {
 
 const unitLabel = (unit: Unit) => (unit === 'KGS' ? 'KGS' : 'LBS');
 
+// Product-name key: normalizeName + drops parenthesized qualifiers
+// (e.g. "(New)", "(Original)") since those are data-entry variants
+// of the same underlying product, not a different SKU.
+const productKey = (s: string | undefined | null): string =>
+  (s || '')
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[.,'"`\-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 const orderItems = (so: SalesOrder) =>
   (so.items ?? []).map(i => ({
     productName: String((i as { productName?: string }).productName ?? '').trim(),
     quantity: toNum((i as { quantity?: unknown }).quantity),
+    total:    toNum((i as { total?: unknown }).total),
   }));
 
 const invoiceItems = (inv: Invoice) =>
@@ -175,6 +187,61 @@ const TradingFollowUpV2: React.FC = () => {
       return s + (fromItems || toNum(inv.grossWeight));
     }, 0);
     return { totalOrdered, totalShipped, pending: totalOrdered - totalShipped, qtyOrdered, qtyShipped };
+  }, [customerOrders, customerInvoices]);
+
+  // Per-product aggregation — sum quantities and amounts across
+  // orders and invoices, keyed by a normalized product name so
+  // minor spelling variants merge. Mirror v1 SalesFollowUp.
+  interface ProductRow {
+    productName: string;
+    orderedLbs: number;
+    orderedAmount: number;
+    shippedLbs: number;
+    shippedAmount: number;
+  }
+  const productSummary = useMemo<ProductRow[]>(() => {
+    const map = new Map<string, ProductRow>();
+    const keyFor = (name: string) => productKey(name) || '__unnamed__';
+    const ensure = (name: string): ProductRow => {
+      const k = keyFor(name);
+      let row = map.get(k);
+      if (!row) {
+        row = {
+          productName: name || '(unspecified)',
+          orderedLbs: 0, orderedAmount: 0, shippedLbs: 0, shippedAmount: 0,
+        };
+        map.set(k, row);
+      }
+      return row;
+    };
+    for (const so of customerOrders) {
+      for (const item of orderItems(so)) {
+        const row = ensure(item.productName);
+        row.orderedLbs    += item.quantity;
+        row.orderedAmount += item.total;
+      }
+    }
+    for (const inv of customerInvoices) {
+      const items = invoiceItems(inv);
+      if (items.length === 0) continue;
+      for (const item of items) {
+        const row = ensure(item.productName);
+        row.shippedLbs += item.quantity;
+      }
+      // Split invoice total proportionally by quantity so per-
+      // product shipped amount approximates without needing item-
+      // level unit price parsed out of the JSON blob.
+      const invQtyTotal = items.reduce((s, i) => s + i.quantity, 0);
+      const invAmount   = toNum(inv.totalAmount);
+      if (invQtyTotal > 0 && invAmount > 0) {
+        for (const item of items) {
+          const row = ensure(item.productName);
+          row.shippedAmount += invAmount * (item.quantity / invQtyTotal);
+        }
+      }
+    }
+    return Array.from(map.values())
+      .sort((a, b) => (b.orderedLbs + b.shippedLbs) - (a.orderedLbs + a.shippedLbs));
   }, [customerOrders, customerInvoices]);
 
   const loading = customers.isLoading || salesOrders.isLoading || invoices.isLoading;
@@ -405,6 +472,77 @@ const TradingFollowUpV2: React.FC = () => {
               </table>
             </div>
           )}
+        </Card>
+      )}
+
+      {/* Per-Product Summary — ordered vs shipped, aggregated by product */}
+      {generated && selectedCustomer && productSummary.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div>
+              <CardTitle>Per-Product Summary</CardTitle>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                Ordered vs invoiced quantities and amounts, aggregated by product.
+              </div>
+            </div>
+          </CardHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px]">
+              <thead className="bg-[#0f0f0f] border-b border-[#1f1f1f]">
+                <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+                  <th className="px-3 py-2 font-medium">Product</th>
+                  <th className="px-3 py-2 font-medium text-right">Ordered ({unitLabel(unit)})</th>
+                  <th className="px-3 py-2 font-medium text-right">Ordered $</th>
+                  <th className="px-3 py-2 font-medium text-right">Shipped ({unitLabel(unit)})</th>
+                  <th className="px-3 py-2 font-medium text-right">Shipped $</th>
+                  <th className="px-3 py-2 font-medium text-right">Pending ({unitLabel(unit)})</th>
+                  <th className="px-3 py-2 font-medium text-right">Pending $</th>
+                </tr>
+              </thead>
+              <tbody>
+                {productSummary.map(row => {
+                  const pendLbs    = row.orderedLbs    - row.shippedLbs;
+                  const pendAmount = row.orderedAmount - row.shippedAmount;
+                  return (
+                    <tr key={row.productName} className="border-b border-[#141414] hover:bg-[#0f0f0f] transition-colors">
+                      <td className="px-3 py-1.5 text-slate-200 truncate max-w-[280px]" title={row.productName}>
+                        {row.productName}
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-slate-300">{formatQty(row.orderedLbs, unit)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-slate-100">{formatCurrency(row.orderedAmount)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-slate-300">{formatQty(row.shippedLbs, unit)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-emerald-300">{formatCurrency(row.shippedAmount)}</td>
+                      <td className={cn('px-3 py-1.5 text-right tabular-nums', pendLbs > 0 ? 'text-amber-300' : 'text-slate-500')}>
+                        {formatQty(Math.max(pendLbs, 0), unit)}
+                      </td>
+                      <td className={cn('px-3 py-1.5 text-right tabular-nums font-medium', pendAmount > 0 ? 'text-amber-300' : 'text-slate-500')}>
+                        {formatCurrency(Math.max(pendAmount, 0))}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-[#0f0f0f] border-t-2 border-[#1f1f1f]">
+                <tr className="text-[11.5px]">
+                  <td className="px-3 py-2 font-semibold text-slate-300">TOTALS</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">
+                    {formatQty(productSummary.reduce((s, r) => s + r.orderedLbs, 0), unit)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">
+                    {formatCurrency(productSummary.reduce((s, r) => s + r.orderedAmount, 0))}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">
+                    {formatQty(productSummary.reduce((s, r) => s + r.shippedLbs, 0), unit)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-300">
+                    {formatCurrency(productSummary.reduce((s, r) => s + r.shippedAmount, 0))}
+                  </td>
+                  <td className="px-3 py-2" />
+                  <td className="px-3 py-2" />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </Card>
       )}
 
