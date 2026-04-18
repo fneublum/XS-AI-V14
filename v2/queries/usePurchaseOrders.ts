@@ -1,37 +1,61 @@
-// Phase 3B — Purchase orders list.
-//
-// Schema comes from services/schema.ts:606. The real table uses `id` as
-// the PO number, and `supplierName` / `orderDate` (not vendor/date).
+// Phase 3B — Purchase orders. Full v1 field parity.
 
 import { useCompany } from '../providers/CompanyProvider';
 import { getSupabaseClient } from '../../services/supabase';
 import { useSupabaseQuery } from './useSupabaseQuery';
+import type { LineItem } from '../components/LineItemsEditor';
 
 export interface PurchaseOrder {
   id: string;
+  companyId: string | null;
+  supplierId: string | null;
   supplierName: string;
   status: string;
   orderDate: string;
   expectedDeliveryDate: string | null;
   paymentTerms: string | null;
+  items: LineItem[];
   totalAmount: number;
   currency: string;
+  notes: string | null;
 }
 
 interface RawRow {
   id: string;
+  companyId: string | null;
+  supplierId: string | null;
   supplierName: string | null;
   status: string | null;
   orderDate: string | null;
   expectedDeliveryDate: string | null;
   paymentTerms: string | null;
-  totalAmount: number | null;
+  items: unknown;
+  totalAmount: number | string | null;
   currency: string | null;
+  notes: string | null;
 }
 
 function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
   return companyId === 'ALL' ? q : (q.eq('"companyId"', companyId) as Q);
 }
+
+const parseItems = (raw: unknown): LineItem[] => {
+  try {
+    let arr: unknown = raw;
+    if (typeof raw === 'string') arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.map((r: any) => ({
+      productId: r?.productId ?? undefined,
+      productName: r?.productName ?? r?.name ?? '',
+      customerDescription: r?.customerDescription ?? r?.description ?? '',
+      hsCode: r?.hsCode ?? '',
+      grade: r?.grade ?? '',
+      quantity: Number(r?.quantity) || 0,
+      unitPrice: Number(r?.unitPrice ?? r?.price) || 0,
+      total: Number(r?.total) || ((Number(r?.quantity) || 0) * (Number(r?.unitPrice ?? r?.price) || 0)),
+    }));
+  } catch { return []; }
+};
 
 export function usePurchaseOrders(search?: string) {
   const { currentCompanyId } = useCompany();
@@ -44,7 +68,7 @@ export function usePurchaseOrders(search?: string) {
       let q = scopeByCompany(
         supabase
           .from('purchase_orders')
-          .select('id, supplierName, status, orderDate, expectedDeliveryDate, paymentTerms, totalAmount, currency')
+          .select('id, companyId, supplierId, supplierName, status, orderDate, expectedDeliveryDate, paymentTerms, items, totalAmount, currency, notes')
           .order('orderDate', { ascending: false, nullsFirst: false })
           .limit(200),
         currentCompanyId,
@@ -61,13 +85,17 @@ export function usePurchaseOrders(search?: string) {
 
       return ((data as RawRow[] | null) ?? []).map(r => ({
         id: r.id,
+        companyId: r.companyId,
+        supplierId: r.supplierId,
         supplierName: r.supplierName ?? '—',
         status: r.status ?? 'PENDING',
         orderDate: r.orderDate ?? '',
         expectedDeliveryDate: r.expectedDeliveryDate,
         paymentTerms: r.paymentTerms,
+        items: parseItems(r.items),
         totalAmount: Number(r.totalAmount) || 0,
         currency: r.currency ?? 'USD',
+        notes: r.notes,
       }));
     },
   );

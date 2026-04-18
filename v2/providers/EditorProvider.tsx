@@ -12,6 +12,7 @@ import { Supplier } from '../queries/useSuppliers';
 import { Invoice } from '../queries/useInvoices';
 import { PurchaseOrder } from '../queries/usePurchaseOrders';
 import { CommissionRow } from '../queries/useCommissions';
+import { Product } from '../queries/useProducts';
 
 export type EditorMode = 'edit' | 'create';
 
@@ -52,6 +53,11 @@ interface EditorContextValue {
   openCommission: (c: CommissionRow) => void;
   closeCommission: () => void;
 
+  product: Slot<Product>;
+  openProduct: (p: Product) => void;
+  openProductCreate: () => void;
+  closeProduct: () => void;
+
   // Legacy getters (kept so existing drawer components don't need to
   // change their destructure).
   editingSalesOrder: SalesOrder | null;
@@ -60,6 +66,7 @@ interface EditorContextValue {
   editingInvoice: Invoice | null;
   editingPurchaseOrder: PurchaseOrder | null;
   editingCommission: CommissionRow | null;
+  editingProduct: Product | null;
 }
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -72,67 +79,156 @@ export const useEditor = (): EditorContextValue => {
 
 export const EMPTY_CUSTOMER: Customer = {
   id: '',
+  companyId: null,
   name: '',
+  nickname: null,
+  taxId: null,
+  contactPerson: null,
   email: null,
   phone: null,
-  country: null,
+  location: null,
   city: null,
-  pod: null,
-  paymentTerms: null,
+  state: null,
+  zip: null,
+  country: null,
+  creditLimit: 0,
+  paymentTerms: 'Net 30',
+  status: 'Active',
+  totalVolumeLBS: 0,
   lastOrderDate: null,
+  sharedWith: [],
+  pod: null,
 };
 
 export const EMPTY_SUPPLIER: Supplier = {
   id: '',
+  companyId: null,
   name: '',
+  taxId: null,
+  contactPerson: null,
   email: null,
   phone: null,
-  country: null,
+  location: null,
   city: null,
-  categories: null,
-  rating: null,
-  paymentTerms: null,
+  state: null,
+  zip: null,
+  country: null,
+  categories: [],
+  rating: 3,
+  paymentTerms: 'Net 30 Days',
 };
 
 export const EMPTY_SALES_ORDER: SalesOrder = {
   id: '',
-  orderNumber: '',
+  companyId: null,
+  customerId: null,
   customerName: '',
-  status: 'DRAFT',
+  orderNumber: '',
+  orderDate: new Date().toISOString().slice(0, 10),
+  orderType: 'SPOT',
+  status: 'PENDING',
+  items: [],
   totalAmount: 0,
   currency: 'USD',
-  orderDate: new Date().toISOString().slice(0, 10),
+  paymentTerms: 'Net 30 Days',
+  incoterm: 'FOB',
+  notes: null,
+  createdBy: null,
+  approvedBy: null,
   createdAt: '',
-  paymentTerms: null,
-  incoterm: null,
+  saleType: 'LOCAL',
+  deliveryMethod: null,
+  deliveryAddress: null,
   deliveryDate: null,
+  pod: null,
+  poa: null,
+  pickupLocation: null,
+  bankId: null,
+  notifyPartyId: null,
+  notifyPartyName: null,
 };
 
 export const EMPTY_INVOICE: Invoice = {
   id: '',
+  companyId: null,
   invoiceNumber: '',
-  soldTo: null,
-  billToName: null,
   invoiceDate: new Date().toISOString().slice(0, 10),
-  paymentTerms: null,
-  incoterm: null,
+  dateOrder: null,
+  shipperName: null,
+  shipperAddress: null,
+  soldTo: null,
+  shipTo: null,
+  consignee: null,
+  billToName: null,
+  paymentTerms: 'Net 30 Days',
+  incoterm: 'FOB',
+  incoterms: null,
+  customerPo: null,
+  carrier: null,
+  transportRef: null,
+  freightTerms: null,
+  items: [],
+  grossWeight: null,
+  netWeight: null,
+  tareWeight: null,
+  totalQuantity: null,
+  subtotal: 0,
   totalAmount: 0,
   currency: 'USD',
-  soNumber: null,
-  plNumber: null,
+  remitTo: null,
+  bankName: null,
+  bankAddress: null,
+  swiftCode: null,
+  routingNumber: null,
+  accountNumber: null,
+  originalDocument: null,
+  supplier: null,
+  shipper: null,
+  date: null,
   bookingNumber: null,
+  pod: null,
+  poa: null,
+  plNumber: null,
+  soNumber: null,
+  memo: null,
+  containers: null,
   createdAt: '',
+};
+
+export const EMPTY_PRODUCT: Product = {
+  id: '',
+  companyId: null,
+  name: '',
+  supplierProductName: null,
+  description: null,
+  sku: null,
+  category: 'Resin',
+  grade: '',
+  hsCode: null,
+  supplier: '',
+  price: 0,
+  stockStatus: 'Available',
+  specs: { form: 'Pellets' },
+  tdsFile: null,
+  tdsUrl: null,
+  sharedWith: [],
+  imageIds: [],
+  productType: 'resale',
 };
 
 export const EMPTY_PURCHASE_ORDER: PurchaseOrder = {
   id: '',
+  companyId: null,
+  supplierId: null,
   supplierName: '',
-  status: 'DRAFT',
+  status: 'PENDING',
   orderDate: new Date().toISOString().slice(0, 10),
   expectedDeliveryDate: null,
-  paymentTerms: null,
+  paymentTerms: 'Net 30 Days',
+  items: [],
   totalAmount: 0,
   currency: 'USD',
+  notes: null,
 };
 
 export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -142,6 +238,7 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [invoice,       setInvoice]  = useState<Slot<Invoice>>(emptySlot);
   const [purchaseOrder, setPO]       = useState<Slot<PurchaseOrder>>(emptySlot);
   const [commission, setCommission]  = useState<Slot<CommissionRow>>(emptySlot);
+  const [product, setProduct]        = useState<Slot<Product>>(emptySlot);
 
   const value = useMemo<EditorContextValue>(() => ({
     salesOrder,
@@ -173,6 +270,11 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     openCommission:  (c) => setCommission({ entity: c, mode: 'edit' }),
     closeCommission: ()  => setCommission(emptySlot),
 
+    product,
+    openProduct:       (p) => setProduct({ entity: p, mode: 'edit' }),
+    openProductCreate: ()  => setProduct({ entity: EMPTY_PRODUCT, mode: 'create' }),
+    closeProduct:      ()  => setProduct(emptySlot),
+
     // Legacy getters.
     editingSalesOrder:    salesOrder.entity,
     editingCustomer:      customer.entity,
@@ -180,7 +282,8 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     editingInvoice:       invoice.entity,
     editingPurchaseOrder: purchaseOrder.entity,
     editingCommission:    commission.entity,
-  }), [salesOrder, customer, supplier, invoice, purchaseOrder, commission]);
+    editingProduct:       product.entity,
+  }), [salesOrder, customer, supplier, invoice, purchaseOrder, commission, product]);
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
 };

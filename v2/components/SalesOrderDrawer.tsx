@@ -1,137 +1,232 @@
-// Phase 3B — Sales Order editor drawer (create + edit).
+// Phase 3B — Sales Order editor drawer. Full v1 parity.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Mail } from 'lucide-react';
 import {
   Drawer, Input, FormField, Label, Button, Badge, ConfirmDialog,
 } from '../primitives';
-import { SalesOrder } from '../queries/useSalesOrders';
-import { useUpdateSalesOrder } from '../queries/useSalesOrderMutations';
-import { useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
+import { useCompanies } from '../queries/useCompanies';
+import { useCustomers } from '../queries/useCustomers';
+import { SalesOrder } from '../queries/useSalesOrders';
+import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
+import { LineItemsEditor, LineItem, computeSubtotal, sanitizeItems } from './LineItemsEditor';
+import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
 import type { EditorMode } from '../providers/EditorProvider';
 
-const STATUS_OPTIONS = ['DRAFT', 'PENDING', 'APPROVED', 'FULFILLED', 'REJECTED', 'CANCELLED'] as const;
+const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'REJECTED', 'FULFILLED', 'BOOKED'];
+const ORDER_TYPES = ['SPOT', 'CONTRACT'];
+const SALE_TYPES = ['LOCAL', 'EXPORT'];
+const INCOTERMS = ['FOB', 'CFR', 'CIF', 'EXW', 'DAP', 'DDP', 'FCA', 'CPT', 'CIP', 'FAS'];
+const DELIVERY_METHODS = ['PICKUP', 'DELIVERY', 'DOOR_TO_PORT', 'PORT_TO_DOOR', 'DOOR_TO_DOOR'];
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'BRL', 'MXN', 'CNY', 'INR'];
+const PAYMENT_TERMS = [
+  'Net 30 Days', 'Net 60 Days', 'Prepaid', 'L/C at Sight', 'L/C 60 Days',
+  'Cash Against Documents', 'Cash on Delivery',
+  'T/T 30 Days After B/L', '100% T/T in Advance',
+  '40% Advance + 60% Cash Against Documents', '50% Advance + 50% on Cash Against Documents',
+  '30% Advance + 70% on Cash Against Documents',
+  'Advance + Cash Against Documents',
+];
 
-const fmtCurrency = (n: number, currency: string) => {
+const inputClass =
+  'h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 rounded-md px-2 ' +
+  'placeholder:text-slate-600 focus:ring-1 focus:ring-indigo-500 outline-none';
+
+const labelClass = 'text-[11px] text-slate-500 uppercase tracking-wider font-medium';
+const sectionClass = 'p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f] space-y-3';
+
+const fmtMoney = (n: number, currency: string) => {
   try {
     return n.toLocaleString('en-US', {
-      style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0,
+      style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2,
     });
-  } catch { return `${currency} ${n.toLocaleString('en-US')}`; }
+  } catch { return `${currency} ${n.toFixed(2)}`; }
 };
 
-interface SalesOrderDrawerProps {
+interface Props {
   order: SalesOrder | null;
   mode: EditorMode;
   onOpenChange: (open: boolean) => void;
 }
 
-export const SalesOrderDrawer: React.FC<SalesOrderDrawerProps> = ({ order, mode, onOpenChange }) => {
-  const [orderNumber, setOrderNumber] = useState('');
-  const [customerName, setCustomerName] = useState('');
-  const [totalAmount, setTotalAmount] = useState('');
-  const [currency, setCurrency] = useState('USD');
-  const [status, setStatus] = useState('');
-  const [paymentTerms, setPaymentTerms] = useState('');
-  const [incoterm, setIncoterm] = useState('');
-  const [deliveryDate, setDeliveryDate] = useState('');
-  const [confirmDelete, setConfirmDelete] = useState(false);
+export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange }) => {
   const toast = useToast();
   const { currentCompanyId } = useCompany();
-  const update = useUpdateSalesOrder();
+  const companies = useCompanies();
+  const customers = useCustomers();
+
+  // Header
+  const [companyId, setCompanyId]           = useState<string>(currentCompanyId !== 'ALL' ? currentCompanyId : '');
+  const [orderNumber, setOrderNumber]       = useState('');
+  const [customerId, setCustomerId]         = useState('');
+  const [customerName, setCustomerName]     = useState('');
+  const [orderDate, setOrderDate]           = useState<string>(new Date().toISOString().slice(0, 10));
+  const [orderType, setOrderType]           = useState('SPOT');
+  const [status, setStatus]                 = useState('PENDING');
+  const [saleType, setSaleType]             = useState('LOCAL');
+
+  // Items
+  const [items, setItems] = useState<LineItem[]>([]);
+
+  // Commercial
+  const [currency, setCurrency]             = useState('USD');
+  const [paymentTerms, setPaymentTerms]     = useState('Net 30 Days');
+  const [incoterm, setIncoterm]             = useState('FOB');
+
+  // Delivery
+  const [deliveryMethod, setDeliveryMethod] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryDate, setDeliveryDate]     = useState('');
+  const [pod, setPod]                       = useState('');
+  const [poa, setPoa]                       = useState('');
+  const [pickupLocation, setPickupLocation] = useState('');
+
+  // Banking / notify party
+  const [bankId, setBankId]                 = useState('');
+  const [notifyPartyId, setNotifyPartyId]   = useState('');
+  const [notifyPartyName, setNotifyPartyName] = useState('');
+
+  // Notes / signatures
+  const [notes, setNotes]                   = useState('');
+  const [createdBy, setCreatedBy]           = useState('');
+  const [approvedBy, setApprovedBy]         = useState('');
+
+  // UX
+  const [confirmDelete, setConfirmDelete]   = useState(false);
+  const [emailDraft, setEmailDraft]         = useState<EmailDraft | null>(null);
+
+  const update = useEntityUpdate<{ id: string } & Record<string, unknown>>({
+    table: 'sales_orders',
+    listQueryKeys: ['salesOrders', 'recentSalesOrders', 'dashboardStats'],
+  });
+  const insert = useEntityInsert<Record<string, unknown>>({
+    table: 'sales_orders',
+    listQueryKeys: ['salesOrders', 'recentSalesOrders', 'dashboardStats'],
+    idPrefix: 'SO',
+    // sales_orders does have createdAt in schema; keep default.
+  });
   const del = useEntityDelete({
     table: 'sales_orders',
     listQueryKeys: ['salesOrders', 'recentSalesOrders', 'dashboardStats'],
   });
-  const insert = useEntityInsert<{
-    companyId: string; orderNumber: string; customerName: string;
-    status: string; totalAmount: number; currency: string;
-    orderDate: string; paymentTerms: string | null;
-    incoterm: string | null; deliveryDate: string | null;
-  }>({ table: 'sales_orders', listQueryKeys: ['salesOrders', 'recentSalesOrders', 'dashboardStats'], idPrefix: 'SO' });
 
   useEffect(() => {
     if (!order) return;
+    setCompanyId(order.companyId ?? (currentCompanyId !== 'ALL' ? currentCompanyId : ''));
     setOrderNumber(order.orderNumber ?? '');
+    setCustomerId(order.customerId ?? '');
     setCustomerName(order.customerName ?? '');
-    setTotalAmount(String(order.totalAmount ?? ''));
+    setOrderDate(order.orderDate ?? new Date().toISOString().slice(0, 10));
+    setOrderType(order.orderType ?? 'SPOT');
+    setStatus(order.status ?? 'PENDING');
+    setSaleType(order.saleType ?? 'LOCAL');
+    setItems(order.items ?? []);
     setCurrency(order.currency ?? 'USD');
-    setStatus(order.status ?? 'DRAFT');
-    setPaymentTerms(order.paymentTerms ?? '');
-    setIncoterm(order.incoterm ?? '');
+    setPaymentTerms(order.paymentTerms ?? 'Net 30 Days');
+    setIncoterm(order.incoterm ?? 'FOB');
+    setDeliveryMethod(order.deliveryMethod ?? '');
+    setDeliveryAddress(order.deliveryAddress ?? '');
     setDeliveryDate(order.deliveryDate ?? '');
+    setPod(order.pod ?? '');
+    setPoa(order.poa ?? '');
+    setPickupLocation(order.pickupLocation ?? '');
+    setBankId(order.bankId ?? '');
+    setNotifyPartyId(order.notifyPartyId ?? '');
+    setNotifyPartyName(order.notifyPartyName ?? '');
+    setNotes(order.notes ?? '');
+    setCreatedBy(order.createdBy ?? '');
+    setApprovedBy(order.approvedBy ?? '');
   }, [order?.id, mode]);
 
-  const totalNum = Number(totalAmount);
-  const totalValid = totalAmount === '' || (Number.isFinite(totalNum) && totalNum >= 0);
+  const availableCompanies = companies.data ?? [];
+  const availableCustomers = customers.data ?? [];
+  const isSystem = currentCompanyId === 'ALL';
 
-  const pending = update.isPending || insert.isPending;
+  const subtotal = useMemo(() => computeSubtotal(items), [items]);
 
-  const dirty = mode === 'create'
-    ? customerName.trim().length > 0 && orderNumber.trim().length > 0
-    : order && (
-        (order.status ?? '') !== status ||
-        (order.paymentTerms ?? '') !== paymentTerms ||
-        (order.incoterm ?? '') !== incoterm ||
-        (order.deliveryDate ?? '') !== deliveryDate
-      );
+  const canSave = customerName.trim() !== '' && orderNumber.trim() !== '';
+  const pending = update.isPending || insert.isPending || del.isPending;
 
-  const onSave = () => {
-    if (!order || !totalValid) return;
-    if (mode === 'create') {
-      const companyId = currentCompanyId === 'ALL' ? 'DEFAULT' : currentCompanyId;
-      insert.mutate(
-        {
-          companyId,
-          orderNumber,
-          customerName,
-          status,
-          totalAmount: Number.isFinite(totalNum) ? totalNum : 0,
-          currency,
-          orderDate: new Date().toISOString().slice(0, 10),
-          paymentTerms: paymentTerms || null,
-          incoterm: incoterm || null,
-          deliveryDate: deliveryDate || null,
-        },
-        {
-          onSuccess: () => {
-            toast.push({ kind: 'success', title: 'Order created', description: orderNumber });
-            onOpenChange(false);
-          },
-          onError: (err) => toast.push({ kind: 'error', title: 'Create failed', description: err.message }),
-        },
-      );
-    } else {
-      update.mutate(
-        {
-          id: order.id,
-          status,
-          paymentTerms: paymentTerms || null,
-          incoterm: incoterm || null,
-          deliveryDate: deliveryDate || null,
-        },
-        {
-          onSuccess: () => {
-            toast.push({ kind: 'success', title: 'Saved', description: `${order.orderNumber} updated.` });
-            onOpenChange(false);
-          },
-          onError: (err) => toast.push({ kind: 'error', title: 'Update failed', description: err.message }),
-        },
-      );
+  const selectCustomer = (id: string) => {
+    setCustomerId(id);
+    const c = availableCustomers.find(c => c.id === id);
+    if (c) {
+      setCustomerName(c.name);
+      if (c.paymentTerms) setPaymentTerms(c.paymentTerms);
+      if (c.pod) setPod(c.pod);
     }
   };
 
-  const title = mode === 'create' ? 'New sales order' : (order?.orderNumber || 'Sales order');
-  const description = mode === 'create'
-    ? 'Create a sales order in the current workspace.'
-    : (order?.customerName || undefined);
+  const selectNotifyParty = (id: string) => {
+    setNotifyPartyId(id);
+    const c = availableCustomers.find(c => c.id === id);
+    if (c) setNotifyPartyName(c.name);
+  };
 
-  const onDelete = () => {
+  const buildPayload = () => ({
+    companyId: companyId || currentCompanyId,
+    customerId: customerId || null,
+    customerName: customerName.trim(),
+    orderNumber: orderNumber.trim(),
+    orderDate: orderDate || null,
+    orderType: orderType || null,
+    status,
+    saleType: saleType || null,
+    items: sanitizeItems(items),
+    totalAmount: subtotal,
+    currency,
+    paymentTerms: paymentTerms || null,
+    incoterm: incoterm || null,
+    deliveryMethod: deliveryMethod || null,
+    deliveryAddress: deliveryAddress || null,
+    deliveryDate: deliveryDate || null,
+    pod: pod || null,
+    poa: poa || null,
+    pickupLocation: pickupLocation || null,
+    bankId: bankId || null,
+    notifyPartyId: notifyPartyId || null,
+    notifyPartyName: notifyPartyName || null,
+    notes: notes || null,
+    createdBy: createdBy || null,
+    approvedBy: approvedBy || null,
+  });
+
+  const save = () => {
+    if (!canSave) {
+      toast.push({ kind: 'warning', title: 'Order # and customer are required' });
+      return;
+    }
+    const payload = buildPayload();
+    if (mode === 'create') {
+      insert.mutate(payload, {
+        onSuccess: () => {
+          toast.push({ kind: 'success', title: 'Sales order created', description: payload.orderNumber });
+          onOpenChange(false);
+        },
+        onError: (err) => toast.push({
+          kind: 'error', title: 'Create failed', description: err.message,
+        }),
+      });
+    } else if (order) {
+      update.mutate({ id: order.id, ...payload }, {
+        onSuccess: () => {
+          toast.push({ kind: 'success', title: 'Saved', description: payload.orderNumber });
+          onOpenChange(false);
+        },
+        onError: (err) => toast.push({
+          kind: 'error', title: 'Save failed', description: err.message,
+        }),
+      });
+    }
+  };
+
+  const deleteOrder = () => {
     if (!order) return;
     del.mutate(order.id, {
       onSuccess: () => {
-        toast.push({ kind: 'success', title: 'Deleted', description: order.orderNumber || order.id });
+        toast.push({ kind: 'success', title: 'Deleted', description: order.orderNumber });
         setConfirmDelete(false);
         onOpenChange(false);
       },
@@ -142,151 +237,302 @@ export const SalesOrderDrawer: React.FC<SalesOrderDrawerProps> = ({ order, mode,
     });
   };
 
+  const sendEmail = () => {
+    if (!order && mode !== 'edit') return;
+    const selectedCustomer = availableCustomers.find(c => c.id === customerId);
+    setEmailDraft({
+      to: selectedCustomer?.email ?? '',
+      subject: `Sales Order ${orderNumber} — ${customerName}`,
+      body: [
+        `Hello ${customerName},`,
+        '',
+        `Please find the details of Sales Order ${orderNumber}:`,
+        `Status: ${status}`,
+        `Incoterm: ${incoterm}`,
+        `Payment terms: ${paymentTerms}`,
+        `Items: ${items.length}`,
+        `Total: ${fmtMoney(subtotal, currency)}`,
+        deliveryDate ? `Delivery: ${deliveryDate}` : '',
+        '',
+        'Best regards',
+      ].filter(Boolean).join('\n'),
+      contextLabel: `SO ${orderNumber}`,
+    });
+  };
+
+  if (!order) return null;
+
   return (
     <>
-    <Drawer
-      open={!!order}
-      onOpenChange={onOpenChange}
-      title={title}
-      description={description}
-      footer={
-        <>
-          {mode === 'edit' && (
+      <Drawer
+        open={!!order}
+        onOpenChange={onOpenChange}
+        title={mode === 'create' ? 'New sales order' : `SO ${order.orderNumber || order.id}`}
+        description={mode === 'edit' ? `${customerName} · ${status}` : 'Create a new sales order.'}
+        widthClass="w-[min(98vw,960px)]"
+        footer={
+          <>
+            {mode === 'edit' && (
+              <Button
+                variant="secondary" size="sm"
+                onClick={() => setConfirmDelete(true)}
+                disabled={pending}
+                className="bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10"
+              >
+                Delete
+              </Button>
+            )}
+            {mode === 'edit' && (
+              <Button
+                variant="secondary" size="sm"
+                onClick={sendEmail}
+                disabled={pending}
+                className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
+              >
+                <Mail size={12} /> Email
+              </Button>
+            )}
             <Button
               variant="secondary" size="sm"
-              onClick={() => setConfirmDelete(true)}
-              disabled={pending || del.isPending}
-              className="bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10"
+              onClick={() => onOpenChange(false)}
+              disabled={pending}
+              className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
             >
-              Delete
+              Cancel
             </Button>
-          )}
-          <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}
-            className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]">
-            Cancel
-          </Button>
-          <Button size="sm" onClick={onSave}
-            disabled={!dirty || !totalValid || pending}
-            loading={pending}
-            className="ml-auto bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40"
-          >
-            {pending ? 'Saving…' : mode === 'create' ? 'Create' : 'Save changes'}
-          </Button>
-        </>
-      }
-    >
-      {order && (
-        <div className="space-y-5">
-          {mode === 'create' ? (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <FormField>
-                  <Label required>Order #</Label>
-                  <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)}
-                    autoFocus
-                    placeholder="SO-2026-001"
-                    className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 font-mono tabular-nums placeholder:text-slate-500" />
-                </FormField>
-                <FormField>
-                  <Label required>Customer</Label>
-                  <Input value={customerName} onChange={e => setCustomerName(e.target.value)}
-                    className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200" />
-                </FormField>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <FormField>
-                  <Label>Total</Label>
-                  <Input type="number" min={0} step={0.01}
-                    value={totalAmount} onChange={e => setTotalAmount(e.target.value)}
-                    invalid={!totalValid}
-                    className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 font-mono tabular-nums" />
-                </FormField>
-                <FormField>
-                  <Label>Currency</Label>
-                  <Input value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())}
-                    maxLength={3}
-                    className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 font-mono tabular-nums" />
-                </FormField>
-              </div>
-            </>
-          ) : (
-            <div className="grid grid-cols-2 gap-3 text-[12.5px]">
-              <div className="p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f]">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider">Total</div>
-                <div className="font-mono tabular-nums text-[16px] text-slate-100 mt-1">
-                  {fmtCurrency(order.totalAmount, order.currency)}
-                </div>
-              </div>
-              <div className="p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f]">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider">Ordered</div>
-                <div className="font-mono tabular-nums text-[13px] text-slate-200 mt-1">
-                  {order.orderDate || order.createdAt?.slice(0, 10) || '—'}
-                </div>
-              </div>
+            <Button
+              size="sm"
+              onClick={save}
+              disabled={!canSave || pending}
+              loading={pending}
+              className="ml-auto bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40"
+            >
+              {pending ? 'Saving…' : mode === 'create' ? 'Create order' : 'Save changes'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {/* Header */}
+          <div className={sectionClass}>
+            <Label className={labelClass}>Header</Label>
+            {isSystem && availableCompanies.length > 0 && (
+              <FormField>
+                <Label className={labelClass}>Company</Label>
+                <select value={companyId} onChange={e => setCompanyId(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  <option value="">Select…</option>
+                  {availableCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </FormField>
+            )}
+            <div className="grid grid-cols-3 gap-2">
+              <FormField>
+                <Label className={labelClass}>Order # <span className="text-red-400 ml-1">*</span></Label>
+                <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)}
+                  className={inputClass + ' font-mono tabular-nums'} placeholder="SO-1234" />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Order date</Label>
+                <Input type="date" value={orderDate ? orderDate.slice(0, 10) : ''}
+                  onChange={e => setOrderDate(e.target.value)} className={inputClass} />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Status</Label>
+                <select value={status} onChange={e => setStatus(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </FormField>
             </div>
-          )}
-
-          <FormField>
-            <Label>Status</Label>
-            <div className="flex flex-wrap gap-1.5">
-              {STATUS_OPTIONS.map(opt => (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => setStatus(opt)}
-                  className={
-                    opt === status
-                      ? 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
-                      : 'px-2.5 py-1 rounded-md text-[11px] text-slate-400 border border-[#1f1f1f] hover:text-slate-200 hover:border-[#2a2a2a]'
-                  }
-                >
-                  {opt}
-                </button>
-              ))}
+            <div className="grid grid-cols-3 gap-2">
+              <FormField>
+                <Label className={labelClass}>Customer <span className="text-red-400 ml-1">*</span></Label>
+                <select value={customerId}
+                  onChange={e => selectCustomer(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  <option value="">— typed —</option>
+                  {[...availableCustomers].sort((a, b) => a.name.localeCompare(b.name))
+                    .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Customer name</Label>
+                <Input value={customerName} onChange={e => setCustomerName(e.target.value)}
+                  className={inputClass} />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Order type</Label>
+                <select value={orderType} onChange={e => setOrderType(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  {ORDER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </FormField>
             </div>
-          </FormField>
+          </div>
 
-          <FormField>
-            <Label>Incoterm</Label>
-            <Input value={incoterm} onChange={e => setIncoterm(e.target.value)}
-              placeholder="CFR, FOB, CIF…"
-              className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 placeholder:text-slate-500 font-mono tabular-nums" />
-          </FormField>
+          {/* Line items */}
+          <div className={sectionClass}>
+            <Label className={labelClass}>Line items</Label>
+            <LineItemsEditor
+              items={items}
+              onChange={setItems}
+              currency={currency}
+              showHsCode
+              showCustomerDescription
+            />
+          </div>
 
-          <FormField>
-            <Label>Payment terms</Label>
-            <Input value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)}
-              placeholder="e.g. 50% ADV + 50% CAD"
-              className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 placeholder:text-slate-500" />
-          </FormField>
-
-          <FormField>
-            <Label>Delivery date</Label>
-            <Input type="date"
-              value={(deliveryDate ?? '').slice(0, 10)}
-              onChange={e => setDeliveryDate(e.target.value)}
-              className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 placeholder:text-slate-500" />
-          </FormField>
-
-          {mode === 'edit' && (
-            <div className="pt-2 border-t border-[#1f1f1f] text-[11px] text-slate-500 flex items-center gap-2">
-              <span>Currency</span>
-              <Badge variant="neutral">{order.currency}</Badge>
-              <span className="ml-auto font-mono tabular-nums text-slate-600">#{order.id.slice(0, 8)}</span>
+          {/* Commercial */}
+          <div className={sectionClass}>
+            <Label className={labelClass}>Commercial</Label>
+            <div className="grid grid-cols-3 gap-2">
+              <FormField>
+                <Label className={labelClass}>Currency</Label>
+                <select value={currency} onChange={e => setCurrency(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Incoterm</Label>
+                <select value={incoterm} onChange={e => setIncoterm(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  {INCOTERMS.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Sale type</Label>
+                <select value={saleType} onChange={e => setSaleType(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  {SALE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </FormField>
             </div>
-          )}
+            <FormField>
+              <Label className={labelClass}>Payment terms</Label>
+              <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)}
+                className={inputClass + ' w-full appearance-none'}>
+                {PAYMENT_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </FormField>
+          </div>
+
+          {/* Delivery */}
+          <div className={sectionClass}>
+            <Label className={labelClass}>Delivery</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <FormField>
+                <Label className={labelClass}>Delivery method</Label>
+                <select value={deliveryMethod} onChange={e => setDeliveryMethod(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  <option value="">—</option>
+                  {DELIVERY_METHODS.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Delivery date</Label>
+                <Input type="date" value={deliveryDate ? deliveryDate.slice(0, 10) : ''}
+                  onChange={e => setDeliveryDate(e.target.value)} className={inputClass} />
+              </FormField>
+            </div>
+            <FormField>
+              <Label className={labelClass}>Delivery address</Label>
+              <Input value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)}
+                className={inputClass} placeholder="Street, city, country" />
+            </FormField>
+            <div className="grid grid-cols-3 gap-2">
+              <FormField>
+                <Label className={labelClass}>POA (origin)</Label>
+                <Input value={poa} onChange={e => setPoa(e.target.value)}
+                  className={inputClass + ' font-mono tabular-nums'} placeholder="Santos" />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>POD (destination)</Label>
+                <Input value={pod} onChange={e => setPod(e.target.value)}
+                  className={inputClass + ' font-mono tabular-nums'} placeholder="Houston" />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Pickup location</Label>
+                <Input value={pickupLocation} onChange={e => setPickupLocation(e.target.value)}
+                  className={inputClass} placeholder="Address" />
+              </FormField>
+            </div>
+          </div>
+
+          {/* Banking + notify */}
+          <div className={sectionClass}>
+            <Label className={labelClass}>Banking &amp; notify</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <FormField>
+                <Label className={labelClass}>Bank ID</Label>
+                <Input value={bankId} onChange={e => setBankId(e.target.value)}
+                  className={inputClass + ' font-mono tabular-nums'} placeholder="BK-0001" />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Notify party (customer)</Label>
+                <select value={notifyPartyId}
+                  onChange={e => selectNotifyParty(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  <option value="">— none —</option>
+                  {[...availableCustomers].sort((a, b) => a.name.localeCompare(b.name))
+                    .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </FormField>
+            </div>
+            {notifyPartyName && (
+              <p className="text-[11px] text-slate-500">Notify: {notifyPartyName}</p>
+            )}
+          </div>
+
+          {/* Notes + signatures */}
+          <div className={sectionClass}>
+            <Label className={labelClass}>Notes &amp; signatures</Label>
+            <FormField>
+              <Label className={labelClass}>Notes</Label>
+              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
+                className="bg-[#111111] border border-[#1f1f1f] rounded-md px-2 py-1.5 text-[12.5px] text-slate-200 placeholder:text-slate-600 resize-y leading-relaxed w-full"
+                placeholder="Internal notes for this order" />
+            </FormField>
+            <div className="grid grid-cols-2 gap-2">
+              <FormField>
+                <Label className={labelClass}>Created by</Label>
+                <Input value={createdBy} onChange={e => setCreatedBy(e.target.value)} className={inputClass} />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Approved by</Label>
+                <Input value={approvedBy} onChange={e => setApprovedBy(e.target.value)} className={inputClass} />
+              </FormField>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-[#1f1f1f] text-[11px] text-slate-500 flex items-center gap-2">
+            <Badge variant="neutral">sales_orders</Badge>
+            <span className="text-slate-600">
+              Subtotal <span className="font-mono tabular-nums text-slate-300">{fmtMoney(subtotal, currency)}</span>
+            </span>
+            <span className="ml-auto font-mono tabular-nums text-slate-600">
+              {mode === 'create' ? 'new' : `#${order.id.slice(0, 8)}`}
+            </span>
+          </div>
         </div>
-      )}
-    </Drawer>
-    <ConfirmDialog
-      open={confirmDelete}
-      onOpenChange={setConfirmDelete}
-      title={`Delete ${order?.orderNumber ?? 'order'}?`}
-      description="This permanently removes the sales order. Invoices and shipments referencing it will show a blank order link."
-      confirmLabel="Delete"
-      loading={del.isPending}
-      onConfirm={onDelete}
-    />
+      </Drawer>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Delete ${order?.orderNumber ?? 'order'}?`}
+        description="Removes the sales order, its line items and any commission rows that depend on it."
+        confirmLabel="Delete"
+        loading={del.isPending}
+        onConfirm={deleteOrder}
+      />
+
+      <EmailComposeDrawer
+        open={!!emailDraft}
+        onOpenChange={(o) => !o && setEmailDraft(null)}
+        draft={emailDraft}
+      />
     </>
   );
 };

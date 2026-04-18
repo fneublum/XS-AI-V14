@@ -34,13 +34,15 @@ interface ListPageProps<T> {
   emptyAction?: { label: string; onClick: () => void };
   skeletonRows?: number;
   skeletonCols?: number[];
+  /** Renders a right-aligned action column per row (View/Edit/Delete). */
+  rowActions?: (row: T) => React.ReactNode;
 }
 
 export function ListPage<T>({
   title, subtitle, search, setSearch, searchPlaceholder = 'Search',
   cardTitle, cardAction, headerAction, columns, getRowId, data, isLoading, error, onRetry,
   onRowClick, emptyTitle, emptyDescription, emptyAction,
-  skeletonRows = 6, skeletonCols = [160, 220, 100, 60],
+  skeletonRows = 6, skeletonCols = [160, 220, 100, 60], rowActions,
 }: ListPageProps<T>) {
   return (
     <div className="max-w-6xl">
@@ -114,6 +116,7 @@ export function ListPage<T>({
             rows={data}
             getRowId={getRowId}
             onRowClick={onRowClick}
+            rowActions={rowActions}
           />
         )}
       </Card>

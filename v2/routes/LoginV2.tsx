@@ -38,8 +38,11 @@ const LoginV2: React.FC = () => {
     e.preventDefault();
     setError(null);
 
-    const u = username.trim();
-    const p = password;
+    // Match v1 Login normalization: lowercase username, trim password.
+    // auth-issue does a case-sensitive username lookup, so typing
+    // "Felipe" when the row is "felipe" would 401 without this.
+    const u = username.trim().toLowerCase();
+    const p = password.trim();
     if (!u || !p) {
       setError('Please enter your username and password.');
       return;

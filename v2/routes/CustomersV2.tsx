@@ -1,45 +1,120 @@
-// Phase 3B — v2 Customers page. Classic table + search.
+// Phase 3B — v2 Customers page. Full v1 parity + per-column sort/filter.
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  Card, CardHeader, CardTitle, Input, Skeleton, EmptyState, Button,
+  Card, CardHeader, CardTitle, Input, Skeleton, EmptyState, Button, Badge,
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
+import { RowActions } from '../components/RowActions';
+import { useRowDelete } from '../components/useRowDelete';
 import { useCustomers, Customer } from '../queries/useCustomers';
 import { useEditor } from '../providers/EditorProvider';
 
-const columns: DataTableColumn<Customer>[] = [
-  { id: 'name',     header: 'Name',                cell: r => (
-      <span className="text-slate-100 font-medium">{r.name}</span>
-    ) },
-  { id: 'email',    header: 'Email',               cell: r => r.email ?? '—' },
-  { id: 'country',  header: 'Country',             cell: r => r.country ?? '—' },
-  { id: 'pod',      header: 'POD',                 cell: r => (
-      <span className="font-mono tabular-nums text-[11.5px]">{r.pod ?? '—'}</span>
-    ) },
-  { id: 'terms',    header: 'Terms',               cell: r => (
-      <span className="text-slate-400">{r.paymentTerms ?? '—'}</span>
-    ) },
-  { id: 'lastOrd',  header: 'Last order', align: 'right', cell: r => (
-      <span className="text-slate-500 font-mono tabular-nums text-[11px]">
-        {r.lastOrderDate ? new Date(r.lastOrderDate).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'}
-      </span>
-    ) },
-];
+type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
+const statusTone = (s: string | null): BadgeTone => {
+  if (!s) return 'neutral';
+  const u = s.toUpperCase();
+  if (u === 'ACTIVE') return 'success';
+  if (u.includes('RISK')) return 'warning';
+  if (u === 'INACTIVE') return 'neutral';
+  return 'info';
+};
+
+const fmtDate = (iso: string | null): string => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
+};
 
 const CustomersV2: React.FC = () => {
   const [search, setSearch] = useState('');
   const { openCustomer, openCustomerCreate } = useEditor();
   const customers = useCustomers(search);
 
+  const { confirmDelete, deleteDialog } = useRowDelete<Customer>({
+    table: 'customers',
+    listQueryKeys: ['customers'],
+    rowLabel: r => r.name,
+  });
+
+  const columns: DataTableColumn<Customer>[] = useMemo(() => [
+    {
+      id: 'name', header: 'Name', sortable: true, filterable: true,
+      value: r => r.name,
+      cell: r => (
+        <div>
+          <div className="text-slate-100 font-medium">{r.name}</div>
+          {r.nickname && <div className="text-[11px] text-slate-500">{r.nickname}</div>}
+        </div>
+      ),
+    },
+    {
+      id: 'contact', header: 'Contact', sortable: true, filterable: true,
+      value: r => r.contactPerson ?? '',
+      cell: r => r.contactPerson ?? <span className="text-slate-600">—</span>,
+    },
+    {
+      id: 'email', header: 'Email', sortable: true, filterable: true,
+      value: r => r.email ?? '',
+      cell: r => r.email ?? <span className="text-slate-600">—</span>,
+    },
+    {
+      id: 'phone', header: 'Phone', mono: true, sortable: true,
+      value: r => r.phone ?? '',
+      cell: r => r.phone ?? <span className="text-slate-600">—</span>,
+    },
+    {
+      id: 'country', header: 'Country', sortable: true, filterable: true,
+      value: r => r.country ?? '',
+      cell: r => r.country ?? <span className="text-slate-600">—</span>,
+    },
+    {
+      id: 'pod', header: 'POD', mono: true, sortable: true, filterable: true,
+      value: r => r.pod ?? '',
+      cell: r => r.pod ?? <span className="text-slate-600">—</span>,
+    },
+    {
+      id: 'terms', header: 'Terms', sortable: true, filterable: true,
+      value: r => r.paymentTerms ?? '',
+      cell: r => <span className="text-slate-400">{r.paymentTerms ?? '—'}</span>,
+    },
+    {
+      id: 'status', header: 'Status', sortable: true, filterable: true,
+      value: r => r.status ?? '',
+      cell: r => r.status
+        ? <Badge variant={statusTone(r.status)} dot>{r.status}</Badge>
+        : <span className="text-slate-600">—</span>,
+    },
+    {
+      id: 'last', header: 'Last order', align: 'right', sortable: true,
+      value: r => r.lastOrderDate ?? '',
+      cell: r => (
+        <span className="text-slate-500 font-mono tabular-nums text-[11px]">
+          {fmtDate(r.lastOrderDate)}
+        </span>
+      ),
+    },
+  ], []);
+
+  const rowActions = (row: Customer) => (
+    <RowActions
+      onView={() => openCustomer(row)}
+      onEdit={() => openCustomer(row)}
+      onDelete={() => confirmDelete(row)}
+    />
+  );
+
+  const data = customers.data ?? [];
+
   return (
     <div className="max-w-6xl">
-      <div className="flex items-baseline justify-between mb-8">
+      <div className="flex items-baseline justify-between mb-6">
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">Customers</h1>
           <p className="text-[13px] text-slate-500 mt-0.5">
             {customers.data
-              ? `${customers.data.length} shown${search ? ` · filtered by "${search}"` : ''}`
+              ? `${data.length} shown${search ? ` · "${search}"` : ''}`
               : 'Loading…'}
           </p>
         </div>
@@ -60,8 +135,8 @@ const CustomersV2: React.FC = () => {
               type="search"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search name or email"
-              className="h-7 w-64 text-[12px] bg-[#111111] border-[#1f1f1f] text-slate-200 placeholder:text-slate-500"
+              placeholder="Name, email, tax ID, contact"
+              className="h-7 w-72 text-[12px] bg-[#111111] border-[#1f1f1f] text-slate-200 placeholder:text-slate-500"
             />
           </div>
         </CardHeader>
@@ -70,8 +145,8 @@ const CustomersV2: React.FC = () => {
           <div className="p-4 space-y-2">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="flex items-center gap-4">
-                <Skeleton width={180} height={14} />
-                <Skeleton width={220} height={14} />
+                <Skeleton width={200} height={14} />
+                <Skeleton width={160} height={14} />
                 <Skeleton width={100} height={14} />
                 <Skeleton width={60} height={14} className="ml-auto" />
               </div>
@@ -84,29 +159,26 @@ const CustomersV2: React.FC = () => {
             description={customers.error.message}
             action={{ label: 'Retry', onClick: customers.refetch }}
           />
-        ) : !customers.data || customers.data.length === 0 ? (
+        ) : data.length === 0 ? (
           <EmptyState
             title={search ? 'No matches' : 'No customers yet'}
-            description={
-              search
-                ? `Nothing matched "${search}".`
-                : 'Add your first customer to get started.'
-            }
-            action={
-              search
-                ? { label: 'Clear search', onClick: () => setSearch('') }
-                : { label: '+ New customer', onClick: openCustomerCreate }
-            }
+            description={search ? `Nothing matched "${search}".` : 'Add your first customer to get started.'}
+            action={search
+              ? { label: 'Clear search', onClick: () => setSearch('') }
+              : { label: '+ New customer', onClick: openCustomerCreate }}
           />
         ) : (
           <DataTable
             columns={columns}
-            rows={customers.data}
+            rows={data}
             getRowId={r => r.id}
             onRowClick={r => openCustomer(r)}
+            rowActions={rowActions}
+            defaultSort={{ columnId: 'name', direction: 'asc' }}
           />
         )}
       </Card>
+      {deleteDialog}
     </div>
   );
 };

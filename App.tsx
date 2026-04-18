@@ -12,6 +12,7 @@ import {
 import TopNavigation from './components/TopNavigation';
 import Dock from './components/Dock';
 import AiCopilotSidebar from './components/AiCopilotSidebar';
+import ErrorBoundary from './components/ErrorBoundary';
 import { navigationConfig } from './config/navigation';
 import Login from './pages/Login';
 
@@ -77,7 +78,9 @@ const AiLogistics = lazyWithRetry(() => import('./pages/AiLogistics'));
 const AiCalculator = lazyWithRetry(() => import('./pages/AiCalculator'));
 const PLEngine = lazyWithRetry(() => import('./pages/PLEngine'));
 const PLInvoiceEngine = lazyWithRetry(() => import('./pages/PLInvoiceEngine'));
+const SOPICIComissions = lazyWithRetry(() => import('./pages/SOPICIComissions'));
 const Banks = lazyWithRetry(() => import('./pages/Banks'));
+const PaymentTerms = lazyWithRetry(() => import('./pages/PaymentTerms'));
 const InvoiceEngine = lazyWithRetry(() => import('./pages/InvoiceEngine'));
 const MyMailProcessorPage = lazyWithRetry(() => import('./pages/MyMailProcessorPage'));
 const ConnectionsHub = lazyWithRetry(() => import('./pages/ConnectionsHub'));
@@ -97,13 +100,17 @@ const CostProfitAI = lazyWithRetry(() => import('./pages/CostProfitAI'));
 const Finance = lazyWithRetry(() => import('./pages/Finance'));
 const FinancePayables = lazyWithRetry(() => import('./pages/FinancePayables'));
 const FinanceReceivables = lazyWithRetry(() => import('./pages/FinanceReceivables'));
+const FinanceBalances = lazyWithRetry(() => import('./pages/FinanceBalances'));
+const SalesFollowUp = lazyWithRetry(() => import('./pages/SalesFollowUp'));
 
 import { Database, Wifi } from 'lucide-react';
+import PendingDocsBanner from './components/PendingDocsBanner';
 
 import { useSupabase } from './hooks/useSupabase';
 import { checkSupabaseConnection } from './services/supabase';
 import { checkAndTriggerAutoBackup } from './services/backupService';
 import { activityLogger } from './services/activityLogService';
+import { clearSession } from './services/memoryService';
 
 // Suspense loading fallback
 const PageLoader = () => (
@@ -125,23 +132,40 @@ const BRFlag = ({ size = 16, className = "" }) => (
 );
 
 const App: React.FC = () => {
-    // Authentication State - only restore session if returning from MSAL OAuth redirect
+    // Authentication State - always restore session from sessionStorage
     const [currentUser, setCurrentUser] = useState<User | null>(() => {
         try {
-            const isMsalRedirect = window.location.hash.includes('code=') || window.location.hash.includes('state=');
-            if (isMsalRedirect) {
-                const saved = sessionStorage.getItem('xs_current_user');
-                return saved ? JSON.parse(saved) : null;
-            }
-            sessionStorage.removeItem('xs_current_user');
-            return null;
+            const saved = sessionStorage.getItem('xs_current_user');
+            return saved ? JSON.parse(saved) : null;
         } catch { return null; }
     });
     const [dbConnectionStatus, setDbConnectionStatus] = useState<boolean>(false);
 
     // Navigation State
-    const [activeModule, setActiveModule] = useState('DASHBOARD');
-    const [subModule, setSubModule] = useState<string>('');
+    //
+    // On mount, check for v2-to-v1 handshake keys set by v2 row/module
+    // actions. The v2 preview doesn't have full parity for every
+    // module, so some entries in the v2 sidebar hand off to the
+    // matching v1 page. Each handshake owns its own sessionStorage
+    // key, read once here and cleared where appropriate (e.g. the
+    // Documents Modal clears its key after auto-opening).
+    const readInitialModule = (): [string, string] => {
+        if (typeof window === 'undefined') return ['DASHBOARD', ''];
+        try {
+            if (sessionStorage.getItem('xs_pending_delivery_docs')) {
+                // Cleared by PLInvoiceEngine after it auto-opens the modal.
+                return ['PAPERWORK', 'PL_INVOICE_ENGINE'];
+            }
+            if (sessionStorage.getItem('xs_pending_finance_balances')) {
+                sessionStorage.removeItem('xs_pending_finance_balances');
+                return ['FINANCE', 'BALANCES'];
+            }
+        } catch { /* noop */ }
+        return ['DASHBOARD', ''];
+    };
+    const [initialModule, initialSub] = readInitialModule();
+    const [activeModule, setActiveModule] = useState(initialModule);
+    const [subModule, setSubModule] = useState<string>(initialSub);
     const [currentCompanyId, setCurrentCompanyId] = useState<string>('ALL');
     const [pendingCalcOffer, setPendingCalcOffer] = useState<any>(null);
     const [pendingEditOfferId, setPendingEditOfferId] = useState<string | null>(null);
@@ -152,63 +176,78 @@ const App: React.FC = () => {
     const [showAiSidebar, setShowAiSidebar] = useState(false);
 
     // --- DATA HOOKS (Supabase) ---
+    // CORE DATA: Always fetched (used by 5+ modules)
     const users = useSupabase<User>('users');
     const companies = useSupabase<Company>('companies');
-
-    const customers = useSupabase<Customer>('customers');
+    const customers = useSupabase<Customer>('customers', { pageSize: 200 });
     const suppliers = useSupabase<Supplier>('suppliers');
-    const cargoAgents = useSupabase<CargoAgent>('cargo_agents');
-    const carriers = useSupabase<Carrier>('carriers');
-
     const products = useSupabase<Product>('products');
     const ports = useSupabase<Port>('ports');
     const banks = useSupabase<Bank>('banks');
-    const locations = useSupabase<SavedLocation>('saved_locations');
-
-    const opportunities = useSupabase<Opportunity>('opportunities');
-    const costCalculations = useSupabase<CostCalculation>('cost_calculations');
-
-    const supplierQuotes = useSupabase<SupplierQuote>('supplier_quotes');
-    const supplierOffers = useSupabase<SupplierOffer>('supplier_offers');
-    const purchaseOrders = useSupabase<PurchaseOrder>('purchase_orders');
+    const paymentTermsData = useSupabase<any>('payment_terms');
+    const cargoAgents = useSupabase<CargoAgent>('cargo_agents');
     const freightQuotes = useSupabase<FreightQuote>('freight_quotes');
-
-    const inventory = useSupabase<InventoryItem>('inventory');
-    const inventoryLogs = useSupabase<InventoryLog>('inventory_logs');
-    const shipments = useSupabase<Shipment>('shipments');
-
-    const billOfLadings = useSupabase<BillOfLading>('bill_landings');
-    const bookings = useSupabase<Booking>('bookings', {
-        select: 'id, companyId, createdAt, bookingNumber, customer, vesselVoyage, pol, pod, equipment, etd, eta, cargoCutOff, vgmCutOff, draftCutOff, freeTime, terminal, agentName, salesOrderId, status, originalDocument'
+    const bookings = useSupabase<Booking>('bookings', { pageSize: 100 });
+    const billOfLadings = useSupabase<BillOfLading>('bill_landings', { pageSize: 100 });
+    const invoices = useSupabase<Invoice>('invoices', {
+        select: 'id, companyId, createdAt, invoiceNumber, invoiceDate, shipperName, shipperAddress, soldTo, shipTo, paymentTerms, incoterm, dateOrder, customerPo, carrier, transportRef, freightTerms, items, grossWeight, netWeight, tareWeight, totalQuantity, subtotal, totalAmount, currency, remitTo, bankName, bankAddress, swiftCode, routingNumber, accountNumber, supplier, date, soNumber, bookingNumber, shipper, consignee, pod, poa, bl, memo, containers, plNumber, billToName, bolUrl',
+        pageSize: 100
     });
+    const { data: salesOrders, addRecord: addSalesOrder, updateRecord: updateSalesOrder, deleteRecord: deleteSalesOrder } = useSupabase<SalesOrder>('sales_orders', { pageSize: 100 });
+
+    // LAZY DATA: Only fetched when user navigates to a module that needs it
+    const mod = activeModule;
+    const needsOpportunities = ['DASHBOARD', 'COST_PROFIT_AI', 'SALES_FORCE', 'SALES_HUB'].includes(mod);
+    const needsCostCalcs = ['BUY', 'COST_PROFIT_AI', 'AI_UPLOAD', 'SALES_FORCE'].includes(mod);
+    const needsSupplierQuotes = ['DASHBOARD', 'BUY', 'COST_PROFIT_AI', 'SALES_FORCE'].includes(mod);
+    const needsSupplierOffers = ['DASHBOARD', 'BUY', 'COST_PROFIT_AI', 'SALES_FORCE', 'AI_UPLOAD'].includes(mod);
+    const needsPurchaseOrders = ['DASHBOARD', 'BUY', 'DATA'].includes(mod);
+    const needsInventory = ['DASHBOARD', 'BUY', 'LOGISTICS'].includes(mod);
+    const needsShipments = ['DASHBOARD', 'COST_PROFIT_AI', 'LOGISTICS'].includes(mod);
+    const needsDocuments = ['DASHBOARD', 'DATA', 'CONNECTIONS', 'AI_UPLOAD', 'PAPERWORK', 'COMMISSIONS'].includes(mod);
+    const needsCommissions = ['DASHBOARD', 'COMMISSIONS', 'SALES_HUB', 'LOGISTICS', 'AI_UPLOAD'].includes(mod);
+    const needsCarriers = ['BUY', 'LOGISTICS', 'SALES_FORCE'].includes(mod);
+    const needsLocations = ['BUY', 'SALES_FORCE', 'DATA'].includes(mod);
+    const needsImages = ['DATA', 'BUY'].includes(mod);
+    const needsSupplierInvoices = ['DASHBOARD', 'FINANCE', 'DATA', 'CONNECTIONS', 'AI_UPLOAD'].includes(mod);
+
+    const opportunities = useSupabase<Opportunity>('opportunities', { enabled: needsOpportunities });
+    const costCalculations = useSupabase<CostCalculation>('cost_calculations', { enabled: needsCostCalcs });
+    const supplierQuotes = useSupabase<SupplierQuote>('supplier_quotes', { enabled: needsSupplierQuotes });
+    const supplierOffers = useSupabase<SupplierOffer>('supplier_offers', { enabled: needsSupplierOffers });
+    const purchaseOrders = useSupabase<PurchaseOrder>('purchase_orders', { enabled: needsPurchaseOrders });
+    const inventory = useSupabase<InventoryItem>('inventory', { enabled: needsInventory });
+    const inventoryLogs = useSupabase<InventoryLog>('inventory_logs', { enabled: needsInventory });
+    const shipments = useSupabase<Shipment>('shipments', { enabled: needsShipments });
+    const carriers = useSupabase<Carrier>('carriers', { enabled: needsCarriers });
+    const locations = useSupabase<SavedLocation>('saved_locations', { enabled: needsLocations });
 
     const estimates = useSupabase<Estimate>('estimates', {
-        select: 'id, companyId, createdAt, estimateNumber, supplier, buyer, shipTo, payTo, date, terms, incoterm, subtotal, tax, totalAmount, currency, items, acceptedBy, acceptedDate'
+        select: 'id, companyId, createdAt, estimateNumber, supplier, buyer, shipTo, payTo, date, terms, incoterm, subtotal, tax, totalAmount, currency, items, acceptedBy, acceptedDate',
+        enabled: needsDocuments
     });
     const proformas = useSupabase<ProformaInvoice>('proforma_invoices', {
-        select: 'id, companyId, createdAt, piNumber, supplier, buyer, shipTo, payTo, date, terms, incoterm, subtotal, tax, totalAmount, currency, items, acceptedBy, acceptedDate'
+        select: 'id, companyId, createdAt, piNumber, supplier, buyer, shipTo, payTo, date, terms, incoterm, subtotal, tax, totalAmount, currency, items, acceptedBy, acceptedDate',
+        enabled: needsDocuments
     });
-    const invoices = useSupabase<Invoice>('invoices', {
-        select: 'id, companyId, createdAt, invoiceNumber, invoiceDate, shipperName, shipperAddress, soldTo, shipTo, paymentTerms, incoterm, dateOrder, customerPo, carrier, transportRef, freightTerms, items, grossWeight, netWeight, tareWeight, totalQuantity, subtotal, totalAmount, currency, remitTo, bankName, bankAddress, swiftCode, routingNumber, accountNumber, supplier, date, soNumber, bookingNumber, shipper, consignee, pod, poa, bl, memo, containers, plNumber, billToName, bolUrl'
-    });
-    const supplierInvoices = useSupabase<SupplierInvoice>('invoices_suppliers');
+    const supplierInvoices = useSupabase<SupplierInvoice>('invoices_suppliers', { enabled: needsSupplierInvoices });
     const packingLists = useSupabase<PackingList>('packing_lists', {
-        select: 'id, companyId, createdAt, plNumber, blNumber, shipper, supplier, consignee, shippingPoint, destination, date, carrier, containerNumber, sealNumber, vesselVoyage, productDescription, unitCount, unitNumbers, grossWeight, netWeight, freightTerms, poNumber, notes, scheduledShipDate, items, soNumber, status'
+        select: 'id, companyId, createdAt, plNumber, blNumber, shipper, supplier, consignee, shippingPoint, destination, date, carrier, containerNumber, sealNumber, vesselVoyage, productDescription, unitCount, unitNumbers, grossWeight, netWeight, freightTerms, poNumber, notes, scheduledShipDate, items, soNumber, status',
+        enabled: needsDocuments
     });
     const poExtracts = useSupabase<PurchaseOrderExtract>('purchase_order_extracts', {
-        select: 'id, companyId, createdAt, poNumber, vendor, date, totalAmount, currency, items'
+        select: 'id, companyId, createdAt, poNumber, vendor, date, totalAmount, currency, items',
+        enabled: needsDocuments
     });
 
-    const { data: salesOrders, addRecord: addSalesOrder, updateRecord: updateSalesOrder, deleteRecord: deleteSalesOrder } = useSupabase<SalesOrder>('sales_orders');
-
-    // Applied limit and specific column selection to avoid timeout due to Base64 columns
     const commissions = useSupabase<CommissionSalesOrder>('commission_sales_orders', {
         select: 'id, orderNumber, invoiceNumber, sellerName, customerName, pod, deliveryDate, status, orderTotal, invoiceStatus, commissionAmount, commissionPaymentStatus, createdAt, companyId, items, commissionRate, commissionType, blNumber, blDocumentUrl, pol, etd, eta',
-        limit: 51,
-        orderBy: { column: 'createdAt', ascending: false }
+        pageSize: 100,
+        orderBy: { column: 'createdAt', ascending: false },
+        enabled: needsCommissions
     });
 
-    const images = useSupabase<CompanyImage>('imagens');
+    const images = useSupabase<CompanyImage>('imagens', { enabled: needsImages });
 
     useEffect(() => {
         checkSupabaseConnection().then(status => setDbConnectionStatus(status));
@@ -229,6 +268,9 @@ const App: React.FC = () => {
         setCurrentUser(user);
         sessionStorage.setItem('xs_current_user', JSON.stringify(user));
         setTimeout(() => window.scrollTo(0, 0), 100);
+
+        // Clear previous dashboard chat session so user starts fresh
+        clearSession(user.id).catch(() => {});
 
         // Activity Log: set user context and log login
         activityLogger.setUserContext(user.id, user.role, 'ALL');
@@ -267,6 +309,12 @@ const App: React.FC = () => {
         setActiveModule('DASHBOARD');
         setSubModule('');
     }, []);
+
+    // Auto-refresh bookings/BL data when navigating to those views
+    useEffect(() => {
+        if (subModule === 'BOOKINGS') bookings.refetch();
+        if (subModule === 'BL') billOfLadings.refetch();
+    }, [subModule]);
 
     const filterByCompany = useCallback((data: any[]) => {
         if (currentCompanyId === 'ALL') return data;
@@ -334,6 +382,46 @@ const App: React.FC = () => {
         );
     }, [currentUser]);
 
+    // ─── MEMOIZED FILTERED DATA (prevents new array refs on every render) ───
+    const mCustomers = useMemo(() => filterByCompany(customers.data), [customers.data, currentCompanyId]);
+    const mSuppliers = useMemo(() => filterByCompany(suppliers.data), [suppliers.data, currentCompanyId]);
+    const mProducts = useMemo(() => filterByCompany(products.data), [products.data, currentCompanyId]);
+    const mOpportunities = useMemo(() => filterByCompany(opportunities.data), [opportunities.data, currentCompanyId]);
+    const mShipments = useMemo(() => filterByCompany(shipments.data), [shipments.data, currentCompanyId]);
+    const mSupplierQuotes = useMemo(() => filterByCompany(supplierQuotes.data), [supplierQuotes.data, currentCompanyId]);
+    const mSupplierOffers = useMemo(() => filterByCompany(supplierOffers.data), [supplierOffers.data, currentCompanyId]);
+    const mPurchaseOrders = useMemo(() => filterByCompany(purchaseOrders.data), [purchaseOrders.data, currentCompanyId]);
+    const mInventory = useMemo(() => filterByCompany(inventory.data), [inventory.data, currentCompanyId]);
+    const mInventoryLogs = useMemo(() => filterByCompany(inventoryLogs.data), [inventoryLogs.data, currentCompanyId]);
+    const mBookings = useMemo(() => filterByCompany(bookings.data), [bookings.data, currentCompanyId]);
+    const mBookingsStrict = useMemo(() => filterByCompanyStrict(bookings.data), [bookings.data, currentCompanyId]);
+    const mBillOfLadings = useMemo(() => filterByCompany(billOfLadings.data), [billOfLadings.data, currentCompanyId]);
+    const mInvoices = useMemo(() => filterByCompanyStrict(invoices.data), [invoices.data, currentCompanyId]);
+    const mEstimates = useMemo(() => filterByCompany(estimates.data), [estimates.data, currentCompanyId]);
+    const mProformas = useMemo(() => filterByCompany(proformas.data), [proformas.data, currentCompanyId]);
+    const mPackingLists = useMemo(() => filterByCompanyStrict(packingLists.data), [packingLists.data, currentCompanyId]);
+    const mSupplierInvoices = useMemo(() => filterByCompany(supplierInvoices.data), [supplierInvoices.data, currentCompanyId]);
+    const mPoExtracts = useMemo(() => filterByCompany(poExtracts.data), [poExtracts.data, currentCompanyId]);
+    const mCommissions = useMemo(() => filterByCompany(commissions.data), [commissions.data, currentCompanyId]);
+    const mCostCalculations = useMemo(() => filterByCompany(costCalculations.data), [costCalculations.data, currentCompanyId]);
+    const mBanks = useMemo(() => filterByCompany(banks.data), [banks.data, currentCompanyId]);
+    const mLocations = useMemo(() => filterByCompany(locations.data), [locations.data, currentCompanyId]);
+    const mSalesOrders = useMemo(() => filterByCompany(salesOrders), [salesOrders, currentCompanyId]);
+    // Payment Terms: include ALL-company terms for everyone (seed data) + company-specific
+    const mPaymentTerms = useMemo(() => paymentTermsData.data.filter((pt: any) => {
+        // Supabase returns snake_case columns; support both spellings
+        const cid = pt.company_id ?? pt.companyId;
+        return !cid || cid === 'ALL' || cid === currentCompanyId;
+    }), [paymentTermsData.data, currentCompanyId]);
+
+    // Composite memoized filters (role-scoped)
+    const mSalesOrdersScoped = useMemo(() => filterSalesOrdersByCreator(mSalesOrders), [mSalesOrders, currentUser]);
+    const mOpportunitiesScoped = useMemo(() => filterOpportunitiesBySales(mOpportunities), [mOpportunities, currentUser]);
+    const mCommissionsScoped = useMemo(() => filterCommissionsBySales(mCommissions), [mCommissions, currentUser, customers.data]);
+    const mCustomersScoped = useMemo(() => filterCustomersBySales(mCustomers), [mCustomers, currentUser]);
+    const mProductsFiltered = useMemo(() => filterByProductCategory(mProducts), [mProducts, currentUser?.allowed_product_categories]);
+    const mCalcsFiltered = useMemo(() => filterCalcsByProductCategory(mCostCalculations), [mCostCalculations, currentUser?.allowed_product_categories, products.data]);
+
     if (!currentUser) {
         return (
             <Login
@@ -353,18 +441,18 @@ const App: React.FC = () => {
                         currentUser={currentUser}
                         currentCompanyId={currentCompanyId}
                         availableCompanies={companies.data}
-                        customers={filterByCompany(customers.data)}
-                        suppliers={filterByCompany(suppliers.data)}
+                        customers={mCustomers}
+                        suppliers={mSuppliers}
                         ports={ports.data}
                         salesQuotes={[]}
-                        supplierQuoteRequests={filterByCompany(supplierQuotes.data)}
-                        supplierOffers={filterByCompany(supplierOffers.data)}
-                        opportunities={filterByCompany(opportunities.data)}
-                        shipments={filterByCompany(shipments.data)}
-                        purchaseOrders={filterByCompany(purchaseOrders.data)}
-                        products={filterByCompany(products.data)}
-                        inventory={filterByCompany(inventory.data)}
-                        inventoryLogs={filterByCompany(inventoryLogs.data)}
+                        supplierQuoteRequests={mSupplierQuotes}
+                        supplierOffers={mSupplierOffers}
+                        opportunities={mOpportunities}
+                        shipments={mShipments}
+                        purchaseOrders={mPurchaseOrders}
+                        products={mProducts}
+                        inventory={mInventory}
+                        inventoryLogs={mInventoryLogs}
                         onSaveBL={billOfLadings.addRecord}
                         onSaveBooking={bookings.addRecord}
                         onSaveEstimate={estimates.addRecord}
@@ -384,17 +472,17 @@ const App: React.FC = () => {
                         onAddBooking={bookings.addRecord}
                         onAddCargoAgent={cargoAgents.addRecord}
                         onAddFreightQuote={freightQuotes.addRecord}
-                        salesOrdersData={filterSalesOrdersByCreator(filterByCompany(salesOrders))}
-                        bookingsData={filterByCompany(bookings.data)}
-                        billOfLadingsData={filterByCompany(billOfLadings.data)}
+                        salesOrdersData={mSalesOrdersScoped}
+                        bookingsData={mBookings}
+                        billOfLadingsData={mBillOfLadings}
                         cargoAgentsData={filterByCompany(cargoAgents.data)}
                         freightQuotesData={filterByCompany(freightQuotes.data)}
-                        invoicesData={filterByCompany(invoices.data)}
-                        estimatesData={filterByCompany(estimates.data)}
-                        proformasData={filterByCompany(proformas.data)}
-                        packingListsData={filterByCompany(packingLists.data)}
-                        supplierInvoicesData={filterByCompany(supplierInvoices.data)}
-                        commissionsData={filterByCompany(commissions.data)}
+                        invoicesData={mInvoices}
+                        estimatesData={mEstimates}
+                        proformasData={mProformas}
+                        packingListsData={mPackingLists}
+                        supplierInvoicesData={mSupplierInvoices}
+                        commissionsData={mCommissions}
                     />
                 );
 
@@ -404,29 +492,29 @@ const App: React.FC = () => {
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             {(subModule === '' || subModule === 'SUPPLIERS') && (
                                 <Suppliers
-                                    suppliers={filterByCompany(suppliers.data)}
+                                    suppliers={mSuppliers}
                                     onAdd={suppliers.addRecord}
                                     onUpdate={suppliers.updateRecord}
                                     onDelete={suppliers.deleteRecord}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
-                                    supplierQuotes={supplierQuotes.data}
-                                    purchaseOrders={purchaseOrders.data}
+                                    supplierQuotes={filterByCompany(supplierQuotes.data)}
+                                    purchaseOrders={filterByCompany(purchaseOrders.data)}
                                 />
                             )}
                             {subModule === 'OFFERS' && (
                                 <SupplierOffers
-                                    offers={filterByCompany(supplierOffers.data)}
+                                    offers={mSupplierOffers}
                                     onAdd={supplierOffers.addRecord}
                                     onUpdate={supplierOffers.updateRecord}
                                     onDelete={supplierOffers.deleteRecord}
-                                    suppliers={filterByCompany(suppliers.data)}
-                                    products={filterByCompany(products.data)}
+                                    suppliers={mSuppliers}
+                                    products={mProducts}
                                     onAddProduct={products.addRecord}
                                     onAddSupplier={suppliers.addRecord}
                                     ports={ports.data}
                                     onAddPort={ports.addRecord}
-                                    locations={locations.data}
+                                    locations={filterByCompany(locations.data)}
                                     onAddLocation={locations.addRecord}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
@@ -439,36 +527,38 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'PO' && (
                                 <PurchaseOrders
-                                    purchaseOrders={filterByCompany(purchaseOrders.data)}
+                                    purchaseOrders={mPurchaseOrders}
                                     onAdd={purchaseOrders.addRecord}
                                     onUpdate={purchaseOrders.updateRecord}
                                     onDelete={purchaseOrders.deleteRecord}
-                                    suppliers={filterByCompany(suppliers.data)}
-                                    products={filterByCompany(products.data)}
+                                    suppliers={mSuppliers}
+                                    products={mProducts}
                                     onAddProduct={products.addRecord}
                                     onAddSupplier={suppliers.addRecord}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
+                                    companyImages={images.data}
+                                    paymentTerms={mPaymentTerms}
                                 />
                             )}
                             {subModule === 'AI' && (
                                 <AiProcurement
-                                    suppliers={filterByCompany(suppliers.data)}
-                                    purchaseOrders={filterByCompany(purchaseOrders.data)}
-                                    supplierOffers={filterByCompany(supplierOffers.data)}
+                                    suppliers={mSuppliers}
+                                    purchaseOrders={mPurchaseOrders}
+                                    supplierOffers={mSupplierOffers}
                                 />
                             )}
                             {subModule === 'STOCK' && (
                                 <Inventory
-                                    inventory={filterByCompany(inventory.data)}
-                                    logs={filterByCompany(inventoryLogs.data)}
+                                    inventory={mInventory}
+                                    logs={mInventoryLogs}
                                     onAdd={inventory.addRecord}
                                     onUpdate={inventory.updateRecord}
                                     onDelete={inventory.deleteRecord}
                                     onAddLog={inventoryLogs.addRecord}
                                     onUpdateLog={inventoryLogs.updateRecord}
                                     onDeleteLog={inventoryLogs.deleteRecord}
-                                    products={filterByCompany(products.data)}
+                                    products={mProducts}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
                                     currentUser={currentUser}
@@ -489,14 +579,14 @@ const App: React.FC = () => {
                                 };
 
                                 const calcProps = {
-                                    products: filterByCompany(products.data),
-                                    suppliers: filterByCompany(suppliers.data),
-                                    supplierOffers: filterByCompany(supplierOffers.data),
-                                    supplierQuotes: filterByCompany(supplierQuotes.data),
+                                    products: mProducts,
+                                    suppliers: mSuppliers,
+                                    supplierOffers: mSupplierOffers,
+                                    supplierQuotes: mSupplierQuotes,
                                     freightQuotes: freightQuotes.data,
-                                    salesOrders: filterSalesOrdersByCreator(filterByCompany(salesOrders)),
+                                    salesOrders: mSalesOrdersScoped,
                                     ports: ports.data,
-                                    savedCalculations: filterByCompany(costCalculations.data),
+                                    savedCalculations: mCostCalculations,
                                     onSave: costCalculations.addRecord,
                                     onUpdate: costCalculations.updateRecord,
                                     onDelete: costCalculations.deleteRecord,
@@ -561,19 +651,62 @@ const App: React.FC = () => {
                 return (
                     <div className="h-full flex flex-col">
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
-                            <Commissions
-                                commissions={filterCommissionsBySales(filterByCompany(commissions.data))}
-                                onAdd={commissions.addRecord}
-                                onUpdate={commissions.updateRecord}
-                                onDelete={commissions.deleteRecord}
-                                customers={filterByCompany(customers.data)}
-                                suppliers={filterByCompany(suppliers.data)}
-                                currentUser={currentUser}
-                                currentCompanyId={currentCompanyId}
+                            {(subModule === '' || subModule === 'PL_INVOICE_ENGINE') && <SOPICIComissions
+                                packingLists={mPackingLists}
+                                customers={mCustomers}
+                                invoices={mInvoices}
+                                salesOrders={mSalesOrdersScoped}
+                                bookings={mBookings}
                                 ports={ports.data}
-                                billOfLadings={filterByCompany(billOfLadings.data)}
-                                onSaveBL={billOfLadings.addRecord}
-                            />
+                                onSaveInvoice={invoices.addRecord}
+                                onUpdateInvoice={invoices.updateRecord}
+                                onDeleteInvoice={invoices.deleteRecord}
+                                currentCompanyId={currentCompanyId}
+                                availableCompanies={companies.data}
+                                onRefreshData={async () => {
+                                    await Promise.all([
+                                        packingLists.refetch(),
+                                        invoices.refetch()
+                                    ]);
+                                }}
+                                banks={mBanks}
+                                onAddCommission={commissions.addRecord}
+                                availablePaymentTerms={mPaymentTerms}
+                            />}
+                            {subModule === 'ORDERS' && (
+                                <Commissions
+                                    commissions={filterCommissionsBySales(mCommissions)}
+                                    onAdd={commissions.addRecord}
+                                    onUpdate={commissions.updateRecord}
+                                    onDelete={commissions.deleteRecord}
+                                    customers={mCustomers}
+                                    suppliers={mSuppliers}
+                                    currentUser={currentUser}
+                                    currentCompanyId={currentCompanyId}
+                                    ports={ports.data}
+                                    billOfLadings={mBillOfLadings}
+                                    onSaveBL={billOfLadings.addRecord}
+                                    initialView="ORDERS"
+                                    availablePaymentTerms={mPaymentTerms}
+                                />
+                            )}
+                            {subModule === 'INVOICES' && (
+                                <Commissions
+                                    commissions={filterCommissionsBySales(mCommissions)}
+                                    onAdd={commissions.addRecord}
+                                    onUpdate={commissions.updateRecord}
+                                    onDelete={commissions.deleteRecord}
+                                    customers={mCustomers}
+                                    suppliers={mSuppliers}
+                                    currentUser={currentUser}
+                                    currentCompanyId={currentCompanyId}
+                                    ports={ports.data}
+                                    billOfLadings={mBillOfLadings}
+                                    onSaveBL={billOfLadings.addRecord}
+                                    initialView="INVOICES"
+                                    availablePaymentTerms={mPaymentTerms}
+                                />
+                            )}
                         </div>
                     </div>
                 );
@@ -585,10 +718,10 @@ const App: React.FC = () => {
                             <SalesHub
                                 currentUser={currentUser}
                                 currentCompanyId={currentCompanyId}
-                                opportunities={filterOpportunitiesBySales(filterByCompany(opportunities.data))}
-                                salesOrders={filterSalesOrdersByCreator(filterByCompany(salesOrders))}
-                                commissions={filterCommissionsBySales(filterByCompany(commissions.data))}
-                                customers={filterCustomersBySales(filterByCompany(customers.data))}
+                                opportunities={filterOpportunitiesBySales(mOpportunities)}
+                                salesOrders={mSalesOrdersScoped}
+                                commissions={filterCommissionsBySales(mCommissions)}
+                                customers={filterCustomersBySales(mCustomers)}
                                 onNavigate={(mod: string, sub: string) => { setActiveModule(mod); setSubModule(sub); }}
                             />
                         </div>
@@ -601,9 +734,9 @@ const App: React.FC = () => {
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             {(subModule === '' || subModule === 'ICRM') && (
                                 <ICRM
-                                    opportunities={filterOpportunitiesBySales(filterByCompany(opportunities.data))}
-                                    customers={filterByCompany(customers.data)}
-                                    products={filterByCompany(products.data)}
+                                    opportunities={filterOpportunitiesBySales(mOpportunities)}
+                                    customers={mCustomers}
+                                    products={mProducts}
                                     onAddOpportunity={opportunities.addRecord}
                                     onUpdateOpportunity={opportunities.updateRecord}
                                     onDeleteOpportunity={opportunities.deleteRecord}
@@ -615,7 +748,7 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'CUSTOMERS' && (
                                 <Customers
-                                    customers={filterCustomersBySales(filterByCompany(customers.data))}
+                                    customers={filterCustomersBySales(mCustomers)}
                                     onAdd={customers.addRecord}
                                     onUpdate={customers.updateRecord}
                                     onDelete={customers.deleteRecord}
@@ -625,16 +758,17 @@ const App: React.FC = () => {
                                     onAddPort={ports.addRecord}
                                     users={users.data}
                                     currentUser={currentUser}
+                                    paymentTerms={mPaymentTerms}
                                 />
                             )}
                             {subModule === 'PIPELINE' && (
                                 <Pipeline
-                                    opportunities={filterOpportunitiesBySales(filterByCompany(opportunities.data))}
+                                    opportunities={filterOpportunitiesBySales(mOpportunities)}
                                     onAdd={opportunities.addRecord}
                                     onUpdate={opportunities.updateRecord}
                                     onDelete={opportunities.deleteRecord}
-                                    customers={filterByCompany(customers.data)}
-                                    products={filterByCompany(products.data)}
+                                    customers={mCustomers}
+                                    products={mProducts}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
                                     addProduct={products.addRecord}
@@ -643,13 +777,13 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'PRICELIST' && (
                                 <BigCalculator
-                                    products={filterByProductCategory(filterByCompany(products.data))}
-                                    suppliers={filterByCompany(suppliers.data)}
-                                    supplierOffers={filterByCompany(supplierOffers.data)}
-                                    supplierQuotes={filterByCompany(supplierQuotes.data)}
-                                    freightQuotes={freightQuotes.data}
+                                    products={filterByProductCategory(mProducts)}
+                                    suppliers={mSuppliers}
+                                    supplierOffers={mSupplierOffers}
+                                    supplierQuotes={mSupplierQuotes}
+                                    freightQuotes={filterByCompany(freightQuotes.data)}
                                     ports={ports.data}
-                                    savedCalculations={filterCalcsByProductCategory(filterByCompany(costCalculations.data))}
+                                    savedCalculations={filterCalcsByProductCategory(mCostCalculations)}
                                     onSave={costCalculations.addRecord}
                                     onUpdate={costCalculations.updateRecord}
                                     onDelete={costCalculations.deleteRecord}
@@ -658,9 +792,9 @@ const App: React.FC = () => {
                                     onAddSupplier={suppliers.addRecord}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
-                                    carriers={carriers.data}
+                                    carriers={filterByCompany(carriers.data)}
                                     onAddCarrier={carriers.addRecord}
-                                    locations={locations.data}
+                                    locations={filterByCompany(locations.data)}
                                     onAddLocation={locations.addRecord}
                                     initialMode='PRICE_LIST'
                                     allowMargin={true}
@@ -671,22 +805,24 @@ const App: React.FC = () => {
                                 <SalesOrders
                                     currentUser={currentUser}
                                     currentCompanyId={currentCompanyId}
-                                    customers={filterByCompany(customers.data)}
-                                    products={filterByCompany(products.data)}
-                                    bookings={filterByCompanyStrict(bookings.data)}
+                                    customers={mCustomers}
+                                    products={mProducts}
+                                    bookings={mBookingsStrict}
                                     onAddBooking={bookings.addRecord}
                                     onUpdateBooking={bookings.updateRecord}
                                     ports={ports.data}
                                     onAddPort={ports.addRecord}
-                                    freightQuotes={freightQuotes.data}
+                                    freightQuotes={filterByCompany(freightQuotes.data)}
                                     onAddFreightQuote={freightQuotes.addRecord}
-                                    locations={locations.data}
+                                    locations={filterByCompany(locations.data)}
                                     onAddLocation={locations.addRecord}
-                                    salesOrders={filterSalesOrdersByCreator(filterByCompany(salesOrders))}
-                                    banks={filterByCompany(banks.data)}
+                                    salesOrders={mSalesOrdersScoped}
+                                    banks={mBanks}
                                     onAdd={addSalesOrder}
                                     onUpdate={updateSalesOrder}
                                     onDelete={deleteSalesOrder}
+                                    paymentTerms={mPaymentTerms}
+                                    invoices={mInvoices}
                                 />
                             )}
                         </div>
@@ -698,10 +834,13 @@ const App: React.FC = () => {
                     <div className="h-full flex flex-col">
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             {(subModule === '' || subModule === 'PAYABLES') && (
-                                <FinancePayables invoices={filterByCompany(supplierInvoices.data)} onDelete={supplierInvoices.deleteRecord} onUpdate={supplierInvoices.updateRecord} onSave={supplierInvoices.addRecord} currentCompanyId={currentCompanyId} banks={filterByCompany(banks.data)} />
+                                <FinancePayables invoices={mSupplierInvoices} onDelete={supplierInvoices.deleteRecord} onUpdate={supplierInvoices.updateRecord} onSave={supplierInvoices.addRecord} currentCompanyId={currentCompanyId} banks={mBanks} />
                             )}
                             {subModule === 'RECEIVABLES' && (
-                                <FinanceReceivables invoices={filterByCompany(invoices.data)} onDelete={invoices.deleteRecord} onUpdate={invoices.updateRecord} onSave={invoices.addRecord} currentCompanyId={currentCompanyId} />
+                                <FinanceReceivables invoices={mInvoices} onDelete={invoices.deleteRecord} onUpdate={invoices.updateRecord} onSave={invoices.addRecord} currentCompanyId={currentCompanyId} />
+                            )}
+                            {subModule === 'BALANCES' && (
+                                <FinanceBalances currentCompanyId={currentCompanyId} availableCompanies={companies.data} erpCustomers={mCustomers} />
                             )}
                         </div>
                     </div>
@@ -735,12 +874,12 @@ const App: React.FC = () => {
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             {(subModule === '' || subModule === 'ORDER_SALE') && (
                                 <CostProfitAI
-                                    supplierOffers={filterByCompany(supplierOffers.data)}
-                                    costCalculations={filterByCompany(costCalculations.data)}
+                                    supplierOffers={mSupplierOffers}
+                                    costCalculations={mCostCalculations}
                                     freightQuotes={filterByCompany(freightQuotes.data)}
-                                    products={filterByCompany(products.data)}
+                                    products={mProducts}
                                     ports={ports.data}
-                                    suppliers={filterByCompany(suppliers.data)}
+                                    suppliers={mSuppliers}
                                     onSaveCalculation={costCalculations.addRecord}
                                     onUpdateCalculation={async (id, updates) => costCalculations.updateRecord({ ...updates, id } as any)}
                                     onDeleteCalculation={costCalculations.deleteRecord}
@@ -753,20 +892,20 @@ const App: React.FC = () => {
                                     onAddProduct={products.addRecord}
                                     onAddPort={ports.addRecord}
                                     availableCompanies={companies.data}
-                                    customers={filterByCompany(customers.data)}
+                                    customers={mCustomers}
                                     onSaveSalesOrder={addSalesOrder}
                                     onDeleteSalesOrder={deleteSalesOrder}
                                     onUpdateSalesOrder={updateSalesOrder}
-                                    banks={filterByCompany(banks.data)}
-                                    salesOrders={filterSalesOrdersByCreator(filterByCompany(salesOrders))}
-                                    cargoAgents={cargoAgents.data}
+                                    banks={mBanks}
+                                    salesOrders={mSalesOrdersScoped}
+                                    cargoAgents={filterByCompany(cargoAgents.data)}
                                 />
                             )}
                             {subModule === 'ICRM' && (
                                 <ICRM
-                                    opportunities={filterOpportunitiesBySales(filterByCompany(opportunities.data))}
-                                    customers={filterByCompany(customers.data)}
-                                    products={filterByProductCategory(filterByCompany(products.data))}
+                                    opportunities={filterOpportunitiesBySales(mOpportunities)}
+                                    customers={mCustomers}
+                                    products={filterByProductCategory(mProducts)}
                                     onAddOpportunity={opportunities.addRecord}
                                     onUpdateOpportunity={opportunities.updateRecord}
                                     onDeleteOpportunity={opportunities.deleteRecord}
@@ -778,7 +917,7 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'CUSTOMERS' && (
                                 <Customers
-                                    customers={filterCustomersBySales(filterByCompany(customers.data))}
+                                    customers={filterCustomersBySales(mCustomers)}
                                     onAdd={customers.addRecord}
                                     onUpdate={customers.updateRecord}
                                     onDelete={customers.deleteRecord}
@@ -788,16 +927,17 @@ const App: React.FC = () => {
                                     onAddPort={ports.addRecord}
                                     users={users.data}
                                     currentUser={currentUser}
+                                    paymentTerms={mPaymentTerms}
                                 />
                             )}
                             {subModule === 'PIPELINE' && (
                                 <Pipeline
-                                    opportunities={filterOpportunitiesBySales(filterByCompany(opportunities.data))}
+                                    opportunities={filterOpportunitiesBySales(mOpportunities)}
                                     onAdd={opportunities.addRecord}
                                     onUpdate={opportunities.updateRecord}
                                     onDelete={opportunities.deleteRecord}
-                                    customers={filterByCompany(customers.data)}
-                                    products={filterByCompany(products.data)}
+                                    customers={mCustomers}
+                                    products={mProducts}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
                                     addProduct={products.addRecord}
@@ -806,20 +946,20 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'STATUS' && (
                                 <CustomerStatus
-                                    customers={filterByCompany(customers.data)}
-                                    opportunities={filterByCompany(opportunities.data)}
-                                    shipments={filterByCompany(shipments.data)}
+                                    customers={mCustomers}
+                                    opportunities={mOpportunities}
+                                    shipments={mShipments}
                                 />
                             )}
                             {subModule === 'PRICELIST' && (
                                 <BigCalculator
-                                    products={filterByCompany(products.data)}
-                                    suppliers={filterByCompany(suppliers.data)}
-                                    supplierOffers={filterByCompany(supplierOffers.data)}
-                                    supplierQuotes={filterByCompany(supplierQuotes.data)}
-                                    freightQuotes={freightQuotes.data}
+                                    products={mProducts}
+                                    suppliers={mSuppliers}
+                                    supplierOffers={mSupplierOffers}
+                                    supplierQuotes={mSupplierQuotes}
+                                    freightQuotes={filterByCompany(freightQuotes.data)}
                                     ports={ports.data}
-                                    savedCalculations={filterCalcsByProductCategory(filterByCompany(costCalculations.data))}
+                                    savedCalculations={filterCalcsByProductCategory(mCostCalculations)}
                                     onSave={costCalculations.addRecord}
                                     onUpdate={costCalculations.updateRecord}
                                     onDelete={costCalculations.deleteRecord}
@@ -828,9 +968,9 @@ const App: React.FC = () => {
                                     onAddSupplier={suppliers.addRecord}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
-                                    carriers={carriers.data}
+                                    carriers={filterByCompany(carriers.data)}
                                     onAddCarrier={carriers.addRecord}
-                                    locations={locations.data}
+                                    locations={filterByCompany(locations.data)}
                                     onAddLocation={locations.addRecord}
                                     initialMode='PRICE_LIST'
                                     allowMargin={true}
@@ -840,26 +980,26 @@ const App: React.FC = () => {
                                 <SalesOrders
                                     currentUser={currentUser}
                                     currentCompanyId={currentCompanyId}
-                                    customers={filterByCompany(customers.data)}
-                                    products={filterByCompany(products.data)}
-                                    bookings={filterByCompanyStrict(bookings.data)}
+                                    customers={mCustomers}
+                                    products={mProducts}
+                                    bookings={mBookingsStrict}
                                     onAddBooking={bookings.addRecord}
                                     onUpdateBooking={bookings.updateRecord}
                                     ports={ports.data}
                                     onAddPort={ports.addRecord}
-                                    freightQuotes={freightQuotes.data}
+                                    freightQuotes={filterByCompany(freightQuotes.data)}
                                     onAddFreightQuote={freightQuotes.addRecord}
-                                    locations={locations.data}
+                                    locations={filterByCompany(locations.data)}
                                     onAddLocation={locations.addRecord}
-                                    salesOrders={filterSalesOrdersByCreator(filterByCompany(salesOrders))}
-                                    banks={filterByCompany(banks.data)}
+                                    salesOrders={mSalesOrdersScoped}
+                                    banks={mBanks}
                                     onAdd={addSalesOrder}
                                     onUpdate={updateSalesOrder}
                                     onDelete={deleteSalesOrder}
                                 />
                             )}
                             {subModule === 'SALE_BRAZIL' && (
-                                <SaleBrazil products={filterByProductCategory(filterByCompany(products.data))} />
+                                <SaleBrazil products={filterByProductCategory(mProducts)} />
                             )}
                         </div>
                     </div>
@@ -870,11 +1010,11 @@ const App: React.FC = () => {
                     <div className="h-full flex flex-col">
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             {(subModule === '' || subModule === 'PL_INVOICE_ENGINE') && <PLInvoiceEngine
-                                packingLists={filterByCompany(packingLists.data)}
-                                customers={filterByCompany(customers.data)}
-                                invoices={filterByCompany(invoices.data)}
-                                salesOrders={filterSalesOrdersByCreator(filterByCompany(salesOrders))}
-                                bookings={filterByCompany(bookings.data)}
+                                packingLists={mPackingLists}
+                                customers={mCustomers}
+                                invoices={mInvoices}
+                                salesOrders={mSalesOrdersScoped}
+                                bookings={mBookings}
                                 ports={ports.data}
                                 onSaveInvoice={invoices.addRecord}
                                 onUpdateInvoice={invoices.updateRecord}
@@ -887,8 +1027,17 @@ const App: React.FC = () => {
                                         invoices.refetch()
                                     ]);
                                 }}
-                                banks={filterByCompany(banks.data)}
+                                banks={mBanks}
                             />}
+                            {subModule === 'SALES_FOLLOW_UP' && (
+                                <SalesFollowUp
+                                    currentCompanyId={currentCompanyId}
+                                    availableCompanies={companies.data}
+                                    customers={mCustomers}
+                                    salesOrders={mSalesOrdersScoped}
+                                    invoices={mInvoices}
+                                />
+                            )}
                         </div>
                     </div>
                 );
@@ -900,8 +1049,8 @@ const App: React.FC = () => {
                         return (
                             <LogisticsDocuments
                                 activeType={subModule === 'BL' ? 'BL' : 'BOOKING'}
-                                bookings={filterByCompany(bookings.data)}
-                                billOfLadings={filterByCompany(billOfLadings.data)}
+                                bookings={bookings.data}
+                                billOfLadings={billOfLadings.data}
                                 onDeleteBooking={bookings.deleteRecord}
                                 onUpdateBooking={bookings.updateRecord}
                                 onSaveBooking={bookings.addRecord}
@@ -909,7 +1058,7 @@ const App: React.FC = () => {
                                 onUpdateBillOfLading={billOfLadings.updateRecord}
                                 onSaveBL={billOfLadings.addRecord}
                                 ports={ports.data}
-                                shipments={filterByCompany(shipments.data)}
+                                shipments={shipments.data}
                                 currentCompanyId={currentCompanyId}
                                 currentUser={currentUser}
                                 cargoAgents={cargoAgents.data}
@@ -935,6 +1084,7 @@ const App: React.FC = () => {
                             currentCompanyId={currentCompanyId}
                             availableCompanies={companies.data}
                             currentUser={currentUser}
+                            suppliers={suppliers.data}
                         />
                     );
                 }
@@ -944,15 +1094,15 @@ const App: React.FC = () => {
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             {subModule === 'LOGISTICS_MANAGE' && (
                                 <Logistics
-                                    bookings={filterByCompany(bookings.data)}
-                                    billOfLadings={filterByCompany(billOfLadings.data)}
-                                    inventory={filterByCompany(inventory.data)}
-                                    freightQuotes={freightQuotes.data}
-                                    salesOrders={filterSalesOrdersByCreator(filterByCompany(salesOrders))}
-                                    cargoAgents={cargoAgents.data}
-                                    customers={filterByCompany(customers.data)}
+                                    bookings={mBookings}
+                                    billOfLadings={mBillOfLadings}
+                                    inventory={mInventory}
+                                    freightQuotes={filterByCompany(freightQuotes.data)}
+                                    salesOrders={mSalesOrdersScoped}
+                                    cargoAgents={filterByCompany(cargoAgents.data)}
+                                    customers={mCustomers}
                                     ports={ports.data}
-                                    invoices={filterByCompany(invoices.data)}
+                                    invoices={mInvoices}
                                     currentCompanyId={currentCompanyId}
                                     onUpdateSalesOrder={updateSalesOrder}
                                     onUpdateFreightQuote={freightQuotes.updateRecord}
@@ -960,11 +1110,11 @@ const App: React.FC = () => {
                             )}
                             {(subModule === '' || subModule === 'LOGISTICS_AI') && (
                                 <ShipmentPipeline
-                                    salesOrders={filterSalesOrdersByCreator(filterByCompany(salesOrders))}
-                                    commissionOrders={filterByCompany(commissions.data)}
-                                    bookings={filterByCompany(bookings.data)}
-                                    invoices={filterByCompany(invoices.data)}
-                                    billOfLadings={filterByCompany(billOfLadings.data)}
+                                    salesOrders={mSalesOrdersScoped}
+                                    commissionOrders={mCommissions}
+                                    bookings={mBookings}
+                                    invoices={mInvoices}
+                                    billOfLadings={mBillOfLadings}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
                                     ports={ports.data}
@@ -975,8 +1125,8 @@ const App: React.FC = () => {
                             {(subModule === 'BOOKINGS' || subModule === 'BL') && (
                                 <LogisticsDocuments
                                     activeType={subModule === 'BL' ? 'BL' : 'BOOKING'}
-                                    bookings={filterByCompany(bookings.data)}
-                                    billOfLadings={filterByCompany(billOfLadings.data)}
+                                    bookings={mBookings}
+                                    billOfLadings={mBillOfLadings}
                                     onDeleteBooking={bookings.deleteRecord}
                                     onUpdateBooking={bookings.updateRecord}
                                     onSaveBooking={bookings.addRecord}
@@ -984,23 +1134,23 @@ const App: React.FC = () => {
                                     onUpdateBillOfLading={billOfLadings.updateRecord}
                                     onSaveBL={billOfLadings.addRecord}
                                     ports={ports.data}
-                                    shipments={filterByCompany(shipments.data)}
+                                    shipments={mShipments}
                                     currentCompanyId={currentCompanyId}
                                     currentUser={currentUser}
-                                    cargoAgents={cargoAgents.data}
+                                    cargoAgents={filterByCompany(cargoAgents.data)}
                                 />
                             )}
                             {subModule === 'STOCK' && (
                                 <Inventory
-                                    inventory={filterByCompany(inventory.data)}
-                                    logs={filterByCompany(inventoryLogs.data)}
+                                    inventory={mInventory}
+                                    logs={mInventoryLogs}
                                     onAdd={inventory.addRecord}
                                     onUpdate={inventory.updateRecord}
                                     onDelete={inventory.deleteRecord}
                                     onAddLog={inventoryLogs.addRecord}
                                     onUpdateLog={inventoryLogs.updateRecord}
                                     onDeleteLog={inventoryLogs.deleteRecord}
-                                    products={filterByCompany(products.data)}
+                                    products={mProducts}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
                                     currentUser={currentUser}
@@ -1008,26 +1158,27 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'FREIGHT' && (
                                 <FreightQuotes
-                                    quotes={freightQuotes.data}
+                                    quotes={filterByCompany(freightQuotes.data)}
                                     onAdd={freightQuotes.addRecord}
                                     onUpdate={freightQuotes.updateRecord}
                                     onDelete={freightQuotes.deleteRecord}
                                     ports={ports.data}
                                     onAddPort={ports.addRecord}
-                                    cargoAgents={cargoAgents.data}
+                                    cargoAgents={filterByCompany(cargoAgents.data)}
                                     onAddAgent={cargoAgents.addRecord}
-                                    carriers={carriers.data}
+                                    carriers={filterByCompany(carriers.data)}
                                     onAddCarrier={carriers.addRecord}
-                                    locations={locations.data}
+                                    locations={filterByCompany(locations.data)}
                                     onAddLocation={locations.addRecord}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
                                     currentUser={currentUser}
+                                    suppliers={mSuppliers}
                                 />
                             )}
                             {subModule === 'AGENTS' && (
                                 <CargoAgents
-                                    agents={cargoAgents.data}
+                                    agents={filterByCompany(cargoAgents.data)}
                                     onAdd={cargoAgents.addRecord}
                                     onUpdate={cargoAgents.updateRecord}
                                     onDelete={cargoAgents.deleteRecord}
@@ -1046,8 +1197,8 @@ const App: React.FC = () => {
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             {(subModule === 'PRODUCTS' || subModule === '') && (
                                 <Products
-                                    products={filterByProductCategory(filterByCompany(products.data))}
-                                    suppliers={filterByCompany(suppliers.data)}
+                                    products={filterByProductCategory(mProducts)}
+                                    suppliers={mSuppliers}
                                     onAdd={products.addRecord}
                                     onUpdate={products.updateRecord}
                                     onDelete={products.deleteRecord}
@@ -1062,19 +1213,28 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'SUPPLIERS' && (
                                 <Suppliers
-                                    suppliers={filterByCompany(suppliers.data)}
+                                    suppliers={mSuppliers}
                                     onAdd={suppliers.addRecord}
                                     onUpdate={suppliers.updateRecord}
                                     onDelete={suppliers.deleteRecord}
                                     currentCompanyId={currentCompanyId}
                                     availableCompanies={companies.data}
-                                    supplierQuotes={supplierQuotes.data}
-                                    purchaseOrders={purchaseOrders.data}
+                                    supplierQuotes={filterByCompany(supplierQuotes.data)}
+                                    purchaseOrders={filterByCompany(purchaseOrders.data)}
+                                />
+                            )}
+                            {subModule === 'PAYMENT_TERMS' && (
+                                <PaymentTerms
+                                    paymentTerms={mPaymentTerms}
+                                    onAdd={paymentTermsData.addRecord}
+                                    onUpdate={paymentTermsData.updateRecord}
+                                    onDelete={paymentTermsData.deleteRecord}
+                                    currentCompanyId={currentCompanyId}
                                 />
                             )}
                             {subModule === 'CUSTOMERS' && (
                                 <Customers
-                                    customers={filterByCompany(customers.data)}
+                                    customers={mCustomers}
                                     onAdd={customers.addRecord}
                                     onUpdate={customers.updateRecord}
                                     onDelete={customers.deleteRecord}
@@ -1084,6 +1244,7 @@ const App: React.FC = () => {
                                     onAddPort={ports.addRecord}
                                     users={users.data}
                                     currentUser={currentUser}
+                                    paymentTerms={mPaymentTerms}
                                 />
                             )}
                             {subModule === 'PORTS' && (
@@ -1098,7 +1259,7 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'AGENTS' && (
                                 <CargoAgents
-                                    agents={cargoAgents.data}
+                                    agents={filterByCompany(cargoAgents.data)}
                                     onAdd={cargoAgents.addRecord}
                                     onUpdate={cargoAgents.updateRecord}
                                     onDelete={cargoAgents.deleteRecord}
@@ -1108,7 +1269,7 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'BANKS' && (
                                 <Banks
-                                    banks={filterByCompany(banks.data)}
+                                    banks={mBanks}
                                     onAdd={banks.addRecord}
                                     onUpdate={banks.updateRecord}
                                     onDelete={banks.deleteRecord}
@@ -1118,7 +1279,7 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'CARRIERS' && (
                                 <Carriers
-                                    carriers={carriers.data}
+                                    carriers={filterByCompany(carriers.data)}
                                     onAdd={carriers.addRecord}
                                     onUpdate={carriers.updateRecord}
                                     onDelete={carriers.deleteRecord}
@@ -1128,12 +1289,12 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'LOCATIONS' && (
                                 <Locations
-                                    locations={filterByCompany(locations.data)}
+                                    locations={mLocations}
                                     onAdd={locations.addRecord}
                                     onUpdate={locations.updateRecord}
                                     onDelete={locations.deleteRecord}
-                                    suppliers={filterByCompany(suppliers.data)}
-                                    customers={filterByCompany(customers.data)}
+                                    suppliers={mSuppliers}
+                                    customers={mCustomers}
                                     onAddSupplier={suppliers.addRecord}
                                     onAddCustomer={customers.addRecord}
                                     currentCompanyId={currentCompanyId}
@@ -1142,20 +1303,20 @@ const App: React.FC = () => {
                             )}
                             {subModule === 'DOC_VIEWER' && (
                                 <DocViewer
-                                    purchaseOrders={filterByCompany(poExtracts.data)}
-                                    estimates={filterByCompany(estimates.data)}
-                                    proformas={filterByCompany(proformas.data)}
-                                    bookings={filterByCompany(bookings.data)}
-                                    invoices={filterByCompany(invoices.data)}
-                                    packingLists={filterByCompany(packingLists.data)}
-                                    billOfLadings={filterByCompany(billOfLadings.data)}
+                                    purchaseOrders={mPoExtracts}
+                                    estimates={mEstimates}
+                                    proformas={mProformas}
+                                    bookings={mBookings}
+                                    invoices={mInvoices}
+                                    packingLists={mPackingLists}
+                                    billOfLadings={mBillOfLadings}
                                 />
                             )}
                             {subModule === 'AI' && (
                                 <AiDataAssistant
-                                    products={filterByCompany(products.data)}
-                                    suppliers={filterByCompany(suppliers.data)}
-                                    customers={filterByCompany(customers.data)}
+                                    products={mProducts}
+                                    suppliers={mSuppliers}
+                                    customers={mCustomers}
                                     ports={ports.data}
                                 />
                             )}
@@ -1219,12 +1380,12 @@ const App: React.FC = () => {
                             {(subModule === 'COST_PROFIT_AI' || subModule === '' || subModule === 'PROPOSAL_ENGINE') && (
                                 <CostProfitAI
                                     initialStep={subModule === 'PROPOSAL_ENGINE' ? 0 : undefined}
-                                    supplierOffers={filterByCompany(supplierOffers.data)}
-                                    costCalculations={filterByCompany(costCalculations.data)}
+                                    supplierOffers={mSupplierOffers}
+                                    costCalculations={mCostCalculations}
                                     freightQuotes={filterByCompany(freightQuotes.data)}
-                                    products={filterByCompany(products.data)}
+                                    products={mProducts}
                                     ports={ports.data}
-                                    suppliers={filterByCompany(suppliers.data)}
+                                    suppliers={mSuppliers}
                                     onSaveCalculation={costCalculations.addRecord}
                                     onUpdateCalculation={async (id, updates) => costCalculations.updateRecord({ ...updates, id } as any)}
                                     onDeleteCalculation={costCalculations.deleteRecord}
@@ -1237,20 +1398,20 @@ const App: React.FC = () => {
                                     onAddProduct={products.addRecord}
                                     onAddPort={ports.addRecord}
                                     availableCompanies={companies.data}
-                                    customers={filterByCompany(customers.data)}
+                                    customers={mCustomers}
                                     onSaveSalesOrder={addSalesOrder}
                                     onDeleteSalesOrder={deleteSalesOrder}
                                     onUpdateSalesOrder={updateSalesOrder}
-                                    banks={filterByCompany(banks.data)}
-                                    salesOrders={filterSalesOrdersByCreator(filterByCompany(salesOrders))}
-                                    cargoAgents={cargoAgents.data}
+                                    banks={mBanks}
+                                    salesOrders={mSalesOrdersScoped}
+                                    cargoAgents={filterByCompany(cargoAgents.data)}
                                 />
                             )}
                             {subModule === 'CALC_AI' && (
                                 <AiCalculator
-                                    savedCalculations={filterByCompany(costCalculations.data)}
-                                    products={filterByCompany(products.data)}
-                                    freightQuotes={freightQuotes.data}
+                                    savedCalculations={mCostCalculations}
+                                    products={mProducts}
+                                    freightQuotes={filterByCompany(freightQuotes.data)}
                                 />
                             )}
                         </div>
@@ -1381,9 +1542,11 @@ const App: React.FC = () => {
 
             <div className="flex-1 flex flex-col h-screen pt-14 relative">
                 <main className="flex-1 p-3 overflow-hidden flex flex-col">
-                    <Suspense fallback={<PageLoader />}>
-                        {renderContent()}
-                    </Suspense>
+                    <ErrorBoundary>
+                        <Suspense fallback={<PageLoader />}>
+                            {renderContent()}
+                        </Suspense>
+                    </ErrorBoundary>
                 </main>
 
                 <footer className="bg-white border-t border-slate-100 flex items-center justify-between px-4 text-[10px] text-slate-400 tracking-wider shrink-0 z-50 select-none py-0.5">
@@ -1418,6 +1581,9 @@ const App: React.FC = () => {
                 <HelpCenter onClose={() => setShowHelp(false)} role={currentUser.role} />
             )}
 
+            {/* Auto-Create Pipeline: Pending Documents Review Banner */}
+            <PendingDocsBanner companyId={currentCompanyId} />
+
             <AiCopilotSidebar
                 isOpen={showAiSidebar}
                 onClose={() => setShowAiSidebar(false)}
@@ -1427,21 +1593,22 @@ const App: React.FC = () => {
                 currentCompany={currentCompanyId}
                 allowedModules={currentUser.allowed_modules || Object.keys(navigationConfig)}
                 contextData={{
-                    customers: { count: filterByCompany(customers.data).length, sample: filterByCompany(customers.data).slice(0, 8).map((c: any) => c.name || c.customerName || 'N/A') },
-                    products: { count: filterByCompany(products.data).length, sample: filterByCompany(products.data).slice(0, 8).map((p: any) => p.name || 'N/A') },
-                    salesOrders: { count: filterSalesOrdersByCreator(filterByCompany(salesOrders || [])).length, recent: filterSalesOrdersByCreator(filterByCompany(salesOrders || [])).slice(0, 5).map((o: any) => ({ id: o.id, customer: o.customerName, status: o.status, total: o.totalAmount })) },
-                    suppliers: { count: filterByCompany(suppliers.data).length, sample: filterByCompany(suppliers.data).slice(0, 8).map((s: any) => s.name || 'N/A') },
-                    opportunities: { count: filterByCompany(opportunities.data).length },
-                    bookings: { count: filterByCompany(bookings.data).length, active: filterByCompany(bookings.data).filter((b: any) => b.status !== 'COMPLETED').slice(0, 5).map((b: any) => ({ booking: b.bookingNumber, customer: b.customer, pol: b.pol, pod: b.pod, status: b.status })) },
-                    billOfLadings: { count: filterByCompany(billOfLadings.data).length },
-                    shipments: { count: filterByCompany(shipments.data).length },
-                    freightQuotes: { count: filterByCompany(freightQuotes.data).length },
-                    purchaseOrders: { count: filterByCompany(purchaseOrders.data).length },
-                    inventory: { count: filterByCompany(inventory.data).length },
-                    costCalculations: { count: filterByCompany(costCalculations.data).length },
+                    customers: { count: mCustomers.length, sample: mCustomers.slice(0, 8).map((c: any) => c.name || c.customerName || 'N/A') },
+                    products: { count: mProducts.length, sample: mProducts.slice(0, 8).map((p: any) => p.name || 'N/A') },
+                    salesOrders: { count: mSalesOrdersScoped.length, recent: mSalesOrdersScoped.slice(0, 5).map((o: any) => ({ id: o.id, customer: o.customerName, status: o.status, total: o.totalAmount })) },
+                    suppliers: { count: mSuppliers.length, sample: mSuppliers.slice(0, 8).map((s: any) => s.name || 'N/A') },
+                    opportunities: { count: mOpportunities.length },
+                    bookings: { count: mBookings.length, active: mBookings.filter((b: any) => b.status !== 'COMPLETED').slice(0, 5).map((b: any) => ({ booking: b.bookingNumber, customer: b.customer, pol: b.pol, pod: b.pod, status: b.status })) },
+                    billOfLadings: { count: mBillOfLadings.length },
+                    shipments: { count: mShipments.length },
+                    freightQuotes: { count: freightQuotes.data.length },
+                    purchaseOrders: { count: mPurchaseOrders.length },
+                    inventory: { count: mInventory.length },
+                    costCalculations: { count: mCostCalculations.length },
                     ports: { count: ports.data.length, sample: ports.data.slice(0, 8).map((p: any) => p.name || p.portName || 'N/A') },
-                    cargoAgents: { count: filterByCompany(cargoAgents.data).length, sample: filterByCompany(cargoAgents.data).slice(0, 5).map((a: any) => a.name || 'N/A') }
+                    cargoAgents: { count: cargoAgents.data.length, sample: cargoAgents.data.slice(0, 5).map((a: any) => a.name || 'N/A') }
                 }}
+                onAddPort={ports.addRecord}
             />
         </div>
     );

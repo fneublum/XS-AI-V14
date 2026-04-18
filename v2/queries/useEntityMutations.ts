@@ -34,6 +34,9 @@ export function useEntityUpdate<Patch extends { id: string }>({
 interface InsertConfig extends MutationConfig {
   /** Prefix for generated primary keys (e.g. 'CUST' → 'CUST-{ts}-{rand}') */
   idPrefix: string;
+  /** Whether to auto-add `createdAt: now`. Default: true. Set false for
+   *  tables like `products` that don't have a `createdAt` column. */
+  withCreatedAt?: boolean;
 }
 
 function newId(prefix: string): string {
@@ -41,18 +44,16 @@ function newId(prefix: string): string {
 }
 
 export function useEntityInsert<Fields extends Record<string, unknown>>({
-  table, listQueryKeys, idPrefix,
+  table, listQueryKeys, idPrefix, withCreatedAt = true,
 }: InsertConfig) {
   const qc = useQueryClient();
   return useMutation<string, Error, Fields>({
     mutationFn: async (fields) => {
       const supabase = getSupabaseClient();
       const id = newId(idPrefix);
-      const { error } = await supabase.from(table).insert({
-        id,
-        createdAt: new Date().toISOString(),
-        ...fields,
-      });
+      const payload: Record<string, unknown> = { id, ...fields };
+      if (withCreatedAt) payload.createdAt = new Date().toISOString();
+      const { error } = await supabase.from(table).insert(payload);
       if (error) throw new Error(error.message);
       return id;
     },

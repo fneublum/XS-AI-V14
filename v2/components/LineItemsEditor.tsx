@@ -1,0 +1,319 @@
+// Phase 3B — Shared line-items editor.
+//
+// Sales Orders, Purchase Orders and Invoices each maintain a
+// jsonb `items` array of `{ productName, quantity, unitPrice, total }`
+// rows (with optional hsCode / customerDescription / grade). This
+// component manages the entire array: add row, remove row, edit cells,
+// live subtotal. The parent owns the value via `items` + `onChange`.
+
+import React, { useMemo } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
+import { Input } from '../primitives/Input';
+import { Button } from '../primitives/Button';
+import { useProducts, Product } from '../queries/useProducts';
+
+export interface LineItem {
+  productId?: string;
+  productName: string;
+  customerDescription?: string;
+  hsCode?: string;
+  grade?: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
+interface Props {
+  items: LineItem[];
+  onChange: (items: LineItem[]) => void;
+  currency?: string;
+  showHsCode?: boolean;
+  showGrade?: boolean;
+  showCustomerDescription?: boolean;
+  /** Read-only mode (hides inputs, shows values). */
+  readOnly?: boolean;
+}
+
+const cellInput =
+  'h-7 text-[12px] bg-[#111111] border border-[#1f1f1f] text-slate-200 rounded-sm px-1.5 ' +
+  'placeholder:text-slate-600 focus:ring-1 focus:ring-indigo-500 outline-none w-full';
+
+const cellInputMono = cellInput + ' font-mono tabular-nums';
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+const fmtMoney = (n: number, currency = 'USD') => {
+  try {
+    return n.toLocaleString('en-US', {
+      style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+  } catch {
+    return `${currency} ${n.toFixed(2)}`;
+  }
+};
+
+export const LineItemsEditor: React.FC<Props> = ({
+  items, onChange, currency = 'USD',
+  showHsCode = true, showGrade = false, showCustomerDescription = true,
+  readOnly = false,
+}) => {
+  const products = useProducts();
+  const productOptions = products.data ?? [];
+
+  const subtotal = useMemo(
+    () => round2(items.reduce((s, it) => s + (Number(it.total) || 0), 0)),
+    [items],
+  );
+
+  const totalQty = useMemo(
+    () => round2(items.reduce((s, it) => s + (Number(it.quantity) || 0), 0)),
+    [items],
+  );
+
+  const update = (idx: number, patch: Partial<LineItem>) => {
+    const next = items.map((it, i) => {
+      if (i !== idx) return it;
+      const merged: LineItem = { ...it, ...patch };
+      const q = Number(merged.quantity) || 0;
+      const p = Number(merged.unitPrice) || 0;
+      merged.total = round2(q * p);
+      return merged;
+    });
+    onChange(next);
+  };
+
+  const addRow = () => {
+    onChange([
+      ...items,
+      { productName: '', quantity: 0, unitPrice: 0, total: 0 },
+    ]);
+  };
+
+  const removeRow = (idx: number) => {
+    onChange(items.filter((_, i) => i !== idx));
+  };
+
+  const selectProduct = (idx: number, product: Product | undefined) => {
+    if (!product) {
+      update(idx, { productId: undefined, productName: '', hsCode: '', grade: '' });
+      return;
+    }
+    update(idx, {
+      productId: product.id,
+      productName: product.name,
+      hsCode: product.hsCode ?? '',
+      grade: product.grade ?? '',
+      unitPrice: product.price ?? 0,
+    });
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="border border-[#1f1f1f] rounded-md overflow-x-auto bg-[#0a0a0a]">
+        <table className="w-full text-[11.5px] leading-[16px]">
+          <thead>
+            <tr className="border-b border-[#1f1f1f] bg-[#0f0f0f]">
+              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left w-8">#</th>
+              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left">Product</th>
+              {showCustomerDescription && (
+                <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left">Description</th>
+              )}
+              {showGrade && (
+                <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left w-[90px]">Grade</th>
+              )}
+              {showHsCode && (
+                <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left w-[90px]">HS code</th>
+              )}
+              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-right w-[90px]">Qty (lbs)</th>
+              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-right w-[110px]">Unit price</th>
+              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-right w-[120px]">Total</th>
+              {!readOnly && <th className="w-8" />}
+            </tr>
+          </thead>
+          <tbody>
+            {items.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={
+                    4
+                    + (showCustomerDescription ? 1 : 0)
+                    + (showGrade ? 1 : 0)
+                    + (showHsCode ? 1 : 0)
+                    + (readOnly ? 0 : 1)
+                  }
+                  className="px-2 py-4 text-center text-slate-600 text-[12px]"
+                >
+                  No line items yet. Click “Add row” to start.
+                </td>
+              </tr>
+            ) : items.map((it, i) => (
+              <tr key={i} className={i < items.length - 1 ? 'border-b border-[#1f1f1f]' : ''}>
+                <td className="px-2 py-1 text-slate-500 font-mono tabular-nums">{i + 1}</td>
+                <td className="px-2 py-1">
+                  {readOnly ? (
+                    <span className="text-slate-100">{it.productName || '—'}</span>
+                  ) : (
+                    <div className="flex gap-1">
+                      <select
+                        value={it.productId ?? ''}
+                        onChange={e => {
+                          const found = productOptions.find(p => p.id === e.target.value);
+                          selectProduct(i, found);
+                        }}
+                        className={cellInput + ' w-[160px] appearance-none'}
+                      >
+                        <option value="">— custom —</option>
+                        {productOptions.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      <Input
+                        value={it.productName}
+                        onChange={e => update(i, { productName: e.target.value })}
+                        placeholder="Product name"
+                        className={cellInput + ' flex-1'}
+                      />
+                    </div>
+                  )}
+                </td>
+                {showCustomerDescription && (
+                  <td className="px-2 py-1">
+                    {readOnly ? (
+                      <span className="text-slate-400">{it.customerDescription || '—'}</span>
+                    ) : (
+                      <Input
+                        value={it.customerDescription ?? ''}
+                        onChange={e => update(i, { customerDescription: e.target.value })}
+                        placeholder="Customer PO ref / description"
+                        className={cellInput}
+                      />
+                    )}
+                  </td>
+                )}
+                {showGrade && (
+                  <td className="px-2 py-1">
+                    {readOnly ? (
+                      <span className="text-slate-400 font-mono tabular-nums">{it.grade || '—'}</span>
+                    ) : (
+                      <Input
+                        value={it.grade ?? ''}
+                        onChange={e => update(i, { grade: e.target.value })}
+                        className={cellInputMono}
+                      />
+                    )}
+                  </td>
+                )}
+                {showHsCode && (
+                  <td className="px-2 py-1">
+                    {readOnly ? (
+                      <span className="text-slate-400 font-mono tabular-nums">{it.hsCode || '—'}</span>
+                    ) : (
+                      <Input
+                        value={it.hsCode ?? ''}
+                        onChange={e => update(i, { hsCode: e.target.value })}
+                        className={cellInputMono}
+                      />
+                    )}
+                  </td>
+                )}
+                <td className="px-2 py-1 text-right">
+                  {readOnly ? (
+                    <span className="font-mono tabular-nums text-slate-200">{(Number(it.quantity) || 0).toLocaleString('en-US')}</span>
+                  ) : (
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={it.quantity}
+                      onChange={e => update(i, { quantity: Number(e.target.value) || 0 })}
+                      className={cellInputMono + ' text-right'}
+                    />
+                  )}
+                </td>
+                <td className="px-2 py-1 text-right">
+                  {readOnly ? (
+                    <span className="font-mono tabular-nums text-slate-200">{fmtMoney(Number(it.unitPrice) || 0, currency)}</span>
+                  ) : (
+                    <Input
+                      type="number"
+                      min={0}
+                      step={0.0001}
+                      value={it.unitPrice}
+                      onChange={e => update(i, { unitPrice: Number(e.target.value) || 0 })}
+                      className={cellInputMono + ' text-right'}
+                    />
+                  )}
+                </td>
+                <td className="px-2 py-1 text-right font-mono tabular-nums text-slate-100">
+                  {fmtMoney(Number(it.total) || 0, currency)}
+                </td>
+                {!readOnly && (
+                  <td className="px-1 py-1 text-right">
+                    <button
+                      type="button"
+                      onClick={() => removeRow(i)}
+                      title="Remove row"
+                      className="p-1 rounded-sm text-slate-500 hover:text-red-400 hover:bg-red-500/10"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+            <tr className="border-t border-[#1f1f1f] bg-[#0f0f0f]">
+              <td className="px-2 py-1" colSpan={
+                2
+                + (showCustomerDescription ? 1 : 0)
+                + (showGrade ? 1 : 0)
+                + (showHsCode ? 1 : 0)
+              } />
+              <td className="px-2 py-1 text-right text-slate-500 uppercase tracking-wider text-[10px]">
+                Total {totalQty.toLocaleString('en-US')} lbs
+              </td>
+              <td className="px-2 py-1 text-right text-[10px] text-slate-500 uppercase tracking-wider">Subtotal</td>
+              <td className="px-2 py-1 text-right font-mono tabular-nums text-indigo-300 font-semibold">
+                {fmtMoney(subtotal, currency)}
+              </td>
+              {!readOnly && <td />}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {!readOnly && (
+        <div className="flex items-center justify-between">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={addRow}
+            className="bg-[#161616] border border-[#1f1f1f] text-slate-200 hover:bg-[#1a1a1a] h-7 px-2.5 text-[12px]"
+          >
+            <Plus size={12} /> Add row
+          </Button>
+          <span className="text-[11px] text-slate-500">
+            {items.length} {items.length === 1 ? 'item' : 'items'}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export const computeSubtotal = (items: LineItem[]): number =>
+  round2(items.reduce((s, it) => s + (Number(it.total) || 0), 0));
+
+export const sanitizeItems = (items: LineItem[]): LineItem[] =>
+  items
+    .filter(it => (Number(it.quantity) || 0) > 0 || (it.productName ?? '').trim() !== '')
+    .map(it => ({
+      productId: it.productId,
+      productName: (it.productName ?? '').trim(),
+      customerDescription: it.customerDescription ?? '',
+      hsCode: it.hsCode ?? '',
+      grade: it.grade ?? '',
+      quantity: Number(it.quantity) || 0,
+      unitPrice: Number(it.unitPrice) || 0,
+      total: round2((Number(it.quantity) || 0) * (Number(it.unitPrice) || 0)),
+    }));

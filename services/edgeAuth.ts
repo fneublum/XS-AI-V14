@@ -75,11 +75,17 @@ export async function issueEdgeToken(
     password: string,
 ): Promise<IssueResult> {
     const { url, key } = getSupabaseConfig();
+    // The Supabase Functions gateway rejects with
+    // UNAUTHORIZED_NO_AUTH_HEADER when `Authorization` is absent, even
+    // for functions deployed with --no-verify-jwt. For this login
+    // bootstrap call we haven't got a user token yet, so use the anon
+    // key as the bearer — the function itself verifies credentials.
     const resp = await fetch(`${url}/functions/v1/auth-issue`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             apikey: key,
+            Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify({ username, password }),
     });

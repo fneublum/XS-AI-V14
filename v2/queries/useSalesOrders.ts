@@ -1,47 +1,96 @@
-// Phase 3B — Sales orders list (full, not just recent).
-//
-// Supports server-side status filter + client-side search. The v1 app
-// ships rich per-row items; the list view only needs the header fields
-// so we project down for a light payload.
+// Phase 3B — Sales orders. Full v1 field parity including items.
 
 import { useCompany } from '../providers/CompanyProvider';
 import { getSupabaseClient } from '../../services/supabase';
 import { useSupabaseQuery } from './useSupabaseQuery';
+import type { LineItem } from '../components/LineItemsEditor';
 
 export interface SalesOrder {
   id: string;
-  orderNumber: string;
+  companyId: string | null;
+  customerId: string | null;
   customerName: string;
+  orderNumber: string;
+  orderDate: string | null;
+  orderType: string | null;
   status: string;
+  items: LineItem[];
   totalAmount: number;
   currency: string;
-  orderDate: string;
-  createdAt: string;
   paymentTerms: string | null;
   incoterm: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  approvedBy: string | null;
+  createdAt: string;
+  saleType: string | null;
+  deliveryMethod: string | null;
+  deliveryAddress: string | null;
   deliveryDate: string | null;
+  pod: string | null;
+  poa: string | null;
+  pickupLocation: string | null;
+  bankId: string | null;
+  notifyPartyId: string | null;
+  notifyPartyName: string | null;
 }
 
 interface RawRow {
   id: string;
-  orderNumber: string | null;
+  companyId: string | null;
+  customerId: string | null;
   customerName: string | null;
-  status: string | null;
-  totalAmount: number | null;
-  currency: string | null;
+  orderNumber: string | null;
   orderDate: string | null;
-  createdAt: string | null;
+  orderType: string | null;
+  status: string | null;
+  items: unknown;
+  totalAmount: number | string | null;
+  currency: string | null;
   paymentTerms: string | null;
   incoterm: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  approvedBy: string | null;
+  createdAt: string | null;
+  saleType: string | null;
+  deliveryMethod: string | null;
+  deliveryAddress: string | null;
   deliveryDate: string | null;
+  pod: string | null;
+  poa: string | null;
+  pickupLocation: string | null;
+  bankId: string | null;
+  notifyPartyId: string | null;
+  notifyPartyName: string | null;
 }
 
 function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
   return companyId === 'ALL' ? q : (q.eq('"companyId"', companyId) as Q);
 }
 
+const parseItems = (raw: unknown): LineItem[] => {
+  try {
+    let arr: unknown = raw;
+    if (typeof raw === 'string') arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.map((r: any) => ({
+      productId: r?.productId ?? undefined,
+      productName: r?.productName ?? r?.name ?? '',
+      customerDescription: r?.customerDescription ?? r?.description ?? '',
+      hsCode: r?.hsCode ?? '',
+      grade: r?.grade ?? '',
+      quantity: Number(r?.quantity) || 0,
+      unitPrice: Number(r?.unitPrice ?? r?.price) || 0,
+      total: Number(r?.total) || ((Number(r?.quantity) || 0) * (Number(r?.unitPrice ?? r?.price) || 0)),
+    }));
+  } catch {
+    return [];
+  }
+};
+
 export interface UseSalesOrdersOptions {
-  statusFilter?: string;  // 'ALL' or specific status
+  statusFilter?: string;
   search?: string;
   limit?: number;
 }
@@ -61,7 +110,7 @@ export function useSalesOrders({
       let q = scopeByCompany(
         supabase
           .from('sales_orders')
-          .select('id, orderNumber, customerName, status, totalAmount, currency, orderDate, createdAt, paymentTerms, incoterm, deliveryDate')
+          .select('id, companyId, customerId, customerName, orderNumber, orderDate, orderType, status, items, totalAmount, currency, paymentTerms, incoterm, notes, createdBy, approvedBy, createdAt, saleType, deliveryMethod, deliveryAddress, deliveryDate, pod, poa, pickupLocation, bankId, notifyPartyId, notifyPartyName')
           .order('createdAt', { ascending: false })
           .limit(limit),
         currentCompanyId,
@@ -82,16 +131,32 @@ export function useSalesOrders({
 
       return ((data as RawRow[] | null) ?? []).map(r => ({
         id: r.id,
-        orderNumber: r.orderNumber ?? r.id,
+        companyId: r.companyId,
+        customerId: r.customerId,
         customerName: r.customerName ?? '—',
+        orderNumber: r.orderNumber ?? r.id,
+        orderDate: r.orderDate,
+        orderType: r.orderType,
         status: r.status ?? 'PENDING',
+        items: parseItems(r.items),
         totalAmount: Number(r.totalAmount) || 0,
         currency: r.currency ?? 'USD',
-        orderDate: r.orderDate ?? '',
-        createdAt: r.createdAt ?? '',
         paymentTerms: r.paymentTerms,
         incoterm: r.incoterm,
+        notes: r.notes,
+        createdBy: r.createdBy,
+        approvedBy: r.approvedBy,
+        createdAt: r.createdAt ?? '',
+        saleType: r.saleType,
+        deliveryMethod: r.deliveryMethod,
+        deliveryAddress: r.deliveryAddress,
         deliveryDate: r.deliveryDate,
+        pod: r.pod,
+        poa: r.poa,
+        pickupLocation: r.pickupLocation,
+        bankId: r.bankId,
+        notifyPartyId: r.notifyPartyId,
+        notifyPartyName: r.notifyPartyName,
       }));
     },
   );

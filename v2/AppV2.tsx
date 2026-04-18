@@ -16,6 +16,7 @@ import { SupplierDrawer }      from './components/SupplierDrawer';
 import { InvoiceDrawer }       from './components/InvoiceDrawer';
 import { PurchaseOrderDrawer } from './components/PurchaseOrderDrawer';
 import { CommissionDrawer } from './components/CommissionDrawer';
+import { ProductDrawer }    from './components/ProductDrawer';
 import { ShortcutsHelp, ShortcutGroup } from './layout/ShortcutsHelp';
 import { getSupabaseClient } from '../services/supabase';
 import { SalesOrder } from './queries/useSalesOrders';
@@ -37,6 +38,7 @@ const InvoicesV2        = lazy(() => import('./routes/InvoicesV2'));
 const ReceivablesV2     = lazy(() => import('./routes/ReceivablesV2'));
 const PayablesV2        = lazy(() => import('./routes/PayablesV2'));
 const CommissionsV2     = lazy(() => import('./routes/CommissionsV2'));
+const CustomerBalancesV2 = lazy(() => import('./routes/CustomerBalancesV2'));
 const AdminUsersV2      = lazy(() => import('./routes/AdminUsersV2'));
 const AdminCompaniesV2  = lazy(() => import('./routes/AdminCompaniesV2'));
 const AiDashboardV2         = lazy(() => import('./routes/AiDashboardV2'));
@@ -93,6 +95,7 @@ const sections = [
       { id: 'invoices',     label: 'Invoices' },
       { id: 'receivables',  label: 'Receivables' },
       { id: 'payables',     label: 'Payables' },
+      { id: 'customer-balances', label: 'Customer Balances' },
       { id: 'commissions',  label: 'Commissions' },
       { id: 'pl',           label: 'P&L' },
       { id: 'sopici',       label: 'SO/PI/CI Commissions' },
@@ -140,6 +143,7 @@ const routeTitles: Record<string, string> = {
   'invoices':        'Invoices',
   'receivables':     'Receivables',
   'payables':        'Payables',
+  'customer-balances': 'Customer Balances',
   'commissions':     'Commissions',
   'users':           'Users',
   'companies':       'Companies',
@@ -185,6 +189,7 @@ const routeSection: Record<string, string> = {
   'invoices':        'Finance',
   'receivables':     'Finance',
   'payables':        'Finance',
+  'customer-balances': 'Finance',
   'commissions':     'Finance',
   'pl':              'Finance',
   'sopici':          'Finance',
@@ -261,6 +266,7 @@ const AppV2Inner: React.FC = () => {
     invoice, closeInvoice,
     purchaseOrder, closePurchaseOrder,
     commission, closeCommission,
+    product, closeProduct,
   } = useEditor();
 
   const navigate = useCallback((id: string) => {
@@ -386,16 +392,32 @@ const AppV2Inner: React.FC = () => {
         }>).map(r => {
           const order: SalesOrder = {
             id: r.id,
-            orderNumber: r.orderNumber ?? r.id,
+            companyId: null,
+            customerId: null,
             customerName: r.customerName ?? '—',
+            orderNumber: r.orderNumber ?? r.id,
+            orderDate: r.orderDate ?? '',
+            orderType: null,
             status: r.status ?? 'PENDING',
+            items: [],
             totalAmount: Number(r.totalAmount) || 0,
             currency: r.currency ?? 'USD',
-            orderDate: r.orderDate ?? '',
-            createdAt: r.createdAt ?? '',
             paymentTerms: r.paymentTerms,
             incoterm: r.incoterm,
+            notes: null,
+            createdBy: null,
+            approvedBy: null,
+            createdAt: r.createdAt ?? '',
+            saleType: null,
+            deliveryMethod: null,
+            deliveryAddress: null,
             deliveryDate: r.deliveryDate,
+            pod: null,
+            poa: null,
+            pickupLocation: null,
+            bankId: null,
+            notifyPartyId: null,
+            notifyPartyName: null,
           };
           return {
             id: `so.${r.id}`,
@@ -459,6 +481,7 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'invoices'        && <InvoicesV2 />}
           {activeId === 'receivables'     && <ReceivablesV2 />}
           {activeId === 'payables'        && <PayablesV2 />}
+          {activeId === 'customer-balances' && <CustomerBalancesV2 />}
           {activeId === 'commissions'     && <CommissionsV2 />}
           {activeId === 'users'           && <AdminUsersV2 />}
           {activeId === 'companies'       && <AdminCompaniesV2 />}
@@ -518,6 +541,11 @@ const AppV2Inner: React.FC = () => {
       <CommissionDrawer
         commission={commission.entity}
         onOpenChange={open => { if (!open) closeCommission(); }}
+      />
+      <ProductDrawer
+        product={product.entity}
+        mode={product.mode}
+        onOpenChange={open => { if (!open) closeProduct(); }}
       />
     </>
   );

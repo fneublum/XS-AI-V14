@@ -16,6 +16,7 @@ import QuickAddModal from '../components/QuickAddModal';
 import { FormattedInput } from '../components/UnitInputs';
 import PDFPreviewModal from '../components/PDFPreviewModal';
 import { sendEmail } from '../services/emailService';
+import { PAYMENT_TERM_OPTIONS } from '../constants';
 
 // ============================================================================
 // TYPES
@@ -173,6 +174,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
     const [companies, setCompanies] = useState<Company[]>([]);
     const [plFilter, setPlFilter] = useState<'AVAILABLE' | 'INVOICED'>('AVAILABLE');
     const [invoiceFilterNumber, setInvoiceFilterNumber] = useState<string[]>([]);
+    const [invoiceSearchQuery, setInvoiceSearchQuery] = useState('');
     const [invoiceFilterCustomer, setInvoiceFilterCustomer] = useState<string[]>([]);
     const [openFilterPopup, setOpenFilterPopup] = useState<'invoice' | 'customer' | null>(null);
 
@@ -194,7 +196,8 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
     const [poa, setPoa] = useState('');
     const [incoterm, setIncoterm] = useState('');
     const [paymentTerms, setPaymentTerms] = useState('ADV - 100% ADVANCED');
-    const [memo, setMemo] = useState('');
+    const DEFAULT_MEMO = 'NO WOOD PRESENT ON THE CARGO\nManufacturer: Various generators in the USA. Goods collected and consolidated by EC4 ENTERPRISES LLC';
+    const [memo, setMemo] = useState(DEFAULT_MEMO);
     const [invoiceItems, setInvoiceItems] = useState<InvoiceLineItem[]>([]);
     const [containers, setContainers] = useState<ContainerRow[]>([]);
     const [banks, setBanks] = useState<BankProfile[]>([]);
@@ -211,6 +214,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
     const [incotermsOptions] = useState(['EXW', 'FCA', 'CPT', 'CIP', 'DAT', 'DAP', 'DDP', 'FAS', 'FOB', 'CFR', 'CIF']);
 
     const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
+    const [emailDocSelection, setEmailDocSelection] = useState({ invoice: true, pl: true, sli: false, bol: false });
     const [selectedDocInvoice, setSelectedDocInvoice] = useState<Invoice | null>(null);
     const [uploadingBOL, setUploadingBOL] = useState(false);
     const bolInputRef = useRef<HTMLInputElement>(null);
@@ -268,20 +272,22 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
     // Sync savedPLs with packingLists prop when it changes
     useEffect(() => {
         console.log('[PLInvoiceEngine] packingLists PROP received:', packingLists?.length || 0, 'items');
-        if (packingLists && packingLists.length > 0) {
-            setSavedPLs(packingLists);
-            console.log('[PLInvoiceEngine] Synced savedPLs from prop:', packingLists.length, 'items');
-        }
+        setSavedPLs(packingLists || []);
     }, [packingLists]);
 
     // Sync allBookings with bookings prop when it changes
     useEffect(() => {
         console.log('[PLInvoiceEngine] bookings PROP received:', bookings?.length || 0, 'items');
-        if (bookings && bookings.length > 0) {
-            setAllBookings(bookings);
-            console.log('[PLInvoiceEngine] Synced allBookings from prop:', bookings.length, 'items');
-        }
+        setAllBookings(bookings || []);
     }, [bookings]);
+
+    // Auto-populate invoice items when entering CREATE_INVOICE step with PL data
+    useEffect(() => {
+        if (currentStep === 'CREATE_INVOICE' && plItems.length > 0 && invoiceItems.length === 0) {
+            console.log('[PLInvoiceEngine] Auto-populating invoice from PL on step entry');
+            populateFromPL();
+        }
+    }, [currentStep]);
 
     // Save a new booking to the bookings table with status AVAILABLE
     const saveNewBooking = async (newBookingNumber: string) => {
@@ -325,24 +331,30 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
     };
 
     // Fetch Logo (dedicated effect - mimics InvoiceEngine.tsx)
-    // DEBUG: Log incoming invoices to verify memo is being passed
+    // Sync savedInvoices with invoices prop
     useEffect(() => {
         console.log('[PLInvoiceEngine] INVOICES PROP RECEIVED:', invoices.length, 'invoices');
-        if (invoices.length > 0) {
-            // Log ALL invoices with their bolUrl status
-            console.log('[PLInvoiceEngine] === INVOICES BOL STATUS ===');
-            invoices.forEach(inv => {
-                const bolUrl = (inv as any).bolUrl || (inv as any).bolurl;
-                if (bolUrl) {
-                    console.log(`[PLInvoiceEngine] ${inv.invoiceNumber}: HAS BOL (length: ${bolUrl.length})`);
-                }
-            });
-            console.log('[PLInvoiceEngine] Sample invoice memo field:', (invoices[0] as any).memo);
-            console.log('[PLInvoiceEngine] Sample invoice bolUrl:', (invoices[0] as any).bolUrl, 'bolurl:', (invoices[0] as any).bolurl);
-            // Sync savedInvoices with prop so modal gets fresh data
-            setSavedInvoices(invoices);
-        }
+        setSavedInvoices(invoices || []);
     }, [invoices]);
+
+    // v2 → v1 handshake: when v2's Invoices row action triggers the
+    // Delivery Documents flow, it writes the invoice id to
+    // sessionStorage and navigates here. Auto-open the docs modal
+    // for that invoice once it's loaded, then clear the key so
+    // refreshes don't re-open it.
+    useEffect(() => {
+        if (savedInvoices.length === 0) return;
+        let pendingId: string | null = null;
+        try { pendingId = sessionStorage.getItem('xs_pending_delivery_docs'); }
+        catch { pendingId = null; }
+        if (!pendingId) return;
+        const match = savedInvoices.find(i => i.id === pendingId);
+        if (!match) return;
+        try { sessionStorage.removeItem('xs_pending_delivery_docs'); }
+        catch { /* noop */ }
+        setSelectedDocInvoice(match);
+        setDocumentsModalOpen(true);
+    }, [savedInvoices]);
 
     useEffect(() => {
         const fetchLogo = async () => {
@@ -416,13 +428,13 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
 
         try {
             // Fetch products
-            const { data: productsData } = await client.from('products').select('*');
+            const { data: productsData } = await client.from('products').select('*').or('productType.is.null,productType.eq.resale').eq('companyId', currentCompanyId);
             if (productsData) setProducts(productsData);
         } catch (e) { console.error('Error fetching products:', e); }
 
         try {
             // Fetch suppliers
-            const { data: suppliersData } = await client.from('suppliers').select('*');
+            const { data: suppliersData } = await client.from('suppliers').select('*').eq('companyId', currentCompanyId);
             if (suppliersData) setSuppliers(suppliersData);
         } catch (e) { console.error('Error fetching suppliers:', e); }
 
@@ -445,9 +457,11 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             // Fetch saved PLs - prefer larger dataset (prop vs internal fetch)
             const { data: plData, error: plError } = await client.from('packing_lists').select('*').eq('companyId', currentCompanyId).order('createdAt', { ascending: false });
             console.log('[PLInvoiceEngine] Fetched packing_lists:', plData?.length || 0, 'items, error:', plError, 'prop has:', packingLists?.length || 0);
-            // Only use internal fetch if it has MORE data than the prop (prop comes from App.tsx with full select)
-            if (plData && plData.length > 0 && plData.length >= (packingLists?.length || 0)) {
+            // Always use company-filtered fetch for PLs
+            if (plData && plData.length > 0) {
                 setSavedPLs(plData);
+            } else {
+                setSavedPLs([]);
             }
         } catch (e) { console.error('Error fetching packing_lists:', e); }
 
@@ -459,9 +473,9 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
 
         try {
             // Fetch ALL bookings (no company filter to ensure dropdown is populated)
-            const { data: bookingsData, error: bookingsError } = await client.from('bookings').select('id, bookingNumber, salesOrderId, customer, status, pol').order('createdAt', { ascending: false });
+            const { data: bookingsData, error: bookingsError } = await client.from('bookings').select('id, bookingNumber, salesOrderId, customer, status, pol, agentName').eq('companyId', currentCompanyId).order('createdAt', { ascending: false });
             console.log('[PLInvoiceEngine] Fetched bookings:', bookingsData?.length || 0, 'error:', bookingsError);
-            if (bookingsData && bookingsData.length > 0) setAllBookings(bookingsData as any);
+            if (bookingsData) setAllBookings(bookingsData as any);
         } catch (e) { console.error('Error fetching bookings:', e); }
         // Logo is fetched in dedicated useEffect above
     };
@@ -507,6 +521,35 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
     // ========================================================================
     // UTILITY FUNCTIONS
     // ========================================================================
+
+    // Save PDF with native file picker dialog (lets user choose folder)
+    const saveWithPicker = async (doc: any, defaultFileName: string) => {
+        try {
+            if ('showSaveFilePicker' in window) {
+                const handle = await (window as any).showSaveFilePicker({
+                    suggestedName: defaultFileName,
+                    types: [{
+                        description: 'PDF Document',
+                        accept: { 'application/pdf': ['.pdf'] }
+                    }]
+                });
+                const writable = await handle.createWritable();
+                const pdfBlob = doc.output('blob');
+                await writable.write(pdfBlob);
+                await writable.close();
+            } else {
+                // Fallback for browsers that don't support File System Access API
+                doc.save(defaultFileName);
+            }
+        } catch (err: any) {
+            // User cancelled the dialog
+            if (err.name !== 'AbortError') {
+                console.error('Save error:', err);
+                doc.save(defaultFileName);
+            }
+        }
+    };
+
     const formatContainerNumber = (val: string) => {
         if (!val) return '';
         return val.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
@@ -561,26 +604,30 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
     // ========================================================================
     const processDocument = async (base64Data: string, mimeType: string, filename: string) => {
         const prompt = `
-            Analyze this Packing List document.
+            Analyze this Packing List / Invoice document.
             Task: Extract shipping data into a structured JSON format.
             
             1. Find the "Booking Number" or "Booking Ref".
                - CRITICAL: Check for the text "CUSTOMER TRUCK". If found, the Booking Number is the value immediately BELOW "CUSTOMER TRUCK".
             2. Find the "Sales Order Number" or "SO Number" or "Order No" or "PO Number" that seems to be the sales reference.
-            3. Extract line items representing Containers. For each container, find:
-               - Container Number
-               - Seal Number
-               - Gross Weight (LBS and KG)
-               - Net Weight (LBS and KG)
-               - Volume / Quantity (e.g., Bales, Cartons, Pallets) -> field "volumes"
-               - Supplier / Manufacturer Name
-               - Product Description
-               - Bill of Lading (BL) Number: Locate "Packing List No." or "Packing List Number" and use this value as the BL Number.
+            3. Extract line items — ONE ITEM PER PRODUCT/MATERIAL listed in the document.
+               - CRITICAL: If the document lists multiple products/materials (even within the same container), each product MUST be a SEPARATE item in the array.
+               - For example, if a document has 3 materials (e.g., "Soft P/C Threads", "Soft Poly/Cotton Selvages", "Hard P/C Slasher") in the same container, return 3 separate items, each with the SAME containerNo and sealNo but their OWN weight, volume, and description.
+               - For each product/material line, extract:
+                  - Container Number (shared if multiple products are in the same container)
+                  - Seal Number (shared if multiple products are in the same container)
+                  - Gross Weight (LBS and KG) for THIS specific product line, NOT the container total
+                  - Net Weight (LBS and KG) for THIS specific product line, NOT the container total
+                  - Volume / Quantity (e.g., Bales, Cartons, Pallets) -> field "volumes" for THIS product only
+                  - Supplier / Manufacturer Name
+                  - Product Description (the material/product name, e.g., "Soft P/C Threads 40%")
+                  - Bill of Lading (BL) Number: Locate "Packing List No." or "Packing List Number" or "Invoice No" and use this value as the BL Number.
             
             Logic:
             - If weights are only in KG, convert to LBS (1 KG = 2.20462 LBS).
             - If weights are only in LBS, convert to KG (1 LBS = 0.453592 KG).
             - Ensure numeric values are numbers, not strings.
+            - NEVER combine multiple products into a single item. Each distinct product/material row in the document = one item in the JSON array.
             
             Return JSON object:
             {
@@ -802,6 +849,8 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                 const { data: insertedPL, error } = await client.from('packing_lists').insert(packingList).select('id, plNumber, blNumber').single();
                 if (error) throw error;
                 console.log('[saveToDatabase] INSERT result:', JSON.stringify(insertedPL));
+                // Mark as editing so subsequent saves do UPDATE instead of INSERT
+                setEditingPLId(plId);
             }
 
             // Refresh saved PLs list
@@ -870,36 +919,90 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
         doc.setFontSize(14);
         doc.text(`Resume per Product - PL: ${plNumber || 'Draft'}`, 14, 15);
 
+        // Use System Description (productDescription/productName) as priority over PL description
+        const getSystemDesc = (item: PLItem) => {
+            if (item.productId && products.length > 0) {
+                const prod = products.find((p: any) => p.id === item.productId);
+                if (prod) return prod.grade ? `${prod.name} (${prod.grade})` : prod.name;
+            }
+            return item.productDescription || item.productName || item.description || '';
+        };
+
         const tableBody = plItems.map(item => [
-            item.description || item.productName || '',
+            getSystemDesc(item),
             item.containerNo || '',
             item.sealNo || '',
-            (item.grossLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (item.netLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            (item.grossLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (item.netLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             (item.grossKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             (item.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             item.volumes || 0,
-            item.supplier || '',
             item.blNumber || ''
         ]);
 
         tableBody.push([
             'TOTALS', '', '',
-            totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totals.volumes.toLocaleString(),
-            '', ''
+            ''
         ]);
 
         autoTable(doc, {
-            head: [['Product Desc', 'Container No.', 'Seal No.', 'Gross (lbs)', 'Net (lbs)', 'Gross (kg)', 'Net (kg)', 'Volumes', 'Supplier', 'BL#']],
+            head: [['Product Desc (System)', 'Container No.', 'Seal No.', 'Gross (lbs)', 'Net (lbs)', 'Gross (kg)', 'Net (kg)', 'Volumes', 'BL#']],
             body: tableBody,
             startY: 25,
             theme: 'grid',
             headStyles: { fillColor: [41, 128, 185], fontSize: 8 },
             bodyStyles: { fontSize: 8 },
+            footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' }
+        });
+
+        // --- Summary per System Description ---
+        const productSummary: Record<string, { grossLbs: number; netLbs: number; grossKg: number; netKg: number; volumes: number }> = {};
+        plItems.forEach(item => {
+            const key = getSystemDesc(item) || 'Unassigned';
+            if (!productSummary[key]) {
+                productSummary[key] = { grossLbs: 0, netLbs: 0, grossKg: 0, netKg: 0, volumes: 0 };
+            }
+            productSummary[key].grossLbs += item.grossLbs || 0;
+            productSummary[key].netLbs += item.netLbs || 0;
+            productSummary[key].grossKg += item.grossKg || 0;
+            productSummary[key].netKg += item.netKg || 0;
+            productSummary[key].volumes += item.volumes || 0;
+        });
+
+        const summaryBody = Object.entries(productSummary).map(([desc, vals]) => [
+            desc,
+            vals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            vals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            vals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            vals.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            vals.volumes.toLocaleString()
+        ]);
+
+        summaryBody.push([
+            'TOTALS',
+            totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totals.volumes.toLocaleString()
+        ]);
+
+        const lastTableY = (doc as any).lastAutoTable?.finalY || 80;
+        doc.setFontSize(12);
+        doc.text('Summary per Product (System Description)', 14, lastTableY + 10);
+
+        autoTable(doc, {
+            head: [['System Description', 'Gross (lbs)', 'Net (lbs)', 'Gross (kg)', 'Net (kg)', 'Volumes']],
+            body: summaryBody,
+            startY: lastTableY + 15,
+            theme: 'grid',
+            headStyles: { fillColor: [142, 68, 173], fontSize: 9 },
+            bodyStyles: { fontSize: 9 },
             footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' }
         });
 
@@ -912,7 +1015,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
         setPreviewTitle(`Product Resume - ${plNumber || 'Draft'}`);
         setPreviewFileName(fileName);
         setPreviewBlob(pdfBlob);
-        setPreviewDownloadFn(() => () => doc.save(fileName));
+        setPreviewDownloadFn(() => () => saveWithPicker(doc, fileName));
     };
 
     const exportContainerPDF = () => {
@@ -922,8 +1025,8 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
         const containerBody = containerSummary.map((c: any) => [
             c.containerNo,
             c.sealNo || '',
-            (c.grossLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (c.netLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            (c.grossLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (c.netLbs || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             (c.grossKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             (c.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             c.volumes || 0
@@ -931,8 +1034,8 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
 
         containerBody.push([
             'TOTALS', '',
-            totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totals.volumes.toLocaleString()
@@ -957,7 +1060,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
         setPreviewTitle(`Container Resume - ${plNumber || 'Draft'}`);
         setPreviewFileName(fileName);
         setPreviewBlob(pdfBlob);
-        setPreviewDownloadFn(() => () => doc.save(fileName));
+        setPreviewDownloadFn(() => () => saveWithPicker(doc, fileName));
     };
 
     // Populate invoice items from PL items
@@ -974,8 +1077,23 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
             setBillToName(consignee);
         }
 
+        // Carry booking number from PL into invoice transport ref
+        if (bookingNumber && !transportRef) {
+            setTransportRef(bookingNumber);
+        }
+
         console.log('[populateFromPL] PL Items:', plItems.length);
         console.log('[populateFromPL] Products loaded:', products.length);
+
+        // Look up the matched Sales Order for price resolution
+        const matchedSO = soNumber ? salesOrders.find(so => so.orderNumber === soNumber) : null;
+        if (matchedSO) {
+            console.log('[populateFromPL] Matched SO:', matchedSO.orderNumber, '| Customer:', matchedSO.customerName, '| Items:', matchedSO.items?.length);
+            // Auto-set customer from SO
+            if (matchedSO.customerName && !billToName) {
+                setBillToName(matchedSO.customerName);
+            }
+        }
 
         // Convert PL items to invoice items with proper resolution
         const newInvoiceItems: InvoiceLineItem[] = plItems.map((plItem, idx) => {
@@ -1016,19 +1134,43 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                 productDescription = plItem.description || plItem.productDescription || 'Product';
             }
 
+            // 5. SO Price Resolution — match PL product to SO item by description
+            let soUnitPrice: number | null = null;
+            let soCustomerDesc = '';
+            if (matchedSO?.items?.length) {
+                const descLower = (productDescription || '').toLowerCase().trim();
+                const plNameLower = (plItem.productName || '').toLowerCase().trim();
+                // Try exact match first, then partial match
+                const soItem = matchedSO.items.find(si => {
+                    const siName = (si.productName || '').toLowerCase().trim();
+                    return siName === descLower || siName === plNameLower;
+                }) || matchedSO.items.find(si => {
+                    const siName = (si.productName || '').toLowerCase().trim();
+                    return (descLower && siName.includes(descLower)) || (descLower && descLower.includes(siName)) ||
+                           (plNameLower && siName.includes(plNameLower)) || (plNameLower && plNameLower.includes(siName));
+                });
+                if (soItem) {
+                    soUnitPrice = soItem.unitPrice;
+                    soCustomerDesc = soItem.customerDescription || '';
+                    console.log(`[populateFromPL] SO price match: "${productDescription}" → $${soItem.unitPrice}/unit from SO ${matchedSO.orderNumber}`);
+                }
+            }
+
+            const finalUnitPrice = soUnitPrice ?? Number(plItem.unitPrice || 0);
+
             return {
                 ...plItem, // Preserve all original properties
                 id: `inv_${Date.now()}_${idx}`,
                 productId: resolvedProductId,
                 description: productDescription,
-                customerDescription: plItem.customerDescription || '',
+                customerDescription: soCustomerDesc || plItem.customerDescription || '',
                 hsCode: resolvedHsCode,
                 quantity: Number(plItem.netLbs || plItem.quantity || 0),
                 unit: 'LBS',
-                unitPrice: Number(plItem.unitPrice || 0),
-                unitPriceLbs: Number(plItem.unitPrice || 0),
-                unitPriceKg: Number((plItem.unitPrice || 0) / 0.453592),
-                amount: Number(plItem.amount || 0),
+                unitPrice: finalUnitPrice,
+                unitPriceLbs: finalUnitPrice,
+                unitPriceKg: Number(finalUnitPrice / 0.453592),
+                amount: Number(plItem.netLbs || plItem.quantity || 0) * finalUnitPrice,
                 containerNo: plItem.containerNo || '',
                 sealNo: plItem.sealNo || '',
                 grossLbs: Number(plItem.grossLbs || 0),
@@ -1145,7 +1287,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                 invoiceDate: invoiceDate,
                 date: invoiceDate,
                 billToName: billToName,
-                soldTo: billToName,
+                soldTo: consignee || billToName,
                 customerPo: customerPo,
                 shipperName: shipper || supplier,
                 shipper: shipper,
@@ -1267,7 +1409,7 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
         // Load shipper/supplier/consignee/bookingNumber from saved invoice
         setShipper((inv as any).shipper || '');
         setSupplier((inv as any).supplier || '');
-        setConsignee((inv as any).consignee || '');
+        setConsignee((inv as any).consignee || (inv as any).shipTo || (inv as any).soldTo || '');
         setBookingNumber((inv as any).bookingNumber || inv.transportRef || '');
 
         // Use directly fetched memo first, fall back to inv.memo
@@ -1510,12 +1652,89 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
         setEmailStatus({ show: false, success: false, message: '' });
 
         try {
-            // Get customer email
+            // Get customer / bill-to emails
             const customer = customers.find(c => c.name === (inv.billToName || inv.soldTo));
-            const toEmails = brMode ? 'felipe@ec4.enterprises' : [customer?.email, customer?.email2].filter(Boolean).join('; ');
-            const ccEmail = brMode ? '' : (customer?.brokerEmail || '');
+            const consigneeCustomer = customers.find(c => c.name === (inv.consignee || inv.shipTo));
+            const customerForEmail = consigneeCustomer || customer;
 
-            console.log('[Email] Preparing email draft for', inv.invoiceNumber, brMode ? '(BR MODE)' : '');
+            let toEmails = '';
+            let ccEmail = '';
+
+            if (brMode) {
+                // BR MODE: TO = customer email, CC = cargo agent + broker
+                toEmails = [customerForEmail?.email, customerForEmail?.email2].filter(Boolean).join('; ');
+                const ccParts: string[] = [];
+                // Add broker email
+                if (customerForEmail?.brokerEmail) ccParts.push(customerForEmail.brokerEmail);
+                // Look up cargo agent email from DB
+                try {
+                    const linkedBL = billOfLadings.find(bl => bl.blNumber === ((inv as any).bl || inv.transportRef || (inv as any).bookingNumber));
+                    const agentName = linkedBL?.agentName;
+                    if (agentName) {
+                        const client = getSupabaseClient();
+                        if (client) {
+                            const { data: agentData } = await client.from('cargo_agents').select('email, email2').ilike('name', `%${agentName}%`).limit(1);
+                            if (agentData && agentData.length > 0) {
+                                if (agentData[0].email) ccParts.push(agentData[0].email);
+                                if (agentData[0].email2) ccParts.push(agentData[0].email2);
+                            }
+                        }
+                    }
+                } catch (e) { console.warn('[Email][BR] Failed to lookup cargo agent email:', e); }
+                ccEmail = ccParts.filter(Boolean).join('; ');
+            } else {
+                // STANDARD MODE: Merge emails from BOTH Bill To AND Consignee/Customer companies
+                const allToEmails = new Set<string>();
+                const allCcEmails = new Set<string>();
+                // Collect from Bill To company
+                if (customer?.email) allToEmails.add(customer.email);
+                if (customer?.email2) allToEmails.add(customer.email2);
+                if (customer?.brokerEmail) allCcEmails.add(customer.brokerEmail);
+                // Collect from Consignee/Customer company (if different)
+                if (consigneeCustomer && consigneeCustomer.id !== customer?.id) {
+                    if (consigneeCustomer.email) allToEmails.add(consigneeCustomer.email);
+                    if (consigneeCustomer.email2) allToEmails.add(consigneeCustomer.email2);
+                    if (consigneeCustomer.brokerEmail) allCcEmails.add(consigneeCustomer.brokerEmail);
+                }
+                // Look up cargo agent email via booking (direct DB query + flexible matching)
+                try {
+                    const bookingRef = (inv as any).bookingNumber || inv.transportRef;
+                    if (bookingRef) {
+                        const client = getSupabaseClient();
+                        if (client) {
+                            // Query booking directly from DB to get agentName
+                            const { data: bookingData } = await client.from('bookings').select('agentName').eq('bookingNumber', bookingRef).limit(1);
+                            const agentName = bookingData?.[0]?.agentName;
+                            console.log('[Email] Booking lookup:', bookingRef, '→ agentName:', agentName);
+                            if (agentName) {
+                                // Extract significant keywords from agent name (skip common words)
+                                const skipWords = new Set(['inc', 'llc', 'ltd', 'co', 'corp', 'solutions', 'logistics', 'shipping', 'the', 'and', 'of']);
+                                const keywords = agentName.split(/[\s\/,]+/).filter((w: string) => w.length > 2 && !skipWords.has(w.toLowerCase()));
+                                console.log('[Email] Agent keywords:', keywords);
+                                
+                                // Try each keyword with ilike
+                                let foundAgent = false;
+                                for (const keyword of keywords) {
+                                    const { data: agentData } = await client.from('cargo_agents').select('email, email2, name').ilike('name', `%${keyword}%`).limit(1);
+                                    console.log('[Email] Trying keyword:', keyword, '→', agentData);
+                                    if (agentData && agentData.length > 0) {
+                                        if (agentData[0].email) allCcEmails.add(agentData[0].email);
+                                        if (agentData[0].email2) allCcEmails.add(agentData[0].email2);
+                                        foundAgent = true;
+                                        console.log('[Email] ✓ Matched cargo agent:', agentData[0].name, '→ emails:', agentData[0].email, agentData[0].email2);
+                                        break;
+                                    }
+                                }
+                                if (!foundAgent) console.warn('[Email] No cargo agent matched for:', agentName, 'keywords:', keywords);
+                            }
+                        }
+                    }
+                } catch (e) { console.warn('[Email] Failed to lookup cargo agent email:', e); }
+                toEmails = [...allToEmails].join('; ');
+                ccEmail = [...allCcEmails].join('; ');
+            }
+
+            console.log('[Email] Preparing email draft for', inv.invoiceNumber, brMode ? '(BR MODE)' : '', 'TO:', toEmails, 'CC:', ccEmail);
 
 
             // Build attachments array
@@ -1553,46 +1772,61 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                     });
 
                     const newSubtotal = adjustedItems.reduce((sum: number, it: any) => sum + (it.amount || 0), 0);
+                    // BR invoice number: 'EC' + last 2 digits of original invoice number
+                    const origNum = inv.invoiceNumber || '';
+                    const last2 = origNum.replace(/\D/g, '').slice(-2);
+                    const brInvoiceNumber = `EC${last2}`;
                     pdfInv = {
                         ...inv,
+                        invoiceNumber: brInvoiceNumber,
                         items: JSON.stringify(adjustedItems),
                         subtotal: newSubtotal,
                         totalAmount: newSubtotal
                     };
-                    console.log('[Email][BR] Price-adjusted invoice for', customerName, '- new total:', newSubtotal);
+                    console.log('[Email][BR] Price-adjusted invoice for', customerName, '- new total:', newSubtotal, '- BR invoice#:', brInvoiceNumber);
+                }
+            }
+            // BR MODE fallback: always override invoice number even if no price adjustment
+            if (brMode && pdfInv.invoiceNumber === inv.invoiceNumber) {
+                const origNum = inv.invoiceNumber || '';
+                const last2 = origNum.replace(/\D/g, '').slice(-2);
+                pdfInv = { ...pdfInv, invoiceNumber: `EC${last2}` };
+            }
+
+            // 1. Generate Invoice PDF (if selected)
+            if (emailDocSelection.invoice) {
+                try {
+                    const invoiceDoc = await generateInvoicePDF(pdfInv, false);
+                    const invoiceBase64 = invoiceDoc.output('datauristring').split(',')[1];
+                    attachments.push({
+                        name: `Invoice_${pdfInv.invoiceNumber || 'unknown'}.pdf`,
+                        contentBytes: invoiceBase64,
+                        contentType: 'application/pdf'
+                    });
+                    console.log('[Email] Invoice PDF generated');
+                } catch (e) {
+                    console.error('[Email] Failed to generate Invoice PDF:', e);
                 }
             }
 
-            // 1. Generate Invoice PDF
-            try {
-                const invoiceDoc = await generateInvoicePDF(pdfInv, false);
-                const invoiceBase64 = invoiceDoc.output('datauristring').split(',')[1];
-                attachments.push({
-                    name: `Invoice_${inv.invoiceNumber || 'unknown'}.pdf`,
-                    contentBytes: invoiceBase64,
-                    contentType: 'application/pdf'
-                });
-                console.log('[Email] Invoice PDF generated');
-            } catch (e) {
-                console.error('[Email] Failed to generate Invoice PDF:', e);
+            // 2. Generate Packing List PDF (if selected)
+            if (emailDocSelection.pl) {
+                try {
+                    const plDoc = generatePackingListPDF(pdfInv, false);
+                    const plBase64 = plDoc.output('datauristring').split(',')[1];
+                    attachments.push({
+                        name: `PackingList_${inv.plNumber || inv.invoiceNumber || 'unknown'}.pdf`,
+                        contentBytes: plBase64,
+                        contentType: 'application/pdf'
+                    });
+                    console.log('[Email] Packing List PDF generated');
+                } catch (e) {
+                    console.error('[Email] Failed to generate Packing List PDF:', e);
+                }
             }
 
-            // 2. Generate Packing List PDF
-            try {
-                const plDoc = generatePackingListPDF(pdfInv, false);
-                const plBase64 = plDoc.output('datauristring').split(',')[1];
-                attachments.push({
-                    name: `PackingList_${inv.plNumber || inv.invoiceNumber || 'unknown'}.pdf`,
-                    contentBytes: plBase64,
-                    contentType: 'application/pdf'
-                });
-                console.log('[Email] Packing List PDF generated');
-            } catch (e) {
-                console.error('[Email] Failed to generate Packing List PDF:', e);
-            }
-
-            // 3. Generate SLI PDF (skip in BR mode)
-            if (!brMode) {
+            // 3. Generate SLI PDF (if selected)
+            if (emailDocSelection.sli) {
                 try {
                     const sliDoc = generateSLIPreview(inv);
                     const sliBase64 = sliDoc.output('datauristring').split(',')[1];
@@ -1607,9 +1841,9 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
                 }
             }
 
-            // 4. Add BOL if available (skip in BR mode)
+            // 4. Add BOL if available and selected (skip in BR mode)
             const bolUrl = (inv as any).bolUrl || (inv as any).bolurl;
-            if (!brMode && bolUrl && bolUrl.startsWith('data:')) {
+            if (emailDocSelection.bol && !brMode && bolUrl && bolUrl.startsWith('data:')) {
                 try {
                     const bolBase64 = bolUrl.split(',')[1];
                     const mimeMatch = bolUrl.match(/data:([^;]+);/);
@@ -1641,8 +1875,9 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
 
 Please find attached the documents for order:
 
-• Commercial Invoice: ${inv.invoiceNumber}
+• Commercial Invoice: ${pdfInv.invoiceNumber}
 • Packing List: ${inv.plNumber || 'N/A'}
+• Shipper's Letter of Instruction (SLI)
 
 Total Amount: $${Number(pdfInv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
 
@@ -1652,20 +1887,18 @@ ${companyName}`
 
 Please find attached the shipping documents for your order:
 
-• Commercial Invoice: ${inv.invoiceNumber}
-• Packing List: ${inv.plNumber || 'N/A'}
-• Shipper's Letter of Instruction (SLI)${bolUrl ? '\n• Bill of Lading (BOL)' : ''}
+${emailDocSelection.invoice ? `• Commercial Invoice: ${inv.invoiceNumber}` : ''}${emailDocSelection.pl ? `\n• Packing List: ${inv.plNumber || 'N/A'}` : ''}${emailDocSelection.sli ? '\n• Shipper\'s Letter of Instruction (SLI)' : ''}${emailDocSelection.bol && bolUrl ? '\n• Bill of Lading (BOL)' : ''}
 
 Total Amount: $${Number(inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
 
 If you have any questions, please don't hesitate to contact us.
 
 Best regards,
-${companyName}`;
+${companyName}`.replace(/\n{3,}/g, '\n\n');
 
             // Build subject with booking number if available
             const bookingRef = (inv as any).bookingNumber || inv.transportRef || '';
-            const subjectParts = [brMode ? `BR Documents - Invoice #${inv.invoiceNumber}` : `Shipping Documents - Invoice #${inv.invoiceNumber}`];
+            const subjectParts = [brMode ? `BR Documents - Invoice #${pdfInv.invoiceNumber}` : `Shipping Documents - Invoice #${inv.invoiceNumber}`];
             if (bookingRef) subjectParts.push(`Booking #${bookingRef}`);
 
             // Set draft and open modal
@@ -1771,6 +2004,7 @@ ${companyName}`;
     };
 
     const previewInvoicePDF = async (inv: Invoice) => {
+        setDocumentsModalOpen(false); // Close documents modal to prevent double backdrop
         const doc = await generateInvoicePDF(inv, false); // Generate without auto-download
         const blob = doc.output('blob');
         const url = URL.createObjectURL(blob);
@@ -1778,10 +2012,11 @@ ${companyName}`;
         setPreviewTitle(`Invoice - ${inv.invoiceNumber}`);
         setPreviewFileName(`Invoice_${inv.invoiceNumber || 'unknown'}.pdf`);
         setPreviewBlob(blob);
-        setPreviewDownloadFn(() => () => doc.save(`Invoice_${inv.invoiceNumber || 'unknown'}.pdf`));
+        setPreviewDownloadFn(() => () => saveWithPicker(doc, `Invoice_${inv.invoiceNumber || 'unknown'}.pdf`));
     };
 
     const previewPackingListPDF = (inv: Invoice) => {
+        setDocumentsModalOpen(false); // Close documents modal to prevent double backdrop
         const doc = generatePackingListPDF(inv, false); // Generate without auto-download
         const blob = doc.output('blob');
         const url = URL.createObjectURL(blob);
@@ -1789,10 +2024,11 @@ ${companyName}`;
         setPreviewTitle(`Packing List - ${inv.plNumber || inv.invoiceNumber}`);
         setPreviewFileName(`PackingList_${inv.plNumber || inv.invoiceNumber || 'unknown'}.pdf`);
         setPreviewBlob(blob);
-        setPreviewDownloadFn(() => () => doc.save(`PackingList_${inv.plNumber || inv.invoiceNumber || 'unknown'}.pdf`));
+        setPreviewDownloadFn(() => () => saveWithPicker(doc, `PackingList_${inv.plNumber || inv.invoiceNumber || 'unknown'}.pdf`));
     };
 
     const previewSLIPDF = (inv: Invoice) => {
+        setDocumentsModalOpen(false); // Close documents modal to prevent double backdrop
         const doc = generateSLIPreview(inv); // Use a preview version
         const blob = doc.output('blob');
         const url = URL.createObjectURL(blob);
@@ -1800,7 +2036,7 @@ ${companyName}`;
         setPreviewTitle(`Shipper's Letter of Instruction - ${inv.invoiceNumber}`);
         setPreviewFileName(`SLI_${inv.invoiceNumber || 'unknown'}.pdf`);
         setPreviewBlob(blob);
-        setPreviewDownloadFn(() => () => doc.save(`SLI_${inv.invoiceNumber || 'unknown'}.pdf`));
+        setPreviewDownloadFn(() => () => saveWithPicker(doc, `SLI_${inv.invoiceNumber || 'unknown'}.pdf`));
     };
 
     // SLI Preview version (returns doc instead of saving)
@@ -2113,8 +2349,8 @@ ${companyName}`;
                 doc.text('D', leftCol + 4, y);
                 const descLines = doc.splitTextToSize(descWithHS.substring(0, 70), 78);
                 doc.text(descLines, leftCol + 14, y);
-                doc.text(qtyKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), leftCol + 95, y);
-                doc.text(qtyKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), leftCol + 113, y);
+                doc.text(qtyKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), leftCol + 95, y);
+                doc.text(qtyKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), leftCol + 113, y);
                 doc.text('EAR99', leftCol + 140, y);
                 doc.text(`$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, leftCol + 160, y);
 
@@ -2132,8 +2368,8 @@ ${companyName}`;
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(8);
         doc.text('TOTALS:', leftCol + 14, y);
-        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KG`, leftCol + 95, y);
-        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KG`, leftCol + 113, y);
+        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG`, leftCol + 95, y);
+        doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG`, leftCol + 113, y);
         doc.text(`$${Number(inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, leftCol + 160, y);
         y += 10;
 
@@ -2255,8 +2491,20 @@ ${companyName}`;
         doc.setFont('helvetica', 'bold');
         doc.text('Special Notes:', leftCol, y);
         doc.setFont('helvetica', 'normal');
-        const specialNotes = (inv as any).specialNotes || (inv as any).memo || 'NO WOOD PRESENT IN THE CARGO';
+        const specialNotes = (inv as any).specialNotes || (inv as any).memo || DEFAULT_MEMO;
         doc.text(specialNotes, leftValCol, y);
+
+        // Add EC4 stamp to SLI
+        if (stampUrl && companyName.toUpperCase().includes('EC4')) {
+            try {
+                const stampSize = 30;
+                const stampX = 196 - stampSize;
+                const stampY = Math.min(y + 10, 255);
+                doc.addImage(stampUrl, 'JPEG', stampX, stampY, stampSize, stampSize);
+            } catch (e) {
+                console.warn('[SLI PDF] Could not add stamp:', e);
+            }
+        }
 
         // Return doc for preview (don't save)
         return doc;
@@ -2267,7 +2515,7 @@ ${companyName}`;
     // Wrapper for downloading SLI directly
     const generateSLI = (inv: Invoice) => {
         const doc = generateSLIPreview(inv);
-        doc.save(`SLI_${inv.invoiceNumber || 'unknown'}.pdf`);
+        saveWithPicker(doc, `SLI_${inv.invoiceNumber || 'unknown'}.pdf`);
     };
 
     // Generate Invoice PDF matching EC4 Enterprises layout
@@ -2455,29 +2703,37 @@ ${companyName}`;
         let shipToY = y;
         const shipToName = (inv as any).consignee || billToName;
 
+        // Look up the consignee's customer record (may differ from bill-to)
+        const shipToCustomer = customers.find(c => c.name === shipToName) || customer;
+        let shipToAddress = '';
+        if (shipToCustomer) {
+            const stAddrParts = [shipToCustomer.location, shipToCustomer.city, shipToCustomer.state, shipToCustomer.zip, shipToCustomer.country].filter(Boolean);
+            shipToAddress = stAddrParts.join(', ');
+        }
+
         // Ship To Name
         doc.setFont('helvetica', 'bold');
         const shipToNameLines = doc.splitTextToSize(shipToName, 55);
         doc.text(shipToNameLines, 75, shipToY);
         shipToY += shipToNameLines.length * contentLineHeight;
 
-        // Ship To Address (same customer or consignee address)
+        // Ship To Address (consignee's address)
         doc.setFont('helvetica', 'normal');
-        if (customerAddress) {
-            const addrLines = doc.splitTextToSize(customerAddress, 55);
+        if (shipToAddress) {
+            const addrLines = doc.splitTextToSize(shipToAddress, 55);
             doc.text(addrLines, 75, shipToY);
             shipToY += addrLines.length * contentLineHeight;
         }
 
         // Ship To Email
-        if (customer?.email) {
-            doc.text(customer.email, 75, shipToY);
+        if (shipToCustomer?.email) {
+            doc.text(shipToCustomer.email, 75, shipToY);
             shipToY += contentLineHeight;
         }
 
         // Ship To Tax ID
-        if (customer?.taxId) {
-            doc.text(`CNPJ : ${customer.taxId}`, 75, shipToY);
+        if (shipToCustomer?.taxId) {
+            doc.text(`CNPJ : ${shipToCustomer.taxId}`, 75, shipToY);
         }
 
         // --- TERMS / INCOTERM / POD ROW (removed POA) ---
@@ -2532,40 +2788,39 @@ ${companyName}`;
         const tableHead = [['DESCRIPTION', 'HS CODE', 'QTY (LBS/KG)', 'UNIT PRICE ($/LB - $/KG)', 'AMOUNT US$']];
         console.log('[PDF] Items from invoice:', items.map((i: any) => ({ desc: i.customerDescription?.substring(0, 30), hsCode: i.hsCode })));
 
-        const tableBody = items.map((item: any) => {
-            // Use customerDescription first if present
+        // Consolidate items with same HS Code (NCM) and description into single rows
+        const consolidatedItems: { description: string; hsCode: string; netLbs: number; netKg: number; amount: number }[] = [];
+        const consolidationMap = new Map<string, number>();
+        items.forEach((item: any) => {
             let description = (item.customerDescription || '').trim();
             if (!description && item.productId && products.length > 0) {
                 const prod = products.find((p: any) => p.id === item.productId);
                 if (prod) description = prod.name;
             }
             if (!description) description = `${item.productDescription || item.description || ''}`.trim();
-
-            // Get HS Code directly from item (stored in invoice items JSON)
             const hsCode = item.hsCode || '';
-            console.log('[PDF] Item hsCode:', hsCode, 'for:', description.substring(0, 40));
-
-            // QTY - show both lbs and kgs with units
+            const key = `${hsCode}|||${description}`;
             const netLbs = item.netLbs || item.quantity || 0;
-            const netKgs = netLbs / 2.20462; // Convert lbs to kg
-            const qtyDisplay = `${netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} lbs\n${netKgs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
-
-            // Unit Price - show both $/lb and $/kg
-            const unitPriceLbs = item.unitPriceLbs || item.unitPrice || 0;
-            const unitPriceKgs = unitPriceLbs * 2.20462; // Convert $/lb to $/kg
-            const priceDisplay = `$${unitPriceLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/lb\n$${unitPriceKgs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kg`;
-
-            // Amount with $ and format
+            const netKg = item.netKg || (netLbs * 0.453592);
             const amount = item.amount || 0;
-            const amountDisplay = `$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            const existingIdx = consolidationMap.get(key);
+            if (existingIdx !== undefined) {
+                consolidatedItems[existingIdx].netLbs += netLbs;
+                consolidatedItems[existingIdx].netKg += netKg;
+                consolidatedItems[existingIdx].amount += amount;
+            } else {
+                consolidationMap.set(key, consolidatedItems.length);
+                consolidatedItems.push({ description, hsCode, netLbs, netKg, amount });
+            }
+        });
 
-            return [
-                description,
-                hsCode || '-',
-                qtyDisplay,
-                priceDisplay,
-                amountDisplay
-            ];
+        const tableBody = consolidatedItems.map((ci) => {
+            const qtyDisplay = `${ci.netLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lbs\n${ci.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
+            const unitPriceLbs = ci.netLbs > 0 ? ci.amount / ci.netLbs : 0;
+            const unitPriceKgs = unitPriceLbs * 2.20462;
+            const priceDisplay = `$${unitPriceLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/lb\n$${unitPriceKgs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kg`;
+            const amountDisplay = `$${ci.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            return [ci.description, ci.hsCode || '-', qtyDisplay, priceDisplay, amountDisplay];
         });
 
         autoTable(doc, {
@@ -2586,9 +2841,9 @@ ${companyName}`;
                 halign: 'left'
             },
             columnStyles: {
-                0: { cellWidth: 60 },
+                0: { cellWidth: 50 },
                 1: { cellWidth: 25 },
-                2: { halign: 'right', cellWidth: 25 },
+                2: { halign: 'right', cellWidth: 35 },
                 3: { halign: 'right', cellWidth: 25 },
                 4: { halign: 'right', cellWidth: 35 }
             }
@@ -2596,161 +2851,347 @@ ${companyName}`;
 
         let finalY = (doc as any).lastAutoTable.finalY + 10;
 
-        // --- WEIGHT & CONTAINER INFO ---
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(darkGray);
-
-        const totalNetKg = items.reduce((sum: number, item: any) => sum + (item.netKg || (item.netLbs || 0) * 0.453592), 0);
-        const totalGrossKg = items.reduce((sum: number, item: any) => sum + (item.grossKg || (item.grossLbs || 0) * 0.453592), 0);
-        const totalVolumes = items.reduce((sum: number, item: any) => sum + (item.volumes || 0), 0);
-
-        doc.text(`Net weight : ${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1 })} Kgs`, 14, finalY);
-        doc.text(`Gross Weight : ${totalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 1 })} Kgs`, 14, finalY + 5);
-        doc.text(`Total volumes : ${totalVolumes}`, 14, finalY + 10);
-
-        // Container details
-        const containerData = typeof inv.containers === 'string' ? JSON.parse(inv.containers || '[]') : inv.containers || [];
-        if (containerData.length > 0) {
-            finalY += 18;
-            doc.setFont('helvetica', 'bold');
-            doc.text('Container No.    Seal No.    Volumes', 14, finalY);
-            doc.setFont('helvetica', 'normal');
-            containerData.forEach((cont: any, idx: number) => {
-                const contItems = items.filter((i: any) => i.containerNo === cont.container);
-                const contVolumes = contItems.reduce((sum: number, i: any) => sum + (i.volumes || 0), 0);
-                doc.text(`${cont.container || ''}    ${cont.seal || ''}    ${contVolumes}`, 14, finalY + 5 + (idx * 5));
-            });
-        }
-
-        // --- TOTALS (Right side) - Only show TOTAL ---
+        // --- TOTALS (Right side) - Show TOTAL above weights ---
         const totalAmount = items.reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
 
-        let totalsY = finalY - 5; // Move TOTAL up, closer to the last product row
         const labelX = 130;
         const valueX = 195;
 
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(11);
-        doc.text('TOTAL', labelX, totalsY);
-        doc.text(`$${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, valueX, totalsY, { align: 'right' });
+        doc.text('TOTAL', labelX, finalY);
+        doc.text(`$${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, valueX, finalY, { align: 'right' });
 
-        // --- SIDE BY SIDE: ADDITIONAL INFORMATION (left) and BANK DETAILS (right) ---
-        const invoiceMemo = fetchedMemo;
-        let sectionY = totalsY + 25; // 5 lines spacing from TOTAL
+        finalY += 10;
 
-        // Check if we need a new page
-        if (sectionY > 250) {
-            doc.addPage();
-            sectionY = 20;
+        // --- WEIGHT & CONTAINER INFO ---
+        // Use stored netKg/grossKg values (same source as Packing List) for consistency
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(darkGray);
+
+        // Net KG: sum from consolidated items using stored netKg (same as Packing List)
+        const totalConsolidatedNetKg = consolidatedItems.reduce((sum, ci) => sum + ci.netKg, 0);
+        // Gross KG: sum from raw items using stored grossKg (same as Packing List)
+        const totalGrossKg = items.reduce((sum: number, item: any) => sum + (item.grossKg || (item.grossLbs || 0) * 0.453592), 0);
+        const totalVolumes = items.reduce((sum: number, item: any) => sum + (item.volumes || 0), 0);
+
+        doc.text(`Net weight : ${totalConsolidatedNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kgs`, 14, finalY);
+        doc.text(`Gross Weight : ${totalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kgs`, 14, finalY + 5);
+        doc.text(`Total volumes : ${totalVolumes}`, 14, finalY + 10);
+
+        // Container details — use saved containers as the authoritative source (matches Packing List)
+        const savedContainers = typeof inv.containers === 'string' ? JSON.parse(inv.containers || '[]') : inv.containers || [];
+        console.log('[PDF CONTAINERS] savedContainers:', JSON.stringify(savedContainers));
+        
+        // Build container rows directly from saved containers (same source as Packing List)
+        const containerRows: { container: string; seal: string; volumes: number; amount: number }[] = [];
+        
+        if (savedContainers.length > 0) {
+            savedContainers.forEach((cont: any) => {
+                const contItems = items.filter((i: any) => i.containerNo === cont.container);
+                const contVolumes = contItems.reduce((sum: number, i: any) => sum + (i.volumes || 0), 0);
+                const contAmount = contItems.reduce((sum: number, i: any) => sum + (i.amount || 0), 0);
+                containerRows.push({
+                    container: cont.container || '-',
+                    seal: cont.seal || '',
+                    volumes: contVolumes,
+                    amount: contAmount
+                });
+            });
+            
+            // If items have volumes not assigned to any saved container, add them to the total
+            const assignedItems = new Set(items.filter((i: any) => savedContainers.some((c: any) => c.container === i.containerNo)).map((i: any) => i));
+            if (assignedItems.size === 0 && items.length > 0) {
+                // No items matched containers by containerNo — assign all volumes to first container
+                containerRows[0].volumes = items.reduce((sum: number, i: any) => sum + (i.volumes || 0), 0);
+                containerRows[0].amount = items.reduce((sum: number, i: any) => sum + (i.amount || 0), 0);
+            }
         }
 
-        // Get bank details from saved invoice
-        const invBankName = inv.bankName || '';
-        const invBankAddress = inv.bankAddress || '';
-        const invAccountNumber = inv.accountNumber || '';
-        const invSwiftCode = inv.swiftCode || '';
-        const invRoutingNumber = inv.routingNumber || '';
+        if (containerRows.length > 0) {
+            finalY += 18;
+            // Check if we need a new page before starting the container section
+            if (finalY > 260) {
+                doc.addPage();
+                finalY = 20;
+            }
 
-        const leftColX = 14;
-        const rightColX = 110; // Right column starts at X=110
+            const containerStartY = finalY;
+
+            const allVolumes = containerRows.reduce((sum, r) => sum + r.volumes, 0);
+
+            const containerTableHead = [['Container No.', 'Seal No.', 'Volumes']];
+            const containerTableBody = containerRows.map((row) => [
+                row.container,
+                row.seal || '-',
+                row.volumes.toString()
+            ]);
+            // Add TOTAL row
+            containerTableBody.push([
+                'TOTAL',
+                '',
+                allVolumes.toString()
+            ]);
+
+            autoTable(doc, {
+                startY: finalY,
+                head: containerTableHead,
+                body: containerTableBody,
+                theme: 'plain',
+                tableWidth: 85,
+                margin: { left: 14 },
+                styles: {
+                    fontSize: 7.5,
+                    textColor: darkGray,
+                    cellPadding: { top: 1, bottom: 1, left: 1, right: 1 }
+                },
+                headStyles: {
+                    fontStyle: 'bold',
+                    textColor: darkGray
+                },
+                columnStyles: {
+                    0: { cellWidth: 35 },
+                    1: { cellWidth: 25 },
+                    2: { halign: 'center', cellWidth: 20 }
+                },
+                // Bold the last row (TOTAL)
+                didParseCell: (data: any) => {
+                    if (data.row.index === containerTableBody.length - 1) {
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+            });
+
+            const containerEndY = (doc as any).lastAutoTable.finalY + 5;
+
+            // --- BANK DETAILS on the RIGHT side of the container table ---
+            const invBankName = inv.bankName || '';
+            const invBankAddress = inv.bankAddress || '';
+            const invAccountNumber = inv.accountNumber || '';
+            const invSwiftCode = inv.swiftCode || '';
+            const invRoutingNumber = inv.routingNumber || '';
+            const hasBank = !!invBankName;
+
+            let bankEndY = containerStartY;
+            if (hasBank) {
+                const bankColX = 110;
+                const bankLabelX = bankColX;
+                const bankValueX = bankColX + 28;
+                let bankY = containerStartY;
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(10);
+                doc.setTextColor(cyanColor);
+                doc.text('BANK DETAILS', bankColX, bankY);
+
+                bankY += 6;
+                doc.setFontSize(9);
+                doc.setTextColor(darkGray);
+
+                doc.setFont('helvetica', 'bold');
+                doc.text('Bank Name:', bankLabelX, bankY);
+                doc.setFont('helvetica', 'normal');
+                doc.text(invBankName, bankValueX, bankY);
+                bankY += 5;
+
+                if (invBankAddress) {
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('Bank Address:', bankLabelX, bankY);
+                    doc.setFont('helvetica', 'normal');
+                    const addrLines = doc.splitTextToSize(invBankAddress, 55);
+                    doc.text(addrLines, bankValueX, bankY);
+                    bankY += addrLines.length * 4 + 1;
+                }
+
+                if (invSwiftCode) {
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('SWIFT Code:', bankLabelX, bankY);
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(invSwiftCode, bankValueX, bankY);
+                    bankY += 5;
+                }
+
+                if (invRoutingNumber) {
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('Routing #:', bankLabelX, bankY);
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(invRoutingNumber, bankValueX, bankY);
+                    bankY += 5;
+                }
+
+                if (invAccountNumber) {
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('Account #:', bankLabelX, bankY);
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(invAccountNumber, bankValueX, bankY);
+                    bankY += 5;
+                }
+
+                bankEndY = bankY;
+            }
+
+            finalY = Math.max(containerEndY, bankEndY) + 5;
+        } else {
+            // No containers — still render bank details standalone
+            const invBankName = inv.bankName || '';
+            const invBankAddress = inv.bankAddress || '';
+            const invAccountNumber = inv.accountNumber || '';
+            const invSwiftCode = inv.swiftCode || '';
+            const invRoutingNumber = inv.routingNumber || '';
+            const hasBank = !!invBankName;
+
+            if (hasBank) {
+                let sectionY = finalY + 10;
+                if (sectionY > 270) {
+                    doc.addPage();
+                    sectionY = 20;
+                }
+                const bankColX = 110;
+                const bankLabelX = bankColX;
+                const bankValueX = bankColX + 28;
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(10);
+                doc.setTextColor(cyanColor);
+                doc.text('BANK DETAILS', bankColX, sectionY);
+
+                let bankY = sectionY + 6;
+                doc.setFontSize(9);
+                doc.setTextColor(darkGray);
+
+                doc.setFont('helvetica', 'bold');
+                doc.text('Bank Name:', bankLabelX, bankY);
+                doc.setFont('helvetica', 'normal');
+                doc.text(invBankName, bankValueX, bankY);
+                bankY += 5;
+
+                if (invBankAddress) {
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('Bank Address:', bankLabelX, bankY);
+                    doc.setFont('helvetica', 'normal');
+                    const addrLines = doc.splitTextToSize(invBankAddress, 55);
+                    doc.text(addrLines, bankValueX, bankY);
+                    bankY += addrLines.length * 4 + 1;
+                }
+
+                if (invSwiftCode) {
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('SWIFT Code:', bankLabelX, bankY);
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(invSwiftCode, bankValueX, bankY);
+                    bankY += 5;
+                }
+
+                if (invRoutingNumber) {
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('Routing #:', bankLabelX, bankY);
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(invRoutingNumber, bankValueX, bankY);
+                    bankY += 5;
+                }
+
+                if (invAccountNumber) {
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('Account #:', bankLabelX, bankY);
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(invAccountNumber, bankValueX, bankY);
+                    bankY += 5;
+                }
+
+                finalY = bankY + 5;
+            }
+        }
+
+        // --- ADDITIONAL INFORMATION (Country fields + Memo) below ---
+        const invoiceMemo = fetchedMemo;
         const hasMemo = invoiceMemo && invoiceMemo.trim();
-        const hasBank = !!invBankName;
 
-        // Print both titles on the same row
+        // Derive country values
+        const countryOfAcquisition = company?.country || 'USA';
+        const poaCode = (inv as any).poa || '';
+        const originPort = poaCode ? ports.find(p => p.code === poaCode || p.name === poaCode) : null;
+        const countryOfOrigin = originPort?.country || poaCode || '';
+
+        // Always show country fields
+        let memoY = finalY + 5;
+        if (memoY > 270) {
+            doc.addPage();
+            memoY = 20;
+        }
+
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(10);
         doc.setTextColor(cyanColor);
+        doc.text('ADDITIONAL INFORMATION', 14, memoY);
+        memoY += 6;
 
-        if (hasMemo) {
-            doc.text('ADDITIONAL INFORMATION', leftColX, sectionY);
-        }
-        if (hasBank) {
-            doc.text('BANK DETAILS', rightColX, sectionY);
-        }
+        doc.setFontSize(9);
+        doc.setTextColor(darkGray);
 
-        const titleY = sectionY;
-        let leftY = sectionY + 6;
-        let rightY = sectionY + 6;
+        // Country of Acquisition
+        doc.setFont('helvetica', 'bold');
+        doc.text('Country of Acquisition:', 14, memoY);
+        doc.setFont('helvetica', 'normal');
+        doc.text(countryOfAcquisition, 60, memoY);
+        memoY += 5;
 
-        // --- LEFT COLUMN: Additional Information (Memo) ---
-        if (hasMemo) {
-            doc.setFont('helvetica', 'normal');
+        // Country of Origin
+        doc.setFont('helvetica', 'bold');
+        doc.text('Country of Origin:', 14, memoY);
+        doc.setFont('helvetica', 'normal');
+        doc.text(countryOfOrigin || '—', 60, memoY);
+        memoY += 5;
+
+        // Country of Provenance
+        doc.setFont('helvetica', 'bold');
+        doc.text('Country of Provenance:', 14, memoY);
+        doc.setFont('helvetica', 'normal');
+        doc.text(countryOfOrigin || '—', 60, memoY);
+        memoY += 6;
+
+        // Hardcoded Manufacturer line for EC4 invoices
+        if (companyName.toUpperCase().includes('EC4')) {
+            doc.setFont('helvetica', 'italic');
             doc.setFontSize(9);
             doc.setTextColor(darkGray);
-
-            // Split memo into lines to handle wrapping (narrower width for left column)
-            const memoLines = doc.splitTextToSize(invoiceMemo, 85);
-            doc.text(memoLines, leftColX, leftY);
-            leftY += memoLines.length * 4;
+            doc.text('Manufacturer: Various generators, all goods collected and consolidated by EC4 ENTERPRISES LLC', 14, memoY);
+            memoY += 6;
         }
 
-        // --- RIGHT COLUMN: Bank Details ---
-        if (hasBank) {
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(9);
-            doc.setTextColor(darkGray);
+        // Memo text if present (strip Manufacturer line to avoid duplication)
+        if (hasMemo) {
+            let memoText = invoiceMemo;
+            // Remove any existing Manufacturer line from memo (it's now hardcoded above)
+            const memoLinesSplit = memoText.split('\n').filter((l: string) => !l.toUpperCase().includes('MANUFACTURER'));
+            memoText = memoLinesSplit.join('\n').trim();
 
-            const bankLabelX = rightColX;
-            const bankValueX = rightColX + 28;
-
-            doc.setFont('helvetica', 'bold');
-            doc.text('Bank Name:', bankLabelX, rightY);
-            doc.setFont('helvetica', 'normal');
-            doc.text(invBankName, bankValueX, rightY);
-            rightY += 5;
-
-            if (invBankAddress) {
-                doc.setFont('helvetica', 'bold');
-                doc.text('Bank Address:', bankLabelX, rightY);
+            if (memoText) {
                 doc.setFont('helvetica', 'normal');
-                const addrLines = doc.splitTextToSize(invBankAddress, 55);
-                doc.text(addrLines, bankValueX, rightY);
-                rightY += addrLines.length * 4 + 1;
-            }
-
-            if (invSwiftCode) {
-                doc.setFont('helvetica', 'bold');
-                doc.text('SWIFT Code:', bankLabelX, rightY);
-                doc.setFont('helvetica', 'normal');
-                doc.text(invSwiftCode, bankValueX, rightY);
-                rightY += 5;
-            }
-
-            if (invRoutingNumber) {
-                doc.setFont('helvetica', 'bold');
-                doc.text('Routing #:', bankLabelX, rightY);
-                doc.setFont('helvetica', 'normal');
-                doc.text(invRoutingNumber, bankValueX, rightY);
-                rightY += 5;
-            }
-
-            if (invAccountNumber) {
-                doc.setFont('helvetica', 'bold');
-                doc.text('Account #:', bankLabelX, rightY);
-                doc.setFont('helvetica', 'normal');
-                doc.text(invAccountNumber, bankValueX, rightY);
-                rightY += 5;
+                doc.setFontSize(9);
+                doc.setTextColor(darkGray);
+                const memoLines = doc.splitTextToSize(memoText, 170);
+                doc.text(memoLines, 14, memoY);
+                memoY += memoLines.length * 4 + 5;
             }
         }
 
-        // Set finalY to the max of both columns
-        finalY = Math.max(leftY, rightY) + 5;
+        finalY = memoY;
 
         // Add EC4 stamp at bottom-right
         if (stampUrl && companyName.toUpperCase().includes('EC4')) {
             try {
                 const stampSize = 35;
                 const stampX = 196 - stampSize;
-                const stampY = Math.min(finalY + 5, 260);
-                doc.addImage(stampUrl, 'PNG', stampX, stampY, stampSize, stampSize);
+                const stampY = Math.min(finalY + 5, 255);
+                doc.addImage(stampUrl, 'JPEG', stampX, stampY, stampSize, stampSize);
             } catch (e) {
                 console.warn('[Invoice PDF] Could not add stamp:', e);
             }
         }
 
         if (autoDownload) {
-            doc.save(`Invoice_${inv.invoiceNumber || 'unknown'}.pdf`);
+            saveWithPicker(doc, `Invoice_${inv.invoiceNumber || 'unknown'}.pdf`);
         }
         return doc;
     };
@@ -2909,29 +3350,37 @@ ${companyName}`;
         let shipToY = y;
         const shipToName = (inv as any).consignee || billToName;
 
+        // Look up the consignee's customer record (may differ from bill-to)
+        const shipToCustomer = customers.find(c => c.name === shipToName) || customer;
+        let shipToAddress = '';
+        if (shipToCustomer) {
+            const stAddrParts = [shipToCustomer.location, shipToCustomer.city, shipToCustomer.state, shipToCustomer.zip, shipToCustomer.country].filter(Boolean);
+            shipToAddress = stAddrParts.join(', ');
+        }
+
         // Ship To Name
         doc.setFont('helvetica', 'bold');
         const shipToNameLines = doc.splitTextToSize(shipToName, 55);
         doc.text(shipToNameLines, 75, shipToY);
         shipToY += shipToNameLines.length * 4;
 
-        // Ship To Address
+        // Ship To Address (consignee's address)
         doc.setFont('helvetica', 'normal');
-        if (customerAddress) {
-            const addrLines = doc.splitTextToSize(customerAddress, 55);
+        if (shipToAddress) {
+            const addrLines = doc.splitTextToSize(shipToAddress, 55);
             doc.text(addrLines, 75, shipToY);
             shipToY += addrLines.length * 4;
         }
 
         // Ship To Email
-        if (customer?.email) {
-            doc.text(customer.email, 75, shipToY);
+        if (shipToCustomer?.email) {
+            doc.text(shipToCustomer.email, 75, shipToY);
             shipToY += 4;
         }
 
         // Ship To Tax ID
-        if (customer?.taxId) {
-            doc.text(`CNPJ : ${customer.taxId}`, 75, shipToY);
+        if (shipToCustomer?.taxId) {
+            doc.text(`CNPJ : ${shipToCustomer.taxId}`, 75, shipToY);
         }
 
         // --- TERMS / INCOTERM / POD ROW (matching Invoice layout) ---
@@ -2984,28 +3433,34 @@ ${companyName}`;
         const items = typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items || [];
 
         const tableHead = [['DESCRIPTION', 'HS CODE', 'QTY (LBS/KG)']];
-        const tableBody = items.map((item: any) => {
-            // Use customerDescription first if present
+
+        // Consolidate items with same HS Code (NCM) and description into single rows
+        const consolidatedPLItems: { description: string; hsCode: string; netLbs: number; netKg: number }[] = [];
+        const plConsolidationMap = new Map<string, number>();
+        items.forEach((item: any) => {
             let description = (item.customerDescription || '').trim();
             if (!description && item.productId && products.length > 0) {
                 const prod = products.find((p: any) => p.id === item.productId);
                 if (prod) description = prod.name;
             }
             if (!description) description = `${item.productDescription || item.description || ''}`.trim();
-
-            // Get HS Code directly from item
             const hsCode = item.hsCode || '';
-
-            // QTY - show both lbs and kgs with units
+            const key = `${hsCode}|||${description}`;
             const netLbs = item.netLbs || item.quantity || 0;
-            const netKgs = netLbs / 2.20462; // Convert lbs to kg
-            const qtyDisplay = `${netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} lbs\n${netKgs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
+            const netKg = item.netKg || (netLbs * 0.453592);
+            const existingIdx = plConsolidationMap.get(key);
+            if (existingIdx !== undefined) {
+                consolidatedPLItems[existingIdx].netLbs += netLbs;
+                consolidatedPLItems[existingIdx].netKg += netKg;
+            } else {
+                plConsolidationMap.set(key, consolidatedPLItems.length);
+                consolidatedPLItems.push({ description, hsCode, netLbs, netKg });
+            }
+        });
 
-            return [
-                description,
-                hsCode || '-',
-                qtyDisplay
-            ];
+        const tableBody = consolidatedPLItems.map((ci) => {
+            const qtyDisplay = `${ci.netLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lbs\n${ci.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
+            return [ci.description, ci.hsCode || '-', qtyDisplay];
         });
 
         autoTable(doc, {
@@ -3050,31 +3505,50 @@ ${companyName}`;
                 const contVolumes = contItems.reduce((sum: number, i: any) => sum + (i.volumes || 0), 0);
                 const contNetKg = contItems.reduce((sum: number, i: any) => sum + (i.netKg || (i.netLbs || 0) * 0.453592), 0);
                 const contGrossKg = contItems.reduce((sum: number, i: any) => sum + (i.grossKg || (i.grossLbs || 0) * 0.453592), 0);
-                return [
-                    cont.container || '-',
-                    cont.seal || '-',
-                    contVolumes.toString(),
-                    contNetKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-                    contGrossKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
-                ];
+                return { container: cont.container || '-', seal: cont.seal || '-', volumes: contVolumes, netKg: contNetKg, grossKg: contGrossKg };
             });
+
+            // If no items matched any container (stale containerNo), distribute totals evenly
+            const anyMatched = containerTableBody.some((r: any) => r.volumes > 0 || r.netKg > 0 || r.grossKg > 0);
+            if (!anyMatched && items.length > 0) {
+                const allVolumes = items.reduce((sum: number, i: any) => sum + (i.volumes || 0), 0);
+                const allNetKg = items.reduce((sum: number, i: any) => sum + (i.netKg || (i.netLbs || 0) * 0.453592), 0);
+                const allGrossKg = items.reduce((sum: number, i: any) => sum + (i.grossKg || (i.grossLbs || 0) * 0.453592), 0);
+                const n = containerTableBody.length;
+                containerTableBody.forEach((r: any) => {
+                    r.volumes = Math.round(allVolumes / n);
+                    r.netKg = allNetKg / n;
+                    r.grossKg = allGrossKg / n;
+                });
+                // Fix rounding for volumes on first container
+                const assignedVols = containerTableBody.reduce((s: number, r: any) => s + r.volumes, 0);
+                if (assignedVols !== allVolumes) containerTableBody[0].volumes += (allVolumes - assignedVols);
+            }
+
+            const formattedBody = containerTableBody.map((r: any) => [
+                r.container,
+                r.seal,
+                r.volumes.toString(),
+                r.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                r.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            ]);
 
             // Add totals row
             const totalVolumes = items.reduce((sum: number, item: any) => sum + (item.volumes || 0), 0);
             const totalNetKg = items.reduce((sum: number, item: any) => sum + (item.netKg || (item.netLbs || 0) * 0.453592), 0);
             const totalGrossKg = items.reduce((sum: number, item: any) => sum + (item.grossKg || (item.grossLbs || 0) * 0.453592), 0);
-            containerTableBody.push([
+            formattedBody.push([
                 'TOTAL',
                 '',
                 totalVolumes.toString(),
-                totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-                totalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+                totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                totalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
             ]);
 
             autoTable(doc, {
                 startY: finalY,
                 head: containerTableHead,
-                body: containerTableBody,
+                body: formattedBody,
                 theme: 'plain',
                 styles: {
                     fontSize: 8,
@@ -3148,8 +3622,8 @@ ${companyName}`;
             productTableBody.push([
                 'TOTAL',
                 grandTotalVolumes.toString(),
-                grandTotalNetKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-                grandTotalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+                grandTotalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                grandTotalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
             ]);
 
             autoTable(doc, {
@@ -3182,15 +3656,15 @@ ${companyName}`;
                 const lastPageHeight = (doc as any).lastAutoTable?.finalY || 200;
                 const stampSize = 35;
                 const stampX = 196 - stampSize;
-                const stampY = Math.min(lastPageHeight + 10, 260);
-                doc.addImage(stampUrl, 'PNG', stampX, stampY, stampSize, stampSize);
+                const stampY = Math.min(lastPageHeight + 5, 255);
+                doc.addImage(stampUrl, 'JPEG', stampX, stampY, stampSize, stampSize);
             } catch (e) {
                 console.warn('[PL PDF] Could not add stamp:', e);
             }
         }
 
         if (autoDownload) {
-            doc.save(`PackingList_${inv.invoiceNumber || 'unknown'}.pdf`);
+            saveWithPicker(doc, `PackingList_${inv.invoiceNumber || 'unknown'}.pdf`);
         }
         return doc;
     };
@@ -3427,6 +3901,8 @@ ${companyName}`;
             // Generate invoice number from PL
             setInvoiceNumber(pl.plNumber ? pl.plNumber.replace('PL-', 'INV-') : `INV-${Date.now().toString().slice(-6)}`);
             setBillToName(pl.consignee || '');
+            // Carry booking number from PL into invoice transport ref
+            if (pl.blNumber) setTransportRef(pl.blNumber);
 
             // Convert PL items to invoice items immediately
             const newInvoiceItems: InvoiceLineItem[] = parsedItems.map((plItem: any, idx: number) => {
@@ -3487,6 +3963,7 @@ ${companyName}`;
 
     const handleCreateBlankPL = () => {
         // Create a blank PL and go to edit step
+        setEditingPLId(null); // Ensure new PL gets INSERT, not UPDATE
         setPlNumber(`PL-${Date.now().toString().slice(-8)}`);
         setSoNumber('');
         setSupplier('');
@@ -3681,6 +4158,13 @@ ${companyName}`;
                                                             <Edit3 size={14} />
                                                         </button>
                                                         <button
+                                                            onClick={(e) => { e.stopPropagation(); handleCreateInvoiceFromPL(pl); }}
+                                                            title="Create Invoice from PL"
+                                                            className="p-1 rounded hover:bg-emerald-100 text-emerald-600 transition-colors"
+                                                        >
+                                                            <FileText size={14} />
+                                                        </button>
+                                                        <button
                                                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeletePL(pl); }}
                                                             title="Delete PL"
                                                             className="p-1 rounded hover:bg-red-100 text-red-500 transition-colors"
@@ -3703,7 +4187,24 @@ ${companyName}`;
                     <div className="flex items-center gap-2 mb-2">
                         <FileText size={20} className="text-slate-600" />
                         <h4 className="font-bold text-slate-700">Saved Invoices</h4>
-                        <span className="ml-auto text-xs bg-slate-200 px-2 py-0.5 rounded-full">{invoices.length}</span>
+                        <div className="ml-auto flex items-center gap-2">
+                            <div className="relative">
+                                <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    type="text"
+                                    value={invoiceSearchQuery}
+                                    onChange={(e) => setInvoiceSearchQuery(e.target.value)}
+                                    placeholder="Search invoices..."
+                                    className="pl-7 pr-7 py-1 text-xs border border-slate-200 rounded-lg focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400 w-48 bg-white"
+                                />
+                                {invoiceSearchQuery && (
+                                    <button onClick={() => setInvoiceSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                                        <X size={12} />
+                                    </button>
+                                )}
+                            </div>
+                            <span className="text-xs bg-slate-200 px-2 py-0.5 rounded-full">{invoices.length}</span>
+                        </div>
                     </div>
                     <div className="flex-1 overflow-y-auto min-h-0 max-h-[calc(100vh-22rem)]">
                         <table className="w-full text-xs">
@@ -3784,7 +4285,8 @@ ${companyName}`;
                                             </div>
                                         )}
                                     </th>
-                                    <th className="text-right py-1 font-bold text-slate-600">QTY LBS / KGs</th>
+                                    <th className="text-right py-1 font-bold text-slate-600">QTY LBS</th>
+                                    <th className="text-right py-1 font-bold text-slate-600">QTY KGs</th>
                                     <th className="text-right py-1 font-bold text-slate-600">Total US$</th>
                                     <th className="text-center py-1 font-bold text-slate-600">Actions</th>
                                     <th className="text-center py-1 font-bold text-slate-600">Documents</th>
@@ -3794,10 +4296,18 @@ ${companyName}`;
                                 {(() => {
                                     // Sort by date descending (newest first) and filter
                                     // Use savedInvoices (local state) instead of invoices prop to preserve BOL uploads
+                                    const searchQ = invoiceSearchQuery.toLowerCase().trim();
                                     const sortedInvoices = [...savedInvoices]
                                         .sort((a, b) => new Date(b.invoiceDate || b.createdAt || 0).getTime() - new Date(a.invoiceDate || a.createdAt || 0).getTime())
                                         .filter(inv => invoiceFilterNumber.length === 0 || invoiceFilterNumber.includes(inv.invoiceNumber))
-                                        .filter(inv => invoiceFilterCustomer.length === 0 || invoiceFilterCustomer.includes(inv.billToName || inv.soldTo || ''));
+                                        .filter(inv => invoiceFilterCustomer.length === 0 || invoiceFilterCustomer.includes(inv.billToName || inv.soldTo || ''))
+                                        .filter(inv => {
+                                            if (!searchQ) return true;
+                                            return (inv.invoiceNumber || '').toLowerCase().includes(searchQ)
+                                                || (inv.soNumber || '').toLowerCase().includes(searchQ)
+                                                || ((inv as any).bookingNumber || inv.transportRef || '').toLowerCase().includes(searchQ)
+                                                || (inv.billToName || inv.soldTo || '').toLowerCase().includes(searchQ);
+                                        });
 
                                     return sortedInvoices.slice(0, 30).map(inv => (
                                         <tr
@@ -3809,8 +4319,9 @@ ${companyName}`;
                                             <td className="py-0.5 text-slate-700 font-medium truncate">{inv.invoiceNumber}</td>
                                             <td className="py-0.5 text-slate-500 truncate">{(inv as any).bookingNumber || inv.transportRef || '-'}</td>
                                             <td className="py-0.5 text-slate-500 truncate">{((inv.billToName || inv.soldTo || '').split(' ')[0])}</td>
-                                            <td className="py-0.5 text-slate-600 text-right">{Number(inv.netWeight || inv.totalQuantity || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} / {(Number(inv.netWeight || inv.totalQuantity || 0) * 0.453592).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
-                                            <td className="py-0.5 text-emerald-600 font-medium text-right">${Number(inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                            <td className="py-0.5 text-slate-600 text-right">{Number(inv.netWeight || inv.totalQuantity || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                                            <td className="py-0.5 text-slate-600 text-right">{(Number(inv.netWeight || inv.totalQuantity || 0) * 0.453592).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                                            <td className="py-0.5 text-emerald-600 font-medium text-right">{Number(inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                             <td className="py-0.5 text-center">
                                                 <div className="flex items-center justify-center gap-2">
                                                     <button
@@ -3867,7 +4378,7 @@ ${companyName}`;
                                     ));
                                 })()}
                                 {invoices.length === 0 && (
-                                    <tr><td colSpan={9} className="text-center py-2 text-slate-400">No saved invoices</td></tr>
+                                    <tr><td colSpan={10} className="text-center py-2 text-slate-400">No saved invoices</td></tr>
                                 )}
                             </tbody>
                         </table>
@@ -3921,11 +4432,17 @@ ${companyName}`;
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
                         >
                             <option value="">-- Select Sales Order --</option>
-                            {salesOrders.filter(so => so.status !== 'FULFILLED').map(so => (
-                                <option key={so.id} value={so.orderNumber}>
-                                    {so.orderNumber} - {so.customerName}
-                                </option>
-                            ))}
+                            {salesOrders.filter(so => so.status !== 'FULFILLED').map(so => {
+                                const soDate = so.orderDate ? new Date(so.orderDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+                                const firstName = so.customerName ? so.customerName.split(' ')[0].split(',')[0] : '';
+                                const material = so.items?.[0]?.productName || '';
+                                const label = [soDate, so.orderNumber, firstName, material].filter(Boolean).join(' | ');
+                                return (
+                                    <option key={so.id} value={so.orderNumber}>
+                                        {label}
+                                    </option>
+                                );
+                            })}
                             {soNumber && !salesOrders.find(so => so.orderNumber === soNumber) && (
                                 <option value={soNumber}>{soNumber} (custom)</option>
                             )}
@@ -3997,10 +4514,10 @@ ${companyName}`;
                                     className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
                                 >
                                     <option value="">-- Select Booking --</option>
-                                    {allBookings.filter((b: any) => b.status !== 'SHIPPED').map((b: any) => (
+                                    {allBookings.filter((b: any) => b.status === 'AVAILABLE').map((b: any) => (
                                         <option key={b.id} value={b.bookingNumber}>{b.bookingNumber}</option>
                                     ))}
-                                    {bookingNumber && !allBookings.filter((b: any) => b.status !== 'SHIPPED').find((b: any) => b.bookingNumber === bookingNumber) && (
+                                    {bookingNumber && !allBookings.filter((b: any) => b.status === 'AVAILABLE').find((b: any) => b.bookingNumber === bookingNumber) && (
                                         <option value={bookingNumber}>{bookingNumber} (custom)</option>
                                     )}
                                     <option value="__ADD_NEW__">+ ADD NEW</option>
@@ -4165,8 +4682,14 @@ ${companyName}`;
                                                 className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right font-mono"
                                             />
                                         </td>
-                                        <td className="p-2 text-right text-slate-500 font-mono text-sm">
-                                            {(item.grossKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        <td className="p-2">
+                                            <input
+                                                type="number"
+                                                step="any"
+                                                value={item.grossKg || ''}
+                                                onChange={(e) => updateItem(item.id, 'grossKg', e.target.value === '' ? 0 : Number(e.target.value))}
+                                                className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right font-mono"
+                                            />
                                         </td>
                                         <td className="p-2">
                                             <input
@@ -4177,8 +4700,14 @@ ${companyName}`;
                                                 className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right font-mono"
                                             />
                                         </td>
-                                        <td className="p-2 text-right text-slate-500 font-mono text-sm">
-                                            {(item.netKg || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        <td className="p-2">
+                                            <input
+                                                type="number"
+                                                step="any"
+                                                value={item.netKg || ''}
+                                                onChange={(e) => updateItem(item.id, 'netKg', e.target.value === '' ? 0 : Number(e.target.value))}
+                                                className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right font-mono"
+                                            />
                                         </td>
                                         <td className="p-2">
                                             <input
@@ -4202,9 +4731,9 @@ ${companyName}`;
                             <tfoot className="bg-slate-100 font-bold">
                                 <tr>
                                     <td className="p-3" colSpan={4}>TOTALS</td>
-                                    <td className="p-3 text-right font-mono">{totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                                    <td className="p-3 text-right font-mono">{totals.grossLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                     <td className="p-3 text-right font-mono text-slate-500">{totals.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                    <td className="p-3 text-right font-mono">{totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                                    <td className="p-3 text-right font-mono">{totals.netLbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                     <td className="p-3 text-right font-mono text-slate-500">{totals.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                     <td className="p-3 text-right font-mono">{totals.volumes.toLocaleString()}</td>
                                     <td></td>
@@ -4303,7 +4832,7 @@ ${companyName}`;
                     className="flex items-center gap-2 text-sm text-slate-500 hover:text-indigo-600 transition-colors mb-4"
                 >
                     <ArrowLeft size={16} />
-                    <span>Back to PL-Invoice Engine</span>
+                    <span>Back to Invoice Engine</span>
                 </button>
                 <div className="text-center">
                     <h3 className="text-xl font-bold text-slate-800">Create Invoice</h3>
@@ -4466,23 +4995,26 @@ ${companyName}`;
                     <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Customer / Sold To</label>
                         <select
-                            value={selectedCustomerId}
+                            value={consignee}
                             onChange={(e) => {
-                                setSelectedCustomerId(e.target.value);
-                                const cust = customers.find(c => c.id === e.target.value);
+                                const custName = e.target.value;
+                                setConsignee(custName);
+                                const cust = customers.find(c => c.name === custName);
                                 if (cust) {
-                                    setBillToName(cust.name);
-                                    setBillToAddress(cust.address || ''); // Also auto-fill address if available
-                                    // Also set consignee if empty
-                                    if (!consignee) setConsignee(cust.name);
+                                    setSelectedCustomerId(cust.id);
+                                    // Also set billTo if empty
+                                    if (!billToName) setBillToName(cust.name);
                                     if (cust.paymentTerms) setPaymentTerms(cust.paymentTerms);
                                 }
                             }}
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
                         >
-                            <option value="">{billToName || '-- Select Customer --'}</option>
+                            <option value="">{consignee || '-- Select Customer --'}</option>
+                            {consignee && !customers.find(c => c.name === consignee) && (
+                                <option value={consignee}>{consignee} (custom)</option>
+                            )}
                             {customers.map(c => (
-                                <option key={c.id} value={c.id}>{c.name}</option>
+                                <option key={c.id} value={c.name}>{c.name}</option>
                             ))}
                         </select>
                     </div>
@@ -4511,10 +5043,10 @@ ${companyName}`;
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
                         >
                             <option value="">-- Select Booking --</option>
-                            {bookingNumber && (!bookings || !bookings.find(b => b.bookingNumber === bookingNumber)) && (
-                                <option value={bookingNumber}>{bookingNumber} (PL Reference)</option>
+                            {(transportRef || bookingNumber) && (
+                                <option value={transportRef || bookingNumber}>{transportRef || bookingNumber}</option>
                             )}
-                            {bookings && bookings.map((b: any) => (
+                            {bookings && bookings.filter((b: any) => b.status === 'AVAILABLE' && b.bookingNumber !== (transportRef || bookingNumber)).map((b: any) => (
                                 <option key={b.id} value={b.bookingNumber}>{b.bookingNumber}</option>
                             ))}
                         </select>
@@ -4531,16 +5063,10 @@ ${companyName}`;
                                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 appearance-none"
                             >
                                 <option value="">-- Select Terms --</option>
-                                <option value="ADV - 100% ADVANCED">ADV - 100% ADVANCED</option>
-                                <option value="CAD - 100% CASH AGAINST DOCUMENTS">CAD - 100% CASH AGAINST DOCUMENTS</option>
-                                <option value="20% ADV / 80% CAD">20% ADV / 80% CAD</option>
-                                <option value="30% ADV / 70% CAD">30% ADV / 70% CAD</option>
-                                <option value="ADV/CAD - ADVANCED + CASH AGAINST DOCUMENTS">ADV/CAD - ADVANCED + CASH AGAINST DOCUMENTS</option>
-                                <option value="LC - LETTER OF CREDIT">LC - LETTER OF CREDIT</option>
-                                <option value="Net 30">Net 30</option>
-                                <option value="Net 60">Net 60</option>
-                                <option value="Net 90">Net 90</option>
-                                {paymentTerms && !['ADV - 100% ADVANCED', 'CAD - 100% CASH AGAINST DOCUMENTS', '20% ADV / 80% CAD', '30% ADV / 70% CAD', 'ADV/CAD - ADVANCED + CASH AGAINST DOCUMENTS', 'LC - LETTER OF CREDIT', 'Net 30', 'Net 60', 'Net 90'].includes(paymentTerms) && (
+                                {PAYMENT_TERM_OPTIONS.map(t => (
+                                    <option key={t} value={t}>{t}</option>
+                                ))}
+                                {paymentTerms && !PAYMENT_TERM_OPTIONS.includes(paymentTerms) && (
                                     <option value={paymentTerms}>{paymentTerms} (Custom)</option>
                                 )}
                             </select>
@@ -4621,7 +5147,19 @@ ${companyName}`;
                 </div>
                 <div className="overflow-x-auto">
                     {invoiceItems.length > 0 ? (
-                        <table className="w-full text-sm">
+                        <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+                            <colgroup>
+                                <col style={{ width: '15%' }} />{/* Description (PL) */}
+                                <col style={{ width: '15%' }} />{/* Description (System) */}
+                                <col style={{ width: '14%' }} />{/* Customer Description */}
+                                <col style={{ width: '8%' }} />{/* HS Code */}
+                                <col style={{ width: '9%' }} />{/* Qty (LBS) */}
+                                <col style={{ width: '9%' }} />{/* Qty (KG) */}
+                                <col style={{ width: '9%' }} />{/* Price/LB */}
+                                <col style={{ width: '9%' }} />{/* Price/KG */}
+                                <col style={{ width: '9%' }} />{/* Amount */}
+                                <col style={{ width: '3%' }} />{/* Delete */}
+                            </colgroup>
                             <thead className="bg-slate-50">
                                 <tr className="border-b border-slate-200">
                                     <th className="text-left p-2 font-bold text-slate-600 text-xs">Description (PL)</th>
@@ -4633,7 +5171,7 @@ ${companyName}`;
                                     <th className="text-right p-2 font-bold text-slate-600 text-xs">Price/LB</th>
                                     <th className="text-right p-2 font-bold text-slate-600 text-xs">Price/KG</th>
                                     <th className="text-right p-2 font-bold text-slate-600 text-xs">Amount</th>
-                                    <th className="text-center p-2 font-bold text-slate-600 w-10"></th>
+                                    <th className="text-center p-2 font-bold text-slate-600"></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -4708,7 +5246,7 @@ ${companyName}`;
                                                 })()}
                                                 onChange={(e) => updateInvoiceItem(item.id, 'hsCode', e.target.value)}
                                                 placeholder="HS Code"
-                                                className="w-24 px-2 py-1 border border-slate-200 rounded text-xs font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                className="w-full px-2 py-1 border border-slate-200 rounded text-xs font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                             />
                                         </td>
                                         <td className="p-1">
@@ -4721,7 +5259,7 @@ ${companyName}`;
                                                     const num = parseFloat(e.target.value);
                                                     updateInvoiceItem(item.id, 'netLbs', isNaN(num) ? 0 : num);
                                                 }}
-                                                className="w-24 px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono"
+                                                className="w-full px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono"
                                             />
                                         </td>
                                         <td className="p-1">
@@ -4734,7 +5272,7 @@ ${companyName}`;
                                                     const num = parseFloat(e.target.value);
                                                     updateInvoiceItem(item.id, 'netKg', isNaN(num) ? 0 : num);
                                                 }}
-                                                className="w-24 px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono bg-slate-50"
+                                                className="w-full px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono bg-slate-50"
                                             />
                                         </td>
                                         <td className="p-1">
@@ -4749,7 +5287,7 @@ ${companyName}`;
                                                         const num = parseFloat(e.target.value);
                                                         updateInvoiceItem(item.id, 'unitPriceLbs', isNaN(num) ? 0 : num);
                                                     }}
-                                                    className="w-24 px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono"
+                                                    className="w-full px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono"
                                                     placeholder="0.00"
                                                 />
                                             </div>
@@ -4766,7 +5304,7 @@ ${companyName}`;
                                                         const num = parseFloat(e.target.value);
                                                         updateInvoiceItem(item.id, 'unitPriceKg', isNaN(num) ? 0 : num);
                                                     }}
-                                                    className="w-24 px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono bg-slate-50"
+                                                    className="w-full px-2 py-1 border border-slate-200 rounded text-xs text-right font-mono bg-slate-50"
                                                     placeholder="0.00"
                                                 />
                                             </div>
@@ -4787,9 +5325,9 @@ ${companyName}`;
                             </tbody>
                             <tfoot className="bg-slate-100">
                                 <tr className="font-bold">
-                                    <td className="p-2 text-xs" colSpan={2}>TOTALS</td>
-                                    <td className="p-2 text-right font-mono text-xs">{invoiceTotals.quantity.toLocaleString(undefined, { maximumFractionDigits: 1 })} LBS</td>
-                                    <td className="p-2 text-right font-mono text-xs">{(invoiceTotals.quantity * 0.453592).toLocaleString(undefined, { maximumFractionDigits: 1 })} KG</td>
+                                    <td className="p-2 text-xs" colSpan={4}>TOTALS</td>
+                                    <td className="p-2 text-right font-mono text-xs">{invoiceTotals.quantity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} LBS</td>
+                                    <td className="p-2 text-right font-mono text-xs">{(invoiceTotals.quantity * 0.453592).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG</td>
                                     <td className="p-2"></td>
                                     <td className="p-2"></td>
                                     <td className="p-2 text-right font-mono text-sm text-emerald-700">
@@ -4891,7 +5429,7 @@ ${companyName}`;
                             className="flex items-center gap-2 px-5 py-2.5 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-all font-medium"
                         >
                             <ArrowLeft size={18} />
-                            PL-Invoice Engine
+                            Invoice Engine
                         </button>
                     </div>
                     <button
@@ -4919,7 +5457,7 @@ ${companyName}`;
                         <div className="p-2 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-xl text-white">
                             <FileText size={24} />
                         </div>
-                        PL-Invoice Engine
+                        Invoice Engine
                     </h1>
                     <p className="text-slate-500 text-sm mt-1">Transform packing lists into invoices</p>
                 </div>
@@ -5086,8 +5624,9 @@ ${companyName}`;
                         </div>
                         <div className="p-4 space-y-3">
                             {/* Invoice */}
-                            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                            <div className={`flex items-center justify-between p-3 rounded-lg transition-colors ${emailDocSelection.invoice ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-slate-50'}`}>
                                 <div className="flex items-center gap-3">
+                                    <input type="checkbox" checked={emailDocSelection.invoice} onChange={e => setEmailDocSelection(prev => ({ ...prev, invoice: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" />
                                     <FileText size={20} className="text-indigo-600" />
                                     <div>
                                         <p className="font-medium text-slate-700">Invoice</p>
@@ -5100,15 +5639,7 @@ ${companyName}`;
                                     </button>
                                     <button onClick={async () => {
                                         const doc = await generateInvoicePDF(selectedDocInvoice, false);
-                                        const blob = doc.output('blob');
-                                        const url = URL.createObjectURL(blob);
-                                        const link = document.createElement('a');
-                                        link.href = url;
-                                        link.download = `Invoice_${selectedDocInvoice.invoiceNumber || 'unknown'}.pdf`;
-                                        document.body.appendChild(link);
-                                        link.click();
-                                        document.body.removeChild(link);
-                                        URL.revokeObjectURL(url);
+                                        saveWithPicker(doc, `Invoice_${selectedDocInvoice.invoiceNumber || 'unknown'}.pdf`);
                                     }} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Download Invoice PDF">
                                         <Download size={16} />
                                     </button>
@@ -5116,8 +5647,9 @@ ${companyName}`;
                             </div>
 
                             {/* Packing List */}
-                            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                            <div className={`flex items-center justify-between p-3 rounded-lg transition-colors ${emailDocSelection.pl ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-slate-50'}`}>
                                 <div className="flex items-center gap-3">
+                                    <input type="checkbox" checked={emailDocSelection.pl} onChange={e => setEmailDocSelection(prev => ({ ...prev, pl: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" />
                                     <Package size={20} className="text-indigo-600" />
                                     <div>
                                         <p className="font-medium text-slate-700">Packing List</p>
@@ -5130,15 +5662,7 @@ ${companyName}`;
                                     </button>
                                     <button onClick={() => {
                                         const doc = generatePackingListPDF(selectedDocInvoice, false);
-                                        const blob = doc.output('blob');
-                                        const url = URL.createObjectURL(blob);
-                                        const link = document.createElement('a');
-                                        link.href = url;
-                                        link.download = `PackingList_${selectedDocInvoice.plNumber || selectedDocInvoice.invoiceNumber || 'unknown'}.pdf`;
-                                        document.body.appendChild(link);
-                                        link.click();
-                                        document.body.removeChild(link);
-                                        URL.revokeObjectURL(url);
+                                        saveWithPicker(doc, `PackingList_${selectedDocInvoice.plNumber || selectedDocInvoice.invoiceNumber || 'unknown'}.pdf`);
                                     }} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Download Packing List PDF">
                                         <Download size={16} />
                                     </button>
@@ -5146,8 +5670,9 @@ ${companyName}`;
                             </div>
 
                             {/* SLI */}
-                            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                            <div className={`flex items-center justify-between p-3 rounded-lg transition-colors ${emailDocSelection.sli ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-slate-50'}`}>
                                 <div className="flex items-center gap-3">
+                                    <input type="checkbox" checked={emailDocSelection.sli} onChange={e => setEmailDocSelection(prev => ({ ...prev, sli: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" />
                                     <ClipboardList size={20} className="text-indigo-600" />
                                     <div>
                                         <p className="font-medium text-slate-700">Shipper's Letter of Instruction</p>
@@ -5160,15 +5685,7 @@ ${companyName}`;
                                     </button>
                                     <button onClick={() => {
                                         const doc = generateSLIPreview(selectedDocInvoice);
-                                        const blob = doc.output('blob');
-                                        const url = URL.createObjectURL(blob);
-                                        const link = document.createElement('a');
-                                        link.href = url;
-                                        link.download = `SLI_${selectedDocInvoice.invoiceNumber || 'unknown'}.pdf`;
-                                        document.body.appendChild(link);
-                                        link.click();
-                                        document.body.removeChild(link);
-                                        URL.revokeObjectURL(url);
+                                        saveWithPicker(doc, `SLI_${selectedDocInvoice.invoiceNumber || 'unknown'}.pdf`);
                                     }} className="p-1.5 hover:bg-indigo-100 rounded text-indigo-600" title="Download SLI">
                                         <Download size={16} />
                                     </button>
@@ -5176,8 +5693,9 @@ ${companyName}`;
                             </div>
 
                             {/* Bill of Lading */}
-                            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                            <div className={`flex items-center justify-between p-3 rounded-lg transition-colors ${emailDocSelection.bol ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-slate-50'}`}>
                                 <div className="flex items-center gap-3">
+                                    <input type="checkbox" checked={emailDocSelection.bol} onChange={e => setEmailDocSelection(prev => ({ ...prev, bol: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" disabled={!((selectedDocInvoice as any).bolUrl || (selectedDocInvoice as any).bolurl)} />
                                     <Ship size={20} className={((selectedDocInvoice as any).bolUrl || (selectedDocInvoice as any).bolurl) ? 'text-indigo-600' : 'text-amber-500'} />
                                     <div>
                                         <p className="font-medium text-slate-700">Bill of Lading</p>
@@ -5190,6 +5708,7 @@ ${companyName}`;
                                             <button
                                                 onClick={() => {
                                                     // Show BOL in in-app preview modal
+                                                    setDocumentsModalOpen(false); // Close documents modal to prevent double backdrop
                                                     const bolData = (selectedDocInvoice as any).bolUrl || (selectedDocInvoice as any).bolurl;
                                                     setPreviewUrl(bolData);
                                                     setPreviewTitle(`Bill of Lading - ${selectedDocInvoice.invoiceNumber}`);
@@ -5281,11 +5800,11 @@ ${companyName}`;
                             <div className="flex gap-2 items-center">
                                 <button
                                     onClick={() => handlePrepareEmailDraft(selectedDocInvoice)}
-                                    disabled={sendingEmail}
+                                    disabled={sendingEmail || !Object.values(emailDocSelection).some(v => v)}
                                     className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
                                 >
                                     {sendingEmail ? <Loader2 size={16} className="animate-spin" /> : <Mail size={16} />}
-                                    Email All Documents
+                                    Email Selected ({Object.values(emailDocSelection).filter(v => v).length})
                                 </button>
                                 <button
                                     onClick={() => setDocumentsModalOpen(false)}
@@ -5439,5 +5958,5 @@ ${companyName}`;
     );
 };
 
-export default PLInvoiceEngine;
+export default React.memo(PLInvoiceEngine);
 

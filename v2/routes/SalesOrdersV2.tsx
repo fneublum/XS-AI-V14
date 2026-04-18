@@ -5,6 +5,9 @@ import {
   Card, CardHeader, CardTitle, Input, Badge, Skeleton, EmptyState, Button,
 } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
+import { RowActions } from '../components/RowActions';
+import { useRowDelete } from '../components/useRowDelete';
+import { EmailComposeDrawer, EmailDraft } from '../components/EmailComposeDrawer';
 import { useSalesOrders, SalesOrder } from '../queries/useSalesOrders';
 import { cn } from '../primitives/utils';
 import { useEditor } from '../providers/EditorProvider';
@@ -37,20 +40,25 @@ const statusTone = (status: string): BadgeTone => {
 };
 
 const columns: DataTableColumn<SalesOrder>[] = [
-  { id: 'orderNumber', header: 'Order', mono: true, cell: r => r.orderNumber },
-  { id: 'customer',    header: 'Customer',           cell: r => r.customerName },
-  { id: 'status',      header: 'Status',             cell: r => (
-      <Badge variant={statusTone(r.status)} dot>{r.status}</Badge>
-    ) },
-  { id: 'incoterm',    header: 'Incoterm', cell: r => (
-      <span className="text-slate-400 font-mono text-[11.5px]">{r.incoterm ?? '—'}</span>
-    ) },
-  { id: 'terms',       header: 'Terms',    cell: r => (
-      <span className="text-slate-400">{r.paymentTerms ?? '—'}</span>
-    ) },
-  { id: 'amount',      header: 'Amount', align: 'right', mono: true,
-      cell: r => fmtCurrency(r.totalAmount, r.currency) },
-  { id: 'date',        header: 'Ordered', align: 'right', cell: r => (
+  { id: 'orderNumber', header: 'Order', mono: true, sortable: true, filterable: true,
+    value: r => r.orderNumber, cell: r => r.orderNumber },
+  { id: 'customer', header: 'Customer', sortable: true, filterable: true,
+    value: r => r.customerName, cell: r => r.customerName },
+  { id: 'status', header: 'Status', sortable: true, filterable: true,
+    value: r => r.status,
+    cell: r => <Badge variant={statusTone(r.status)} dot>{r.status}</Badge> },
+  { id: 'incoterm', header: 'Incoterm', sortable: true, filterable: true,
+    value: r => r.incoterm ?? '',
+    cell: r => <span className="text-slate-400 font-mono text-[11.5px]">{r.incoterm ?? '—'}</span> },
+  { id: 'terms', header: 'Terms', sortable: true, filterable: true,
+    value: r => r.paymentTerms ?? '',
+    cell: r => <span className="text-slate-400">{r.paymentTerms ?? '—'}</span> },
+  { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true,
+    value: r => r.totalAmount,
+    cell: r => fmtCurrency(r.totalAmount, r.currency) },
+  { id: 'date', header: 'Ordered', align: 'right', sortable: true,
+    value: r => r.orderDate || r.createdAt,
+    cell: r => (
       <span className="text-slate-500 font-mono tabular-nums text-[11px]">
         {fmtDate(r.orderDate || r.createdAt)}
       </span>
@@ -84,12 +92,30 @@ const FilterPill: React.FC<{
   </button>
 );
 
+const buildEmailDraft = (r: SalesOrder): EmailDraft => ({
+  to: '',
+  subject: `Sales Order ${r.orderNumber} — ${r.customerName}`,
+  body: [
+    `Hello ${r.customerName},`,
+    '',
+    `Please find the details of Sales Order ${r.orderNumber}:`,
+    r.status ? `Status: ${r.status}` : '',
+    r.incoterm ? `Incoterm: ${r.incoterm}` : '',
+    r.paymentTerms ? `Payment terms: ${r.paymentTerms}` : '',
+    r.totalAmount ? `Total: ${fmtCurrency(r.totalAmount, r.currency)}` : '',
+    r.deliveryDate ? `Delivery: ${r.deliveryDate.slice(0, 10)}` : '',
+    '',
+    'Best regards',
+  ].filter(Boolean).join('\n'),
+  contextLabel: `SO ${r.orderNumber}`,
+});
+
 const SalesOrdersV2: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [search, setSearch] = useState('');
+  const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   const { openSalesOrder, openSalesOrderCreate } = useEditor();
 
-  // Fetch with no status filter so the pill counts reflect the full list.
   const all = useSalesOrders({ search });
   const rows = useMemo(() => {
     if (!all.data) return [];
@@ -111,6 +137,21 @@ const SalesOrdersV2: React.FC = () => {
   );
 
   const totalAmount = rows.reduce((s, r) => s + r.totalAmount, 0);
+
+  const { confirmDelete, deleteDialog } = useRowDelete<SalesOrder>({
+    table: 'sales_orders',
+    listQueryKeys: ['salesOrders', 'recentSalesOrders'],
+    rowLabel: r => r.orderNumber,
+  });
+
+  const rowActions = (row: SalesOrder) => (
+    <RowActions
+      onView={() => openSalesOrder(row)}
+      onEdit={() => openSalesOrder(row)}
+      onEmail={() => setEmailDraft(buildEmailDraft(row))}
+      onDelete={() => confirmDelete(row)}
+    />
+  );
 
   return (
     <div className="max-w-6xl">
@@ -137,7 +178,6 @@ const SalesOrdersV2: React.FC = () => {
         </Button>
       </div>
 
-      {/* Filters row */}
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <FilterPill
           active={statusFilter === 'ALL'}
@@ -223,9 +263,17 @@ const SalesOrdersV2: React.FC = () => {
             rows={rows}
             getRowId={r => r.id}
             onRowClick={r => openSalesOrder(r)}
+            rowActions={rowActions}
           />
         )}
       </Card>
+
+      {deleteDialog}
+      <EmailComposeDrawer
+        open={!!emailDraft}
+        onOpenChange={(o) => !o && setEmailDraft(null)}
+        draft={emailDraft}
+      />
     </div>
   );
 };

@@ -1,14 +1,44 @@
-// Phase 3B — Purchase Order editor drawer (create + edit).
+// Phase 3B — Purchase Order editor drawer. Full v1 parity.
 
-import React, { useEffect, useState } from 'react';
-import { Drawer, Input, FormField, Label, Button, Badge, ConfirmDialog } from '../primitives';
-import { PurchaseOrder } from '../queries/usePurchaseOrders';
-import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Mail } from 'lucide-react';
+import {
+  Drawer, Input, FormField, Label, Button, Badge, ConfirmDialog,
+} from '../primitives';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
+import { useCompanies } from '../queries/useCompanies';
+import { useSuppliers } from '../queries/useSuppliers';
+import { PurchaseOrder } from '../queries/usePurchaseOrders';
+import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
+import { LineItemsEditor, LineItem, computeSubtotal, sanitizeItems } from './LineItemsEditor';
+import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
 import type { EditorMode } from '../providers/EditorProvider';
 
-const STATUS_OPTIONS = ['DRAFT', 'PENDING', 'APPROVED', 'RECEIVED', 'CANCELLED'];
+const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'OPEN', 'RECEIVED', 'COMPLETED', 'CANCELLED'];
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'BRL', 'MXN', 'CNY', 'INR'];
+const PAYMENT_TERMS = [
+  'Net 30 Days', 'Net 60 Days', 'Prepaid', 'L/C at Sight', 'L/C 60 Days',
+  'Cash Against Documents', 'Cash on Delivery',
+  'T/T 30 Days After B/L', '100% T/T in Advance',
+  '40% Advance + 60% Cash Against Documents',
+  '30% Advance + 70% on Cash Against Documents',
+];
+
+const inputClass =
+  'h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 rounded-md px-2 ' +
+  'placeholder:text-slate-600 focus:ring-1 focus:ring-indigo-500 outline-none';
+
+const labelClass = 'text-[11px] text-slate-500 uppercase tracking-wider font-medium';
+const sectionClass = 'p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f] space-y-3';
+
+const fmtMoney = (n: number, currency: string) => {
+  try {
+    return n.toLocaleString('en-US', {
+      style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+  } catch { return `${currency} ${n.toFixed(2)}`; }
+};
 
 interface Props {
   po: PurchaseOrder | null;
@@ -17,99 +47,116 @@ interface Props {
 }
 
 export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange }) => {
-  const [supplierName, setSupplierName] = useState('');
-  const [totalAmount, setTotal] = useState('');
-  const [currency, setCurrency] = useState('USD');
-  const [status, setStatus] = useState('');
-  const [terms, setTerms] = useState('');
-  const [expected, setExpected] = useState('');
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
+  const companies = useCompanies();
+  const suppliers = useSuppliers();
 
-  const del = useEntityDelete({ table: 'purchase_orders', listQueryKeys: ['purchaseOrders'] });
+  const [companyId, setCompanyId]               = useState<string>(currentCompanyId !== 'ALL' ? currentCompanyId : '');
+  const [supplierId, setSupplierId]             = useState('');
+  const [supplierName, setSupplierName]         = useState('');
+  const [status, setStatus]                     = useState('PENDING');
+  const [orderDate, setOrderDate]               = useState<string>(new Date().toISOString().slice(0, 10));
+  const [expectedDate, setExpectedDate]         = useState('');
+  const [paymentTerms, setPaymentTerms]         = useState('Net 30 Days');
+  const [items, setItems]                       = useState<LineItem[]>([]);
+  const [currency, setCurrency]                 = useState('USD');
+  const [notes, setNotes]                       = useState('');
 
-  const update = useEntityUpdate<{
-    id: string; status?: string; paymentTerms?: string | null;
-    expectedDeliveryDate?: string | null;
-  }>({ table: 'purchase_orders', listQueryKeys: ['purchaseOrders'] });
+  const [confirmDelete, setConfirmDelete]       = useState(false);
+  const [emailDraft, setEmailDraft]             = useState<EmailDraft | null>(null);
 
-  const insert = useEntityInsert<{
-    companyId: string; supplierName: string; status: string;
-    orderDate: string; expectedDeliveryDate: string | null;
-    paymentTerms: string | null; totalAmount: number; currency: string;
-  }>({ table: 'purchase_orders', listQueryKeys: ['purchaseOrders'], idPrefix: 'PO' });
+  const update = useEntityUpdate<{ id: string } & Record<string, unknown>>({
+    table: 'purchase_orders', listQueryKeys: ['purchaseOrders'],
+  });
+  const insert = useEntityInsert<Record<string, unknown>>({
+    table: 'purchase_orders', listQueryKeys: ['purchaseOrders'], idPrefix: 'PO',
+    withCreatedAt: false,
+  });
+  const del = useEntityDelete({
+    table: 'purchase_orders', listQueryKeys: ['purchaseOrders'],
+  });
 
   useEffect(() => {
     if (!po) return;
+    setCompanyId(po.companyId ?? (currentCompanyId !== 'ALL' ? currentCompanyId : ''));
+    setSupplierId(po.supplierId ?? '');
     setSupplierName(po.supplierName ?? '');
-    setTotal(String(po.totalAmount ?? ''));
+    setStatus(po.status ?? 'PENDING');
+    setOrderDate(po.orderDate ?? new Date().toISOString().slice(0, 10));
+    setExpectedDate(po.expectedDeliveryDate ?? '');
+    setPaymentTerms(po.paymentTerms ?? 'Net 30 Days');
+    setItems(po.items ?? []);
     setCurrency(po.currency ?? 'USD');
-    setStatus(po.status ?? 'DRAFT');
-    setTerms(po.paymentTerms ?? '');
-    setExpected(po.expectedDeliveryDate ?? '');
+    setNotes(po.notes ?? '');
   }, [po?.id, mode]);
 
-  const totalNum = Number(totalAmount);
-  const totalValid = totalAmount === '' || (Number.isFinite(totalNum) && totalNum >= 0);
+  const availableCompanies = companies.data ?? [];
+  const availableSuppliers = suppliers.data ?? [];
+  const isSystem = currentCompanyId === 'ALL';
 
-  const dirty = mode === 'create'
-    ? supplierName.trim().length > 0
-    : po && (
-        (po.status ?? '') !== status ||
-        (po.paymentTerms ?? '') !== terms ||
-        (po.expectedDeliveryDate ?? '') !== expected
-      );
+  const subtotal = useMemo(() => computeSubtotal(items), [items]);
 
-  const pending = update.isPending || insert.isPending;
+  const canSave = supplierName.trim() !== '';
+  const pending = update.isPending || insert.isPending || del.isPending;
 
-  const save = () => {
-    if (!po || !totalValid) return;
-    if (mode === 'create') {
-      const companyId = currentCompanyId === 'ALL' ? 'DEFAULT' : currentCompanyId;
-      insert.mutate(
-        {
-          companyId,
-          supplierName,
-          status,
-          orderDate: new Date().toISOString().slice(0, 10),
-          expectedDeliveryDate: expected || null,
-          paymentTerms: terms || null,
-          totalAmount: Number.isFinite(totalNum) ? totalNum : 0,
-          currency,
-        },
-        {
-          onSuccess: () => {
-            toast.push({ kind: 'success', title: 'PO created', description: supplierName });
-            onOpenChange(false);
-          },
-          onError: (err) => toast.push({ kind: 'error', title: 'Create failed', description: err.message }),
-        },
-      );
-    } else {
-      update.mutate(
-        { id: po.id, status, paymentTerms: terms || null, expectedDeliveryDate: expected || null },
-        {
-          onSuccess: () => {
-            toast.push({ kind: 'success', title: 'Saved', description: `${po.id.slice(0, 12)} updated.` });
-            onOpenChange(false);
-          },
-          onError: (err) => toast.push({ kind: 'error', title: 'Update failed', description: err.message }),
-        },
-      );
+  const selectSupplier = (id: string) => {
+    setSupplierId(id);
+    const s = availableSuppliers.find(s => s.id === id);
+    if (s) {
+      setSupplierName(s.name);
+      if (s.paymentTerms) setPaymentTerms(s.paymentTerms);
     }
   };
 
-  const title = mode === 'create' ? 'New purchase order' : (po?.id ?? 'Purchase Order');
-  const description = mode === 'create'
-    ? 'Create a purchase order in the current workspace.'
-    : (po?.supplierName ?? undefined);
+  const buildPayload = () => ({
+    companyId: companyId || currentCompanyId,
+    supplierId: supplierId || null,
+    supplierName: supplierName.trim(),
+    status,
+    orderDate: orderDate || null,
+    expectedDeliveryDate: expectedDate || null,
+    paymentTerms: paymentTerms || null,
+    items: sanitizeItems(items),
+    totalAmount: subtotal,
+    currency,
+    notes: notes || null,
+  });
 
-  const onDelete = () => {
+  const save = () => {
+    if (!canSave) {
+      toast.push({ kind: 'warning', title: 'Supplier is required' });
+      return;
+    }
+    const payload = buildPayload();
+    if (mode === 'create') {
+      insert.mutate(payload, {
+        onSuccess: () => {
+          toast.push({ kind: 'success', title: 'Purchase order created', description: payload.supplierName });
+          onOpenChange(false);
+        },
+        onError: (err) => toast.push({
+          kind: 'error', title: 'Create failed', description: err.message,
+        }),
+      });
+    } else if (po) {
+      update.mutate({ id: po.id, ...payload }, {
+        onSuccess: () => {
+          toast.push({ kind: 'success', title: 'Saved', description: payload.supplierName });
+          onOpenChange(false);
+        },
+        onError: (err) => toast.push({
+          kind: 'error', title: 'Save failed', description: err.message,
+        }),
+      });
+    }
+  };
+
+  const deletePo = () => {
     if (!po) return;
     del.mutate(po.id, {
       onSuccess: () => {
-        toast.push({ kind: 'success', title: 'Deleted', description: po.id.slice(0, 12) });
+        toast.push({ kind: 'success', title: 'Deleted', description: po.supplierName });
         setConfirmDelete(false);
         onOpenChange(false);
       },
@@ -120,122 +167,196 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     });
   };
 
+  const sendEmail = () => {
+    const selectedSupplier = availableSuppliers.find(s => s.id === supplierId);
+    const poRef = po?.id ? po.id.slice(0, 12) : 'NEW';
+    setEmailDraft({
+      to: selectedSupplier?.email ?? '',
+      subject: `Purchase Order ${poRef} — ${supplierName}`,
+      body: [
+        `Hello ${supplierName},`,
+        '',
+        `Please confirm receipt of PO ${poRef}:`,
+        `Status: ${status}`,
+        `Payment terms: ${paymentTerms}`,
+        `Items: ${items.length}`,
+        `Total: ${fmtMoney(subtotal, currency)}`,
+        expectedDate ? `Expected delivery: ${expectedDate}` : '',
+        '',
+        'Best regards',
+      ].filter(Boolean).join('\n'),
+      contextLabel: `PO ${poRef}`,
+    });
+  };
+
+  if (!po) return null;
+
   return (
     <>
-    <Drawer
-      open={!!po}
-      onOpenChange={onOpenChange}
-      title={title}
-      description={description}
-      footer={
-        <>
-          {mode === 'edit' && (
+      <Drawer
+        open={!!po}
+        onOpenChange={onOpenChange}
+        title={mode === 'create' ? 'New purchase order' : `PO ${po.id.slice(0, 12)}`}
+        description={mode === 'edit' ? `${supplierName} · ${status}` : 'Create a purchase order.'}
+        widthClass="w-[min(98vw,960px)]"
+        footer={
+          <>
+            {mode === 'edit' && (
+              <Button
+                variant="secondary" size="sm"
+                onClick={() => setConfirmDelete(true)}
+                disabled={pending}
+                className="bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10"
+              >
+                Delete
+              </Button>
+            )}
+            {mode === 'edit' && (
+              <Button
+                variant="secondary" size="sm"
+                onClick={sendEmail}
+                disabled={pending}
+                className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
+              >
+                <Mail size={12} /> Email
+              </Button>
+            )}
             <Button
               variant="secondary" size="sm"
-              onClick={() => setConfirmDelete(true)}
-              disabled={pending || del.isPending}
-              className="bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10"
+              onClick={() => onOpenChange(false)}
+              disabled={pending}
+              className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
             >
-              Delete
+              Cancel
             </Button>
-          )}
-          <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}
-            className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]">
-            Cancel
-          </Button>
-          <Button size="sm" onClick={save}
-            disabled={!dirty || !totalValid || pending}
-            loading={pending}
-            className="ml-auto bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40"
-          >
-            {pending ? 'Saving…' : mode === 'create' ? 'Create' : 'Save changes'}
-          </Button>
-        </>
-      }
-    >
-      {po && (
+            <Button
+              size="sm"
+              onClick={save}
+              disabled={!canSave || pending}
+              loading={pending}
+              className="ml-auto bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40"
+            >
+              {pending ? 'Saving…' : mode === 'create' ? 'Create PO' : 'Save changes'}
+            </Button>
+          </>
+        }
+      >
         <div className="space-y-4">
-          {mode === 'edit' ? (
-            <div className="grid grid-cols-2 gap-3 text-[12.5px]">
-              <div className="p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f]">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider">Total</div>
-                <div className="font-mono tabular-nums text-[16px] text-slate-100 mt-1">
-                  ${Math.round(po.totalAmount).toLocaleString('en-US')} <Badge variant="neutral">{po.currency}</Badge>
-                </div>
-              </div>
-              <div className="p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f]">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider">Ordered</div>
-                <div className="font-mono tabular-nums text-[13px] text-slate-200 mt-1">
-                  {po.orderDate ?? '—'}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <>
+          <div className={sectionClass}>
+            <Label className={labelClass}>Header</Label>
+            {isSystem && availableCompanies.length > 0 && (
               <FormField>
-                <Label required>Supplier</Label>
-                <Input value={supplierName} onChange={e => setSupplierName(e.target.value)}
-                  autoFocus
-                  className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200" />
+                <Label className={labelClass}>Company</Label>
+                <select value={companyId} onChange={e => setCompanyId(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  <option value="">Select…</option>
+                  {availableCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
               </FormField>
-              <div className="grid grid-cols-2 gap-3">
-                <FormField>
-                  <Label>Total</Label>
-                  <Input type="number" min={0} step={0.01}
-                    value={totalAmount} onChange={e => setTotal(e.target.value)}
-                    invalid={!totalValid}
-                    className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 font-mono tabular-nums" />
-                </FormField>
-                <FormField>
-                  <Label>Currency</Label>
-                  <Input value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())}
-                    maxLength={3}
-                    className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 font-mono tabular-nums" />
-                </FormField>
-              </div>
-            </>
-          )}
-
-          <FormField>
-            <Label>Status</Label>
-            <div className="flex flex-wrap gap-1.5">
-              {STATUS_OPTIONS.map(opt => (
-                <button key={opt} type="button" onClick={() => setStatus(opt)}
-                  className={opt === status
-                    ? 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
-                    : 'px-2.5 py-1 rounded-md text-[11px] text-slate-400 border border-[#1f1f1f] hover:text-slate-200 hover:border-[#2a2a2a]'}
-                >
-                  {opt}
-                </button>
-              ))}
+            )}
+            <div className="grid grid-cols-3 gap-2">
+              <FormField>
+                <Label className={labelClass}>Supplier <span className="text-red-400 ml-1">*</span></Label>
+                <select value={supplierId}
+                  onChange={e => selectSupplier(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  <option value="">— typed —</option>
+                  {[...availableSuppliers].sort((a, b) => a.name.localeCompare(b.name))
+                    .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Supplier name</Label>
+                <Input value={supplierName} onChange={e => setSupplierName(e.target.value)}
+                  className={inputClass} />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Status</Label>
+                <select value={status} onChange={e => setStatus(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </FormField>
             </div>
-          </FormField>
+            <div className="grid grid-cols-2 gap-2">
+              <FormField>
+                <Label className={labelClass}>Order date</Label>
+                <Input type="date" value={orderDate ? orderDate.slice(0, 10) : ''}
+                  onChange={e => setOrderDate(e.target.value)} className={inputClass} />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Expected delivery</Label>
+                <Input type="date" value={expectedDate ? expectedDate.slice(0, 10) : ''}
+                  onChange={e => setExpectedDate(e.target.value)} className={inputClass} />
+              </FormField>
+            </div>
+          </div>
 
-          <FormField>
-            <Label>Payment terms</Label>
-            <Input value={terms} onChange={e => setTerms(e.target.value)}
-              className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200" />
-          </FormField>
+          <div className={sectionClass}>
+            <Label className={labelClass}>Line items</Label>
+            <LineItemsEditor
+              items={items}
+              onChange={setItems}
+              currency={currency}
+              showHsCode
+              showGrade
+            />
+          </div>
 
-          <FormField>
-            <Label>Expected delivery</Label>
-            <Input type="date"
-              value={(expected ?? '').slice(0, 10)}
-              onChange={e => setExpected(e.target.value)}
-              className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200" />
-          </FormField>
+          <div className={sectionClass}>
+            <Label className={labelClass}>Commercial</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <FormField>
+                <Label className={labelClass}>Currency</Label>
+                <select value={currency} onChange={e => setCurrency(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Payment terms</Label>
+                <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)}
+                  className={inputClass + ' w-full appearance-none'}>
+                  {PAYMENT_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </FormField>
+            </div>
+          </div>
+
+          <div className={sectionClass}>
+            <Label className={labelClass}>Notes</Label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
+              className="bg-[#111111] border border-[#1f1f1f] rounded-md px-2 py-1.5 text-[12.5px] text-slate-200 placeholder:text-slate-600 resize-y leading-relaxed w-full"
+              placeholder="Internal notes for this PO" />
+          </div>
+
+          <div className="pt-2 border-t border-[#1f1f1f] text-[11px] text-slate-500 flex items-center gap-2">
+            <Badge variant="neutral">purchase_orders</Badge>
+            <span className="text-slate-600">
+              Subtotal <span className="font-mono tabular-nums text-slate-300">{fmtMoney(subtotal, currency)}</span>
+            </span>
+            <span className="ml-auto font-mono tabular-nums text-slate-600">
+              {mode === 'create' ? 'new' : `#${po.id.slice(0, 8)}`}
+            </span>
+          </div>
         </div>
-      )}
-    </Drawer>
-    <ConfirmDialog
-      open={confirmDelete}
-      onOpenChange={setConfirmDelete}
-      title={`Delete PO ${po?.id.slice(0, 12) ?? ''}?`}
-      description="This permanently removes the purchase order. Supplier invoices keep their data but lose the PO reference."
-      confirmLabel="Delete"
-      loading={del.isPending}
-      onConfirm={onDelete}
-    />
+      </Drawer>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Delete PO ${po?.id.slice(0, 12)}?`}
+        description="Removes the purchase order, line items, and may break receipts that depend on it."
+        confirmLabel="Delete"
+        loading={del.isPending}
+        onConfirm={deletePo}
+      />
+
+      <EmailComposeDrawer
+        open={!!emailDraft}
+        onOpenChange={(o) => !o && setEmailDraft(null)}
+        draft={emailDraft}
+      />
     </>
   );
 };

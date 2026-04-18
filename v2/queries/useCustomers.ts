@@ -1,78 +1,106 @@
-// Phase 3B — Customers list query.
-//
-// Supersedes the Phase 3A stub. Uses the same `useSupabaseQuery` helper
-// as every other v2 query — one swap-point when TanStack Query lands.
+// Phase 3B — Customers query. Full v1 field parity.
 
 import { useCompany } from '../providers/CompanyProvider';
 import { getSupabaseClient } from '../../services/supabase';
 import { useSupabaseQuery } from './useSupabaseQuery';
 
+export type CustomerStatus = 'Active' | 'Inactive' | 'At Risk' | string;
+
 export interface Customer {
   id: string;
+  companyId: string | null;
   name: string;
+  nickname: string | null;
+  taxId: string | null;
+  contactPerson: string | null;
   email: string | null;
   phone: string | null;
-  country: string | null;
+  location: string | null;
   city: string | null;
-  pod: string | null;
+  state: string | null;
+  zip: string | null;
+  country: string | null;
+  creditLimit: number | null;
   paymentTerms: string | null;
+  status: CustomerStatus | null;
+  totalVolumeLBS: number | null;
   lastOrderDate: string | null;
+  sharedWith: string[];
+  pod: string | null;
 }
 
-interface RawCustomer {
+interface Raw {
   id: string;
+  companyId: string | null;
   name: string | null;
+  nickname: string | null;
+  taxId: string | null;
+  contactPerson: string | null;
   email: string | null;
   phone: string | null;
-  country: string | null;
+  location: string | null;
   city: string | null;
-  pod: string | null;
+  state: string | null;
+  zip: string | null;
+  country: string | null;
+  creditLimit: number | string | null;
   paymentTerms: string | null;
+  status: string | null;
+  totalVolumeLBS: number | string | null;
   lastOrderDate: string | null;
+  sharedWith: string[] | null;
+  pod: string | null;
 }
 
-function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
-  return companyId === 'ALL' ? q : (q.eq('"companyId"', companyId) as Q);
+function scopeByCompany<Q extends { eq: Function; or: Function }>(q: Q, companyId: string): Q {
+  if (companyId === 'ALL') return q;
+  return q.or(`"companyId".eq.${companyId},"sharedWith".cs.{${companyId}}`) as Q;
 }
 
 export function useCustomers(search?: string) {
   const { currentCompanyId } = useCompany();
-  const normalizedSearch = search?.trim() ?? '';
+  const needle = search?.trim() ?? '';
 
   return useSupabaseQuery<Customer[]>(
-    ['customers', currentCompanyId, normalizedSearch],
+    ['customers', currentCompanyId, needle],
     async () => {
       const supabase = getSupabaseClient();
       let q = scopeByCompany(
-        supabase
-          .from('customers')
-          .select('id, name, email, phone, country, city, pod, paymentTerms, lastOrderDate')
+        supabase.from('customers')
+          .select('id, companyId, name, nickname, taxId, contactPerson, email, phone, location, city, state, zip, country, creditLimit, paymentTerms, status, totalVolumeLBS, lastOrderDate, sharedWith, pod')
           .order('name', { ascending: true })
-          .limit(200),
+          .limit(500),
         currentCompanyId,
       );
-
-      if (normalizedSearch) {
-        // ilike on name OR email — Supabase doesn't support OR on .ilike
-        // directly in the JS client without .or(). Use .or() with both.
-        q = q.or(
-          `name.ilike.*${normalizedSearch}*,email.ilike.*${normalizedSearch}*`,
-        ) as typeof q;
+      if (needle) {
+        q = q.or(`name.ilike.*${needle}*,email.ilike.*${needle}*,taxId.ilike.*${needle}*,contactPerson.ilike.*${needle}*,nickname.ilike.*${needle}*`) as typeof q;
       }
-
       const { data, error } = await q;
       if (error) throw new Error(error.message);
 
-      return ((data as RawCustomer[] | null) ?? []).map(r => ({
+      return ((data as Raw[] | null) ?? []).map(r => ({
         id: r.id,
+        companyId: r.companyId,
         name: r.name ?? '—',
+        nickname: r.nickname,
+        taxId: r.taxId,
+        contactPerson: r.contactPerson,
         email: r.email,
         phone: r.phone,
-        country: r.country,
+        location: r.location,
         city: r.city,
-        pod: r.pod,
+        state: r.state,
+        zip: r.zip,
+        country: r.country,
+        creditLimit: r.creditLimit === null || r.creditLimit === undefined
+          ? null : Number(r.creditLimit),
         paymentTerms: r.paymentTerms,
+        status: r.status,
+        totalVolumeLBS: r.totalVolumeLBS === null || r.totalVolumeLBS === undefined
+          ? null : Number(r.totalVolumeLBS),
         lastOrderDate: r.lastOrderDate,
+        sharedWith: r.sharedWith ?? [],
+        pod: r.pod,
       }));
     },
   );
