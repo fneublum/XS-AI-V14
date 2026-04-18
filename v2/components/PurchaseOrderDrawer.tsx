@@ -13,6 +13,7 @@ import { PurchaseOrder } from '../queries/usePurchaseOrders';
 import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { LineItemsEditor, LineItem, computeSubtotal, sanitizeItems } from './LineItemsEditor';
 import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
+import { SupabaseSelectField } from './SupabaseSelectField';
 import type { EditorMode } from '../providers/EditorProvider';
 
 const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'OPEN', 'RECEIVED', 'COMPLETED', 'CANCELLED'];
@@ -315,10 +316,17 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
               </FormField>
               <FormField>
                 <Label className={labelClass}>Payment terms</Label>
-                <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)}
-                  className={inputClass + ' w-full appearance-none'}>
-                  {PAYMENT_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
+                <SupabaseSelectField
+                  source={{
+                    table: 'payment_terms',
+                    valueColumn: 'description',
+                    labelColumn: 'description',
+                    secondaryColumn: 'code',
+                    scopeByCompany: true,
+                  }}
+                  value={paymentTerms}
+                  onPick={v => setPaymentTerms(v)}
+                />
               </FormField>
             </div>
           </div>
