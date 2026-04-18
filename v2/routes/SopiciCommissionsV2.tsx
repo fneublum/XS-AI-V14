@@ -23,8 +23,7 @@ import { CommissionPipeline } from '../components/CommissionPipeline';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { cn } from '../primitives/utils';
 import { shortName, tooltipName } from '../lib/formatName';
-
-const fmtMoney = (n: number): string => `$${Math.round(n).toLocaleString('en-US')}`;
+import { formatMoney as fmtMoney } from '../lib/formatMoney';
 const fmtPct = (n: number | null): string => {
   if (n === null) return '—';
   const scaled = n > 1 ? n : n * 100;

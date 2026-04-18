@@ -9,11 +9,7 @@ import { useRowCrud } from '../components/useRowCrud';
 import { useOpportunities, Opportunity } from '../queries/useOpportunities';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
-
-const fmtMoney = (n: number | null) =>
-  n === null || n === undefined
-    ? '—'
-    : `$${Math.round(n).toLocaleString('en-US')}`;
+import { formatMoney as fmtMoney } from '../lib/formatMoney';
 
 const fmtPct = (n: number | null) =>
   n === null || n === undefined ? '—' : `${Math.round(n)}%`;
@@ -97,7 +93,7 @@ const OpportunitiesV2: React.FC = () => {
         subtitle={
           opps.data
             ? `${opps.data.length} open${
-                pipeline > 0 ? ` · $${Math.round(pipeline).toLocaleString('en-US')} pipeline` : ''
+                pipeline > 0 ? ` · ${fmtMoney(pipeline)} pipeline` : ''
               }${search ? ` · "${search}"` : ''}`
             : 'Loading…'
         }

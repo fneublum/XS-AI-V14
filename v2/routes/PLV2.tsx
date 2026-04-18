@@ -4,9 +4,7 @@ import React from 'react';
 import { Card, CardHeader, CardTitle, CardBody, Skeleton, EmptyState, StatCard, StatGrid } from '../primitives';
 import { usePL } from '../queries/usePL';
 import { useCompany } from '../providers/CompanyProvider';
-
-const fmtMoney = (n: number): string =>
-  `$${Math.round(n).toLocaleString('en-US')}`;
+import { formatMoney as fmtMoney } from '../lib/formatMoney';
 
 const PLV2: React.FC = () => {
   const pl = usePL();

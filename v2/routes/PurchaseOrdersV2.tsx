@@ -18,16 +18,7 @@ import { useCompany } from '../providers/CompanyProvider';
 import { useEditor } from '../providers/EditorProvider';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
-
-const fmtCurrency = (n: number, currency: string) => {
-  try {
-    return n.toLocaleString('en-US', {
-      style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0,
-    });
-  } catch {
-    return `${currency} ${n.toLocaleString('en-US')}`;
-  }
-};
+import { formatMoney as fmtCurrency } from '../lib/formatMoney';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (status: string): BadgeTone => {
@@ -196,7 +187,7 @@ const PurchaseOrdersV2: React.FC = () => {
           <p className="text-[13px] text-slate-500 mt-0.5">
             {pos.data
               ? `${pos.data.length} shown${search ? ` · "${search}"` : ''}${
-                  total > 0 ? ` · $${Math.round(total).toLocaleString('en-US')}` : ''
+                  total > 0 ? ` · ${fmtCurrency(total)}` : ''
                 }`
               : 'Loading…'}
           </p>

@@ -9,6 +9,7 @@ import { FieldDef } from '../components/QuickCreateDrawer';
 import { useCommissions, CommissionRow } from '../queries/useCommissions';
 import { useEditor } from '../providers/EditorProvider';
 import { shortName, tooltipName } from '../lib/formatName';
+import { formatMoney } from '../lib/formatMoney';
 
 const fmtPct = (n: number | null): string => {
   if (n === null) return '—';
@@ -44,12 +45,12 @@ const columns: DataTableColumn<CommissionRow>[] = [
     cell: r => fmtPct(r.commissionRate) },
   { id: 'amount', header: 'Commission', align: 'right', mono: true, sortable: true,
     value: r => r.commissionAmount,
-    cell: r => `$${Math.round(r.commissionAmount).toLocaleString('en-US')}` },
+    cell: r => formatMoney(r.commissionAmount) },
   { id: 'total', header: 'Order total', align: 'right', mono: true, sortable: true,
     value: r => r.orderTotal,
     cell: r => (
       <span className="text-slate-400">
-        ${Math.round(r.orderTotal).toLocaleString('en-US')}
+        {formatMoney(r.orderTotal)}
       </span>
     ) },
   { id: 'status', header: 'Payout', sortable: true, filterable: true,
@@ -101,7 +102,7 @@ const CommissionsV2: React.FC = () => {
         title="Commissions"
         subtitle={
           commissions.data
-            ? `${commissions.data.length} orders${totalCommissions > 0 ? ` · $${Math.round(totalCommissions).toLocaleString('en-US')} total` : ''}${search ? ` · "${search}"` : ''}`
+            ? `${commissions.data.length} orders${totalCommissions > 0 ? ` · ${formatMoney(totalCommissions)} total` : ''}${search ? ` · "${search}"` : ''}`
             : 'Loading…'
         }
         search={search}

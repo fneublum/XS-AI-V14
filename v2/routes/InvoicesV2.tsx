@@ -24,14 +24,7 @@ import { Button, Input, FormField, Label } from '../primitives';
 import { DeliveryDocsModal } from '../components/DeliveryDocsModal';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
-
-const fmtMoney = (n: number, currency: string) => {
-  try {
-    return n.toLocaleString('en-US', {
-      style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0,
-    });
-  } catch { return `${currency} ${n.toLocaleString('en-US')}`; }
-};
+import { formatMoney as fmtMoney } from '../lib/formatMoney';
 
 const columns: DataTableColumn<Invoice>[] = [
   { id: 'inv', header: 'Invoice', mono: true, sortable: true, filterable: true,
@@ -210,7 +203,7 @@ const InvoicesV2: React.FC = () => {
         title="Invoices"
         subtitle={
           invoices.data
-            ? `${invoices.data.length} shown${total > 0 ? ` · $${Math.round(total).toLocaleString('en-US')}` : ''}${search ? ` · "${search}"` : ''}`
+            ? `${invoices.data.length} shown${total > 0 ? ` · ${fmtMoney(total)}` : ''}${search ? ` · "${search}"` : ''}`
             : 'Loading…'
         }
         headerAction={

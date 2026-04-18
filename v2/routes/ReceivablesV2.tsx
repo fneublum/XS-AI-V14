@@ -10,6 +10,7 @@ import { useReceivables, Receivable } from '../queries/useReceivables';
 import { useEditor } from '../providers/EditorProvider';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
+import { formatMoney } from '../lib/formatMoney';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const paymentTone = (status: string): BadgeTone => {
@@ -42,7 +43,7 @@ const columns: DataTableColumn<Receivable>[] = [
     ) },
   { id: 'total', header: 'Amount', align: 'right', mono: true, sortable: true,
     value: r => r.orderTotal,
-    cell: r => `$${Math.round(r.orderTotal).toLocaleString('en-US')}` },
+    cell: r => formatMoney(r.orderTotal) },
   { id: 'delivery', header: 'Delivery', align: 'right', sortable: true,
     value: r => r.deliveryDate ?? '',
     cell: r => (
@@ -89,7 +90,7 @@ const ReceivablesV2: React.FC = () => {
         title="Receivables"
         subtitle={
           rec.data
-            ? `${rec.data.length} open${outstanding > 0 ? ` · $${Math.round(outstanding).toLocaleString('en-US')} outstanding` : ''}${search ? ` · "${search}"` : ''}`
+            ? `${rec.data.length} open${outstanding > 0 ? ` · ${formatMoney(outstanding)} outstanding` : ''}${search ? ` · "${search}"` : ''}`
             : 'Loading…'
         }
         search={search}

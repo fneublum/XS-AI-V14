@@ -19,16 +19,7 @@ import { cn } from '../primitives/utils';
 import { useEditor } from '../providers/EditorProvider';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
-
-const fmtCurrency = (n: number, currency: string) => {
-  try {
-    return n.toLocaleString('en-US', {
-      style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0,
-    });
-  } catch {
-    return `${currency} ${n.toLocaleString('en-US')}`;
-  }
-};
+import { formatMoney as fmtCurrency } from '../lib/formatMoney';
 
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
@@ -257,7 +248,7 @@ const SalesOrdersV2: React.FC = () => {
               ? `${rows.length} shown${statusFilter !== 'ALL' ? ` · ${statusFilter}` : ''}${search ? ` · "${search}"` : ''}`
               : 'Loading…'}
             {all.data && rows.length > 0 && (
-              <> · <span className="font-mono tabular-nums">${Math.round(totalAmount).toLocaleString('en-US')}</span></>
+              <> · <span className="font-mono tabular-nums">{fmtCurrency(totalAmount)}</span></>
             )}
           </p>
         </div>

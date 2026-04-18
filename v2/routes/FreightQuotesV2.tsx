@@ -14,17 +14,7 @@ import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import { useFreightQuotes, FreightQuote } from '../queries/useFreightQuotes';
 import { formatDate as fmtDate } from '../lib/formatDate';
-
-const fmtMoney = (n: number | null, currency: string) => {
-  if (n === null) return '—';
-  try {
-    return n.toLocaleString('en-US', {
-      style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0,
-    });
-  } catch {
-    return `${currency} ${n.toLocaleString('en-US')}`;
-  }
-};
+import { formatMoney as fmtMoney } from '../lib/formatMoney';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (status: string): BadgeTone => {

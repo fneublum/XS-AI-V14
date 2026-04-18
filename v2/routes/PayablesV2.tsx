@@ -15,14 +15,7 @@ import { useToast } from '../primitives/Toast';
 import { usePayables, Payable } from '../queries/usePayables';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
-
-const fmtMoney = (n: number, currency: string) => {
-  try {
-    return n.toLocaleString('en-US', {
-      style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0,
-    });
-  } catch { return `${currency} ${n.toLocaleString('en-US')}`; }
-};
+import { formatMoney as fmtMoney } from '../lib/formatMoney';
 
 const columns: DataTableColumn<Payable>[] = [
   { id: 'inv', header: 'Invoice #', mono: true, sortable: true, filterable: true,
@@ -147,7 +140,7 @@ const PayablesV2: React.FC = () => {
         title="Payables"
         subtitle={
           pay.data
-            ? `${pay.data.length} bills${total > 0 ? ` · $${Math.round(total).toLocaleString('en-US')}` : ''}${search ? ` · "${search}"` : ''}`
+            ? `${pay.data.length} bills${total > 0 ? ` · ${fmtMoney(total)}` : ''}${search ? ` · "${search}"` : ''}`
             : 'Loading…'
         }
         search={search}
