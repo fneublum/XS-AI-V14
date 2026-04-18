@@ -54,8 +54,7 @@ const SECTIONS: Array<{ label: string; items: DataItem[] }> = [
       },
       {
         label: 'Payment Terms', description: 'Reusable term presets',
-        icon: <CreditCard size={16} />,
-        v1: { module: 'DATA', submodule: 'PAYMENT_TERMS' },
+        icon: <CreditCard size={16} />, routeId: 'payment-terms',
       },
     ],
   },

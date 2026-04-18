@@ -4,6 +4,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
 import { CompanyProvider, useCompany } from './providers/CompanyProvider';
+import { useCompanies } from './queries/useCompanies';
 import { QueryProvider } from './providers/QueryProvider';
 import { ToastProvider, useToast } from './primitives/Toast';
 import { EditorProvider, useEditor } from './providers/EditorProvider';
@@ -20,6 +21,7 @@ import { ProductDrawer }    from './components/ProductDrawer';
 import { ShortcutsHelp, ShortcutGroup } from './layout/ShortcutsHelp';
 import { DataMenuModal } from './layout/DataMenuModal';
 import { SettingsMenuModal } from './layout/SettingsMenuModal';
+import { FinanceMenuModal } from './layout/FinanceMenuModal';
 import { getSupabaseClient } from '../services/supabase';
 import { SalesOrder } from './queries/useSalesOrders';
 
@@ -59,6 +61,7 @@ const SopiciCommissionsV2   = lazy(() => import('./routes/SopiciCommissionsV2'))
 const PLInvoiceEngineV2     = lazy(() => import('./routes/PLInvoiceEngineV2'));
 const CostProfitAIV2        = lazy(() => import('./routes/CostProfitAIV2'));
 const LoginV2               = lazy(() => import('./routes/LoginV2'));
+const PaymentTermsV2        = lazy(() => import('./routes/PaymentTermsV2'));
 
 // Sidebar layout — matches the 2026-04-18 spec. Workspace holds the
 // overview + AI surfaces, Trading / Agent Sales / Logistics / Finance
@@ -69,6 +72,7 @@ const LoginV2               = lazy(() => import('./routes/LoginV2'));
 const buildSections = (
   openDataMenu: () => void,
   openSettingsMenu: () => void,
+  openFinanceMenu: () => void,
 ): import('./layout/Sidebar').SidebarSection[] => [
   {
     id: 'workspace',
@@ -77,8 +81,6 @@ const buildSections = (
       { id: 'dashboard',    label: 'Dashboard',          hint: 'D' },
       { id: 'ai-email',     label: 'AI Email Assistant' },
       { id: 'ai-upload',    label: 'AI Upload' },
-      { id: 'ai-sales',     label: 'AI Sales' },
-      { id: 'ai-logistics', label: 'AI Logistics' },
     ],
   },
   {
@@ -111,19 +113,13 @@ const buildSections = (
     ],
   },
   {
-    id: 'finance',
-    label: 'Finance',
-    items: [
-      { id: 'payables',          label: 'Payables' },
-      { id: 'receivables',       label: 'Receivables' },
-      { id: 'customer-balances', label: 'Customer Balances' },
-    ],
-  },
-  {
-    // Data + Settings are click-through menus — `onClick` wins over
-    // `onSelect(id)` in Sidebar.tsx so they don't route.
+    // Finance / Data / Settings are click-through menus — `onClick`
+    // wins over `onSelect(id)` in Sidebar.tsx so they don't route.
+    // Payables / Receivables / Customer Balances live inside the
+    // Finance modal.
     id: 'admin',
     items: [
+      { id: '__finance',  label: 'Finance',  onClick: openFinanceMenu },
       { id: '__data',     label: 'Data',     onClick: openDataMenu },
       { id: '__settings', label: 'Settings', onClick: openSettingsMenu },
     ],
@@ -165,6 +161,7 @@ const routeTitles: Record<string, string> = {
   'shipments':       'Shipments',
   'packing-lists':   'Packing Lists',
   'logistics-docs':  'Logistics Docs',
+  'payment-terms':   'Payment Terms',
   // Reachable via Settings modal
   'users':           'Users',
   'companies':       'Companies',
@@ -226,6 +223,7 @@ const routeSection: Record<string, string> = {
   'products':        'Data',
   'inventory':       'Data',
   'opportunities':   'Data',
+  'payment-terms':   'Data',
   // Settings
   'users':           'Settings',
   'companies':       'Settings',
@@ -284,9 +282,11 @@ const AppV2Inner: React.FC = () => {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [financeMenuOpen, setFinanceMenuOpen] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const { user, loading: authLoading } = useAuth();
+  const companies = useCompanies();
   const {
     salesOrder, openSalesOrder, closeSalesOrder,
     customer, closeCustomer,
@@ -321,12 +321,35 @@ const AppV2Inner: React.FC = () => {
   }, [navigate]);
 
   const breadcrumbs = useMemo(() => {
+    // Dashboard gets a personalized greeting in place of the static
+    // workspace / route breadcrumb — the route name already lives in
+    // the sidebar's active highlight.
+    if (activeId === 'dashboard') {
+      const firstName = user?.name?.split(' ')[0] ?? 'there';
+      // Mirror v1 Dashboard: when scope is ALL, resolve to user's first
+      // allowed company, then fall back to the first loaded company.
+      const list = companies.data ?? [];
+      let resolvedId = currentCompanyId;
+      if (resolvedId === 'ALL') {
+        resolvedId = user?.allowedCompanies?.[0] ?? list[0]?.id ?? 'ALL';
+      }
+      const companyName = list.find(c => c.id === resolvedId)?.name
+        ?? (currentCompanyId === 'ALL' ? 'All accessible' : currentCompanyId);
+      const dateLabel = new Date().toLocaleDateString(undefined, {
+        weekday: 'long', month: 'short', day: 'numeric',
+      });
+      return [
+        { id: 'greeting', label: `Hello, ${firstName}` },
+        { id: 'company',  label: companyName },
+        { id: 'date',     label: dateLabel, current: true },
+      ];
+    }
     const section = routeSection[activeId];
     const crumbs = [{ id: 'ws', label: 'ACME' }];
     if (section && section !== 'Overview') crumbs.push({ id: 'section', label: section });
     crumbs.push({ id: activeId, label: routeTitles[activeId] ?? activeId, current: true } as typeof crumbs[0] & { current: boolean });
     return crumbs;
-  }, [activeId]);
+  }, [activeId, user?.name, user?.allowedCompanies, currentCompanyId, companies.data]);
 
   // Static palette commands.
   const commands: PaletteCommand[] = useMemo(() => [
@@ -476,7 +499,11 @@ const AppV2Inner: React.FC = () => {
   return (
     <>
       <AppShell
-        sections={buildSections(() => setDataMenuOpen(true), () => setSettingsMenuOpen(true))}
+        sections={buildSections(
+          () => setDataMenuOpen(true),
+          () => setSettingsMenuOpen(true),
+          () => setFinanceMenuOpen(true),
+        )}
         activeId={activeId}
         onNavigate={navigate}
         workspace={{ name: 'XS-ERP', subtitle: 'v12' }}
@@ -510,6 +537,7 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'receivables'     && <ReceivablesV2 />}
           {activeId === 'payables'        && <PayablesV2 />}
           {activeId === 'customer-balances' && <CustomerBalancesV2 />}
+          {activeId === 'payment-terms'   && <PaymentTermsV2 />}
           {activeId === 'commissions'     && <CommissionsV2 />}
           {activeId === 'users'           && <AdminUsersV2 />}
           {activeId === 'companies'       && <AdminCompaniesV2 />}
@@ -526,7 +554,7 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'pl-invoice'      && <PLInvoiceEngineV2 />}
           {activeId === 'cost-profit'     && <CostProfitAIV2 />}
           {activeId === 'ai-sales'        && <AiSalesV2 />}
-          {activeId === 'trading-followup' && <TradingFollowUpV2 navigate={navigate} />}
+          {activeId === 'trading-followup' && <TradingFollowUpV2 />}
           {activeId === 'agent-followup'  && <AgentFollowUpV2 navigate={navigate} />}
         </Suspense>
       </AppShell>
@@ -547,6 +575,12 @@ const AppV2Inner: React.FC = () => {
       <SettingsMenuModal
         open={settingsMenuOpen}
         onOpenChange={setSettingsMenuOpen}
+        navigate={navigate}
+      />
+
+      <FinanceMenuModal
+        open={financeMenuOpen}
+        onOpenChange={setFinanceMenuOpen}
         navigate={navigate}
       />
 
