@@ -5,24 +5,62 @@
 // first iteration focuses on the core loop: pick an existing
 // packing list, review the derived invoice, save it to the
 // `invoices` table.
-//
-// Out of scope for iteration one:
-//   - PDF upload / Gemini extraction (use AI Upload instead, then
-//     come here with the PL row already created)
-//   - Inline item editing inside the drawer (items come from the PL
-//     as-is; post-create they're editable in Invoices)
-//   - QuickBooks journal preview + push
 
 import React, { useEffect, useState } from 'react';
+import { Sparkles, Download } from 'lucide-react';
 import {
   Card, CardHeader, CardTitle, CardBody, Badge, Button, Skeleton,
   Input, FormField, Label, EmptyState,
 } from '../primitives';
 import { usePackingLists, PackingList } from '../queries/usePackingLists';
-import { useEntityInsert } from '../queries/useEntityMutations';
+import { useEntityInsert, useEntityDelete, useEntityUpdate } from '../queries/useEntityMutations';
+import { useEditor } from '../providers/EditorProvider';
+import { useCompanies } from '../queries/useCompanies';
+import { useProducts } from '../queries/useProducts';
+import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import { cn } from '../primitives/utils';
+import { QuickCreateDrawer } from '../components/QuickCreateDrawer';
+import { AiUploadModal } from '../components/AiUploadModal';
+import { PackingListBatchUploadModal } from '../components/PackingListBatchUploadModal';
+import { RowActions } from '../components/RowActions';
+import { getSupabaseClient } from '../../services/supabase';
+import {
+  PLDraft, emptyPLDraft, PLReviewForm, packingListFields, plRowToDraft,
+  packingListPayload, savePackingListPayload,
+  buildPackingListAiUploadConfig,
+} from './packingListShared';
+import { generatePLPerProductPdf, generatePLPerContainerPdf } from '../services/pdf/plResumePdf';
+
+/** Auto-generate the next invoice number in the format INV-99999 —
+ *  pulls the highest numeric suffix across existing invoices and adds
+ *  1. Falls back to INV-00001 when the table is empty or the query
+ *  fails. Always returns a 5-digit padded suffix. */
+async function generateNextInvoiceNumber(): Promise<string> {
+  try {
+    // Order by creation so the "last invoice" matches what the user
+    // sees in the invoices list (not the max number across legacy
+    // records). Scan the first few rows until we find one that matches
+    // the canonical INV-#### shape.
+    const { data } = await getSupabaseClient()
+      .from('invoices')
+      .select('invoiceNumber, invoiceDate, createdAt')
+      .order('invoiceDate', { ascending: false, nullsFirst: false })
+      .order('createdAt',   { ascending: false, nullsFirst: false })
+      .limit(100);
+    const rows = (data as Array<{ invoiceNumber: string | null }> | null) ?? [];
+    for (const r of rows) {
+      const m = (r.invoiceNumber ?? '').match(/^INV-(\d{1,6})$/i);
+      if (!m) continue;
+      // No zero-padding — e.g. INV-8013 → INV-8014.
+      return `INV-${Number(m[1]) + 1}`;
+    }
+    return 'INV-1';
+  } catch {
+    return 'INV-1';
+  }
+}
 
 const fmt = (n: number, c: string = 'USD') => {
   try {
@@ -34,12 +72,33 @@ const fmt = (n: number, c: string = 'USD') => {
 };
 
 const PLInvoiceEngineV2: React.FC = () => {
+  const toast = useToast();
+  const { currentCompanyId } = useCompany();
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<PackingList | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [aiUploadOpen, setAiUploadOpen] = useState(false);
+  const [batchUploadOpen, setBatchUploadOpen] = useState(false);
   const pls = usePackingLists(search);
 
+  const plInsert = useEntityInsert<Record<string, unknown>>({
+    table: 'packing_lists',
+    listQueryKeys: ['packingLists', 'logisticsDocs'],
+    idPrefix: 'PL',
+  });
+
+  const plDelete = useEntityDelete({
+    table: 'packing_lists',
+    listQueryKeys: ['packingLists', 'logisticsDocs'],
+  });
+  const [deleteTarget, setDeleteTarget] = useState<PackingList | null>(null);
+
+  const rowActions = (row: PackingList) => (
+    <RowActions onDelete={() => setDeleteTarget(row)} />
+  );
+
   return (
-    <div className="max-w-6xl">
+    <div className="max-w-[1440px]">
       <div className="mb-8 flex items-baseline justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -51,6 +110,22 @@ const PLInvoiceEngineV2: React.FC = () => {
           <p className="text-[13px] text-slate-500 mt-1">
             Pick a packing list → preview the derived customer invoice → save.
           </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => setCreateOpen(true)}
+            className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
+            + New packing list
+          </Button>
+          <Button size="sm" onClick={() => setAiUploadOpen(true)}
+            className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
+            <Sparkles size={12} />
+            AI Upload
+          </Button>
+          <Button size="sm" onClick={() => setBatchUploadOpen(true)}
+            className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
+            <Sparkles size={12} />
+            Batch upload
+          </Button>
         </div>
       </div>
 
@@ -98,14 +173,17 @@ const PLInvoiceEngineV2: React.FC = () => {
               {pls.data.map(pl => {
                 const active = selected?.id === pl.id;
                 return (
-                  <li key={pl.id}>
+                  <li
+                    key={pl.id}
+                    className={cn(
+                      'group flex items-start gap-2 px-3 py-2 border-t border-[#1f1f1f] hover:bg-[#141414]',
+                      active && 'bg-[#161616]',
+                    )}
+                  >
                     <button
                       type="button"
                       onClick={() => setSelected(pl)}
-                      className={cn(
-                        'w-full text-left px-3 py-2 border-t border-[#1f1f1f] hover:bg-[#141414]',
-                        active && 'bg-[#161616]',
-                      )}
+                      className="flex-1 min-w-0 text-left"
                     >
                       <div className="flex items-center gap-2">
                         <span className="font-mono tabular-nums text-[12px] text-slate-100">
@@ -122,6 +200,9 @@ const PLInvoiceEngineV2: React.FC = () => {
                         SO {pl.soNumber ?? '—'} · B/L {pl.blNumber ?? '—'}
                       </div>
                     </button>
+                    <div className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      {rowActions(pl)}
+                    </div>
                   </li>
                 );
               })}
@@ -143,6 +224,60 @@ const PLInvoiceEngineV2: React.FC = () => {
             )}
         </div>
       </div>
+
+      <QuickCreateDrawer
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        title="New packing list"
+        description="Create a packing list for an outgoing shipment."
+        table="packing_lists"
+        idPrefix="PL"
+        listQueryKeys={['packingLists', 'logisticsDocs']}
+        scopeByCompany
+        fields={packingListFields}
+      />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        title={`Delete ${deleteTarget?.plNumber ?? 'packing list'}?`}
+        description="This removes the record permanently. Linked invoices that reference it may break until fixed."
+        confirmLabel="Delete"
+        loading={plDelete.isPending}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          const target = deleteTarget;
+          plDelete.mutate(target.id, {
+            onSuccess: () => {
+              toast.push({ kind: 'success', title: 'Deleted', description: target.plNumber });
+              if (selected?.id === target.id) setSelected(null);
+              setDeleteTarget(null);
+            },
+            onError: (err) => {
+              toast.push({
+                kind: 'error',
+                title: 'Delete failed',
+                description: err instanceof Error ? err.message : String(err),
+              });
+              setDeleteTarget(null);
+            },
+          });
+        }}
+      />
+      {aiUploadOpen && (
+        <AiUploadModal<PLDraft>
+          open={aiUploadOpen}
+          onOpenChange={setAiUploadOpen}
+          config={buildPackingListAiUploadConfig({
+            insert: plInsert, toast, currentCompanyId,
+          })}
+        />
+      )}
+      <PackingListBatchUploadModal
+        open={batchUploadOpen}
+        onOpenChange={setBatchUploadOpen}
+        insert={plInsert}
+        currentCompanyId={currentCompanyId}
+      />
     </div>
   );
 };
@@ -157,6 +292,9 @@ interface InvoicePreviewProps {
 const InvoicePreview: React.FC<InvoicePreviewProps> = ({ pl, onInvoiced }) => {
   const { currentCompanyId } = useCompany();
   const toast = useToast();
+  const { openInvoiceCreate } = useEditor();
+  const companies = useCompanies();
+  const products = useProducts();
   const insert = useEntityInsert<{
     companyId: string; invoiceNumber: string; soldTo: string | null;
     billToName: string | null; invoiceDate: string;
@@ -165,6 +303,12 @@ const InvoicePreview: React.FC<InvoicePreviewProps> = ({ pl, onInvoiced }) => {
     soNumber: string | null; plNumber: string | null;
     bookingNumber: string | null;
   }>({ table: 'invoices', listQueryKeys: ['invoices', 'pl'], idPrefix: 'INV' });
+
+  const plUpdate = useEntityUpdate<Record<string, unknown>>({
+    table: 'packing_lists',
+    listQueryKeys: ['packingLists', 'logisticsDocs'],
+  });
+  const [plSaving, setPlSaving] = useState(false);
 
   const [invoiceNumber, setNumber] = useState('');
   const [soldTo, setSoldTo] = useState('');
@@ -225,101 +369,336 @@ const InvoicePreview: React.FC<InvoicePreviewProps> = ({ pl, onInvoiced }) => {
     );
   };
 
+  // Fetch the full packing_lists row so the right-pane preview uses
+  // the same field set + layout as the AI upload / inspect drawer.
+  const [plDraft, setPlDraft] = useState<PLDraft>(emptyPLDraft);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await getSupabaseClient()
+        .from('packing_lists')
+        .select('*')
+        .eq('id', pl.id)
+        .single();
+      if (cancelled || error || !data) return;
+      setPlDraft(plRowToDraft(data as Record<string, unknown>));
+    })();
+    return () => { cancelled = true; };
+  }, [pl.id]);
+
+  // Look up an existing invoice linked to this PL (if any). When found
+  // we show the linked invoice summary instead of a blank "derived
+  // invoice" draft — it would be misleading to pretend a new invoice
+  // is being drafted when one already exists.
+  interface LinkedInvoice {
+    id: string;
+    invoiceNumber: string | null;
+    invoiceDate: string | null;
+    totalAmount: number | null;
+    currency: string | null;
+    soldTo: string | null;
+    billToName: string | null;
+  }
+  const [linkedInvoice, setLinkedInvoice] = useState<LinkedInvoice | null>(null);
+  const [linkedChecked, setLinkedChecked] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  useEffect(() => {
+    setLinkedInvoice(null);
+    setLinkedChecked(false);
+    setShowCreate(false);
+    if (!pl.plNumber) { setLinkedChecked(true); return; }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await getSupabaseClient()
+        .from('invoices')
+        .select('id, invoiceNumber, invoiceDate, totalAmount, currency, soldTo, billToName')
+        .eq('plNumber', pl.plNumber)
+        .order('invoiceDate', { ascending: false, nullsFirst: false })
+        .limit(1);
+      if (cancelled) return;
+      if (!error && data && data.length > 0) {
+        setLinkedInvoice(data[0] as LinkedInvoice);
+      }
+      setLinkedChecked(true);
+    })();
+    return () => { cancelled = true; };
+  }, [pl.id, pl.plNumber]);
+
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
           <CardTitle>Packing list</CardTitle>
-          <Badge variant={pl.status.toUpperCase() === 'INVOICED' ? 'success' : 'neutral'} dot>
-            {pl.status}
-          </Badge>
+          <div className="flex items-center gap-2 ml-auto">
+            <Badge variant={pl.status.toUpperCase() === 'INVOICED' ? 'success' : 'neutral'} dot>
+              {pl.status}
+            </Badge>
+            <Button
+              size="sm"
+              onClick={() => {
+                if ((plDraft.containers ?? []).length === 0) {
+                  toast.push({ kind: 'warning', title: 'No containers on this PL' });
+                  return;
+                }
+                const { doc, fileName } = generatePLPerProductPdf(plDraft);
+                doc.save(fileName);
+              }}
+              title="Download Resume per Product"
+              className="bg-transparent border border-[#1f1f1f] text-slate-200 hover:bg-[#161616] h-7 px-2.5 text-[11.5px] gap-1.5"
+            >
+              <Download size={11} /> PL per Product
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                if ((plDraft.containers ?? []).length === 0) {
+                  toast.push({ kind: 'warning', title: 'No containers on this PL' });
+                  return;
+                }
+                const { doc, fileName } = generatePLPerContainerPdf(plDraft);
+                doc.save(fileName);
+              }}
+              title="Download Resume per Container"
+              className="bg-transparent border border-[#1f1f1f] text-slate-200 hover:bg-[#161616] h-7 px-2.5 text-[11.5px] gap-1.5"
+            >
+              <Download size={11} /> PL per Container
+            </Button>
+            <Button
+              size="sm"
+              disabled={plSaving}
+              loading={plSaving}
+              onClick={async () => {
+                if (plDraft.plNumber.trim() === '') {
+                  toast.push({ kind: 'warning', title: 'PL # is required' });
+                  return;
+                }
+                setPlSaving(true);
+                try {
+                  const payload = packingListPayload(plDraft, currentCompanyId);
+                  await savePackingListPayload(
+                    { mutateAsync: (p) => plUpdate.mutateAsync({ id: pl.id, ...p }) },
+                    payload,
+                  );
+                  toast.push({ kind: 'success', title: 'Packing list saved', description: plDraft.plNumber });
+                } catch (err) {
+                  toast.push({
+                    kind: 'error',
+                    title: 'Save failed',
+                    description: err instanceof Error ? err.message : String(err),
+                  });
+                } finally {
+                  setPlSaving(false);
+                }
+              }}
+              className="bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40 h-7 px-3 text-[12px]"
+            >
+              {plSaving ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
         </CardHeader>
         <CardBody>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[12.5px]">
-            <Row label="PL #"         value={<span className="font-mono tabular-nums">{pl.plNumber}</span>} />
-            <Row label="SO #"         value={<span className="font-mono tabular-nums">{pl.soNumber ?? '—'}</span>} />
-            <Row label="B/L #"        value={<span className="font-mono tabular-nums">{pl.blNumber ?? '—'}</span>} />
-            <Row label="Carrier"      value={pl.carrier ?? '—'} />
-            <Row label="Consignee"    value={pl.consignee ?? '—'} />
-            <Row label="Container"    value={<span className="font-mono tabular-nums">{pl.containerNumber ?? '—'}</span>} />
-          </div>
+          <PLReviewForm draft={plDraft} setDraft={setPlDraft} />
         </CardBody>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Derived invoice</CardTitle>
-          <span className="text-[11px] text-slate-500">Editable draft</span>
+          <CardTitle>Invoice</CardTitle>
+          <span className="text-[11px] text-slate-500">
+            {linkedInvoice ? 'Linked to this PL' : (linkedChecked ? 'Not yet created' : 'Checking…')}
+          </span>
         </CardHeader>
         <CardBody>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField>
-              <Label required>Invoice #</Label>
-              <Input value={invoiceNumber} onChange={e => setNumber(e.target.value)}
-                className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 font-mono tabular-nums" />
-            </FormField>
-            <FormField>
-              <Label>Invoice date</Label>
-              <Input type="date" value={invoiceDate} onChange={e => setDate(e.target.value)}
-                className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200" />
-            </FormField>
-          </div>
-          <div className="grid grid-cols-2 gap-3 mt-3">
-            <FormField>
-              <Label>Sold to / Bill to</Label>
-              <Input value={soldTo} onChange={e => setSoldTo(e.target.value)}
-                className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200" />
-            </FormField>
-            <FormField>
-              <Label>Incoterm</Label>
-              <Input value={incoterm} onChange={e => setIncoterm(e.target.value)}
-                placeholder="CFR, FOB, …"
-                className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 font-mono tabular-nums" />
-            </FormField>
-          </div>
-          <div className="grid grid-cols-[1fr_1fr_120px] gap-3 mt-3">
-            <FormField>
-              <Label required>Total amount</Label>
-              <Input type="number" min={0} step={0.01} value={totalAmount}
-                onChange={e => setTotal(e.target.value)}
-                invalid={totalAmount !== '' && !totalValid}
-                className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 font-mono tabular-nums" />
-            </FormField>
-            <FormField>
-              <Label>Payment terms</Label>
-              <Input value={paymentTerms} onChange={e => setTerms(e.target.value)}
-                className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200" />
-            </FormField>
-            <FormField>
-              <Label>Currency</Label>
-              <Input value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())}
-                maxLength={3}
-                className="h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-200 font-mono tabular-nums" />
-            </FormField>
-          </div>
+          {!linkedChecked ? (
+            <div className="text-[12.5px] text-slate-500 py-4 text-center">Checking for linked invoices…</div>
+          ) : linkedInvoice ? (
+            <div className="space-y-2 text-[12.5px]">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                <Row label="Invoice #" value={<span className="font-mono tabular-nums text-slate-100">{linkedInvoice.invoiceNumber ?? '—'}</span>} />
+                <Row label="Date" value={<span className="font-mono tabular-nums">{linkedInvoice.invoiceDate?.slice(0, 10) ?? '—'}</span>} />
+                <Row label="Bill to" value={linkedInvoice.billToName ?? linkedInvoice.soldTo ?? '—'} />
+                <Row label="Total" value={<span className="font-mono tabular-nums">{linkedInvoice.totalAmount != null ? fmt(linkedInvoice.totalAmount, linkedInvoice.currency ?? 'USD') : '—'}</span>} />
+              </div>
+              <div className="pt-2 text-[11.5px] text-slate-500">
+                This packing list is already invoiced. Edit the invoice from the Invoice & docs page.
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 py-4">
+              <div className="text-[12.5px] text-slate-400 text-center">
+                No invoice has been created for this PL yet.
+              </div>
+              <Button
+                size="sm"
+                onClick={async () => {
+                  // Fetch prior invoices for the same customer so we can
+                  // suggest the same unit price the customer paid last
+                  // time for each product. The lookup is best-effort —
+                  // failure just leaves the PL's OCR-extracted price.
+                  const priorBySoldTo = plDraft.consignee;
+                  // Index prior-paid unit prices by every name we can
+                  // derive from the line item: productId, productName,
+                  // customerDescription, plus their trim/lower forms.
+                  // The most-recent invoice wins since we iterate in
+                  // invoiceDate-desc order and only set if not already
+                  // mapped.
+                  const priorPriceByKey = new Map<string, number>();
+                  try {
+                    if (priorBySoldTo) {
+                      // Use ilike + substring wildcards so trailing
+                      // whitespace / casing differences between the PL's
+                      // consignee and the invoices' soldTo / billToName
+                      // / consignee still match.
+                      const needle = priorBySoldTo.trim();
+                      const { data } = await getSupabaseClient()
+                        .from('invoices')
+                        .select('items, invoiceDate, billToName, consignee')
+                        .or(`soldTo.ilike.*${needle}*,billToName.ilike.*${needle}*,consignee.ilike.*${needle}*`)
+                        .order('invoiceDate', { ascending: false, nullsFirst: false })
+                        .limit(100);
+                      const rows = (data as Array<{ items: unknown }> | null) ?? [];
+                      for (const row of rows) {
+                        let parsed: unknown = row.items;
+                        if (typeof parsed === 'string') {
+                          try { parsed = JSON.parse(parsed); } catch { continue; }
+                        }
+                        if (!Array.isArray(parsed)) continue;
+                        for (const it of parsed as Array<Record<string, unknown>>) {
+                          const price = typeof it.unitPrice === 'number' ? it.unitPrice : Number(it.unitPrice);
+                          if (!Number.isFinite(price) || price <= 0) continue;
+                          const pid = typeof it.productId === 'string' ? it.productId : '';
+                          const pname = typeof it.productName === 'string' ? it.productName : '';
+                          const cdesc = typeof it.customerDescription === 'string' ? it.customerDescription : '';
+                          const put = (k: string) => { if (k && !priorPriceByKey.has(k)) priorPriceByKey.set(k, price); };
+                          if (pid) put(`id:${pid}`);
+                          if (pname) put(`nm:${pname.trim().toLowerCase()}`);
+                          if (cdesc) put(`nm:${cdesc.trim().toLowerCase()}`);
+                        }
+                      }
+                    }
+                  } catch { /* best-effort; ignore */ }
 
-          <div className="mt-5 pt-3 border-t border-[#1f1f1f] flex items-center gap-3">
-            {saved ? (
-              <div className="flex items-center gap-2 text-emerald-400 text-[12.5px]">
-                <span>✓ Invoice saved — closing…</span>
-              </div>
-            ) : (
-              <div className="text-[12px] text-slate-500">
-                {totalValid
-                  ? `Will insert as ${fmt(totalNum, currency)} against SO ${pl.soNumber ?? '—'}.`
-                  : 'Enter a total amount to enable save.'}
-              </div>
-            )}
-            <Button
-              size="sm"
-              onClick={save}
-              disabled={!totalValid || !invoiceNumber.trim() || insert.isPending || saved}
-              loading={insert.isPending}
-              className="ml-auto bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40"
-            >
-              {insert.isPending ? 'Saving…' : saved ? 'Saved' : 'Create invoice'}
-            </Button>
-          </div>
+                  // Map PL containers to invoice line items so the user
+                  // lands in the Invoice drawer with products + weights
+                  // already populated. When the PL picked a system
+                  // product, resolve it against the products catalog
+                  // so the invoice carries the product's id + hsCode.
+                  const productList = products.data ?? [];
+                  // Resolve the catalog product using a priority chain:
+                  //   1. PL's explicitly-picked systemProduct
+                  //   2. exact match on the free-text description
+                  //   3. fuzzy "contains" match against description /
+                  //      supplier (case-insensitive)
+                  const lc = (s: string) => s.trim().toLowerCase();
+                  const items = plDraft.containers.map((c) => {
+                    const sysKey = lc(c.systemProduct);
+                    const descKey = lc(c.description);
+                    const suppKey = lc(c.supplier);
+                    const linked =
+                      (sysKey && productList.find(p => lc(p.name) === sysKey))
+                      ?? (descKey && productList.find(p => lc(p.name) === descKey))
+                      ?? (descKey && productList.find(p => lc(p.name).includes(descKey) || descKey.includes(lc(p.name))))
+                      ?? (suppKey && productList.find(p => lc(p.name).includes(suppKey)))
+                      ?? undefined;
+                    // Pick the best price: last-paid price for this
+                    // customer+product wins; otherwise fall back to the
+                    // price the OCR found on the PL. Try the linked
+                    // product id first, then every name variant we
+                    // have — prior invoices often stored the raw OCR
+                    // description instead of the catalog product name,
+                    // so checking all of them catches more matches.
+                    const nameKeys = [
+                      linked?.name,
+                      c.description,
+                      c.supplier,
+                      c.systemProduct,
+                    ]
+                      .map(s => (s ?? '').trim().toLowerCase())
+                      .filter(Boolean);
+                    let priorPrice: number | undefined;
+                    if (linked?.id) priorPrice = priorPriceByKey.get(`id:${linked.id}`);
+                    if (priorPrice == null) {
+                      for (const key of nameKeys) {
+                        const hit = priorPriceByKey.get(`nm:${key}`);
+                        if (hit != null) { priorPrice = hit; break; }
+                      }
+                    }
+                    // Last resort: fuzzy substring match across all
+                    // name-keyed prior prices.
+                    if (priorPrice == null && nameKeys.length > 0) {
+                      for (const [k, v] of priorPriceByKey.entries()) {
+                        if (!k.startsWith('nm:')) continue;
+                        const kName = k.slice(3);
+                        const hit = nameKeys.some(n => n.includes(kName) || kName.includes(n));
+                        if (hit) { priorPrice = v; break; }
+                      }
+                    }
+                    const suggestedPrice = priorPrice ?? c.unitPrice ?? 0;
+                    const qty = c.netLbs ?? 0;
+                    const total = priorPrice != null && qty > 0
+                      ? Math.round(priorPrice * qty * 100) / 100
+                      : (c.totalValue ?? 0);
+                    return {
+                      productId: linked?.id,
+                      productName: c.description || c.supplier || '',
+                      customerDescription: c.description || '',
+                      quantity: qty,
+                      unitPrice: suggestedPrice,
+                      total,
+                      hsCode: linked?.hsCode ?? '',
+                      grade: linked?.grade ?? '',
+                      netLbs: c.netLbs ?? undefined,
+                      netKg: c.netKg ?? undefined,
+                      grossLbs: c.grossLbs ?? undefined,
+                      grossKg: c.grossKg ?? undefined,
+                      volumes: c.volumes ?? undefined,
+                      containerNo: c.containerNo || undefined,
+                      sealNo: c.sealNo || undefined,
+                      supplier: c.supplier || undefined,
+                    };
+                  });
+                  const incotermCode = (plDraft.freightTerms || '').split(' ')[0] || 'FOB';
+                  // Auto-generate INV-##### as last-invoice + 1.
+                  const nextInvoiceNumber = await generateNextInvoiceNumber();
+                  // Company defaults to the PL's shipper (which is one
+                  // of the user's own companies). Fall back to the
+                  // current scoped company if the shipper name doesn't
+                  // match a company row.
+                  const companyByShipper = (companies.data ?? []).find(
+                    c => c.name.trim().toLowerCase() === (plDraft.shipper || '').trim().toLowerCase(),
+                  );
+                  const seedCompanyId = companyByShipper?.id
+                    ?? (currentCompanyId && currentCompanyId !== 'ALL' ? currentCompanyId : null);
+                  openInvoiceCreate({
+                    companyId: seedCompanyId,
+                    invoiceNumber: nextInvoiceNumber,
+                    invoiceDate: new Date().toISOString().slice(0, 10),
+                    soldTo: plDraft.consignee || pl.consignee || null,
+                    billToName: plDraft.consignee || pl.consignee || null,
+                    consignee: plDraft.consignee || pl.consignee || null,
+                    shipperName: plDraft.shipper || null,
+                    soNumber: plDraft.soNumber || pl.soNumber || null,
+                    plNumber: plDraft.plNumber || pl.plNumber,
+                    bookingNumber: plDraft.bookingNumber || null,
+                    customerPo: plDraft.poNumber || null,
+                    incoterm: incotermCode,
+                    incoterms: plDraft.freightTerms || null,
+                    // Leave freightTerms (Collect / Prepaid) unset so
+                    // the Invoice drawer derives it from the Incoterm
+                    // (EXW/FAS/FOB → Collect, others → Prepaid).
+                    freightTerms: null,
+                    currency: plDraft.currency || 'USD',
+                    grossWeight: plDraft.grossWeight || null,
+                    netWeight: plDraft.netWeight || null,
+                    items: items as any,
+                  });
+                }}
+                className="bg-indigo-600 text-white hover:bg-indigo-500"
+              >
+                Create invoice from this PL
+              </Button>
+            </div>
+          )}
         </CardBody>
       </Card>
     </div>

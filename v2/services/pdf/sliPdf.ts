@@ -38,9 +38,17 @@ export function generateSliPdf(
   const companyPhone = company?.phone || '';
   const companyState = company?.state || 'FL';
 
-  // Consignee info
-  const consigneeName = inv.consignee || inv.billToName || '';
-  const customer = ctx.customers.find(c => c.name === consigneeName || c.name === inv.billToName);
+  // Consignee info — case- / whitespace-tolerant lookup so taxId +
+  // address resolve reliably even when stored names carry trailing
+  // whitespace.
+  const slNormalize = (s: string) => (s ?? '').trim().toLowerCase();
+  const consigneeName = inv.soldTo || inv.consignee || inv.billToName || '';
+  const customer = (() => {
+    const key = slNormalize(consigneeName);
+    if (!key) return undefined;
+    return ctx.customers.find(c => slNormalize(c.name ?? '') === key)
+      ?? ctx.customers.find(c => slNormalize(c.name ?? '') === slNormalize(inv.billToName ?? ''));
+  })();
   const customerCountry = customer?.country || '';
   const customerAddress = customer
     ? [customer.location, customer.city, customer.state, customer.zip, customer.country].filter(Boolean).join(', ')
@@ -81,11 +89,49 @@ export function generateSliPdf(
     poaValue = (linkedPL as any).shippingPoint;
   }
 
-  const totalNetLbs = items.reduce((s: number, i: any) => s + Number(i.netLbs || i.quantity || 0), 0);
-  const totalNetKg = totalNetLbs * 0.453592;
-  const totalGrossLbs = items.reduce((s: number, i: any) => s + Number(i.grossLbs || 0), 0);
-  const totalGrossKg = totalGrossLbs > 0 ? totalGrossLbs * 0.453592 : totalNetKg * 1.02;
-  const totalVolumes = items.reduce((s: number, i: any) => s + Number(i.volumes || 0), 0);
+  // Item-level aggregates first; fall back to invoice row fields when
+  // line items were imported without per-row weights/volumes. Mirrors
+  // the same fallback used by invoicePdf + packingListPdf so all three
+  // docs stay consistent for an invoice.
+  const parseNum = (v: unknown): number => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+    if (typeof v === 'string') {
+      const n = Number(v.replace(/[^\d.\-]/g, ''));
+      return Number.isFinite(n) ? n : 0;
+    }
+    return 0;
+  };
+  // Net — prefer netKg (already KG), else netLbs/quantity (LBS→KG),
+  // else the invoice row's `netWeight` (treated as KG).
+  const itemsNetKg = items.reduce((s: number, i: any) => {
+    if (i.netKg) return s + Number(i.netKg);
+    const lbs = Number(i.netLbs || i.quantity || 0);
+    return s + lbs * 0.453592;
+  }, 0);
+  const totalNetKg = itemsNetKg > 0 ? itemsNetKg : parseNum((inv as any).netWeight);
+  // Gross — prefer grossKg, else grossLbs→KG, else row `grossWeight`.
+  // No silent "net × 1.02" fudge: if nothing is known, render a dash.
+  const itemsGrossKg = items.reduce((s: number, i: any) => {
+    if (i.grossKg) return s + Number(i.grossKg);
+    const lbs = Number(i.grossLbs || 0);
+    return s + lbs * 0.453592;
+  }, 0);
+  const totalGrossKg = itemsGrossKg > 0 ? itemsGrossKg : parseNum((inv as any).grossWeight);
+  // Volumes — item sum, else container sum, else row fallback.
+  const itemsVolumes = items.reduce((s: number, i: any) => s + Number(i.volumes || 0), 0);
+  const containerVolSum = (() => {
+    try {
+      const arr = typeof (inv as any).containers === 'string'
+        ? JSON.parse((inv as any).containers || '[]')
+        : ((inv as any).containers as any[] | undefined) || [];
+      return (arr as any[]).reduce((s, c) => s + (Number(c?.volumes) || 0), 0);
+    } catch { return 0; }
+  })();
+  const totalVolumes = itemsVolumes > 0
+    ? itemsVolumes
+    : containerVolSum > 0
+      ? containerVolSum
+      : parseNum((inv as any).totalVolumes ?? (inv as any).volumes);
 
   // Header (logo left, company right)
   if (ctx.logoUrl) {
@@ -256,6 +302,21 @@ export function generateSliPdf(
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
 
+  // Resolve a single item's net/gross in KG, using the same priority
+  // as the totals above (netKg → netLbs*0.453592; grossKg → grossLbs
+  // *0.453592). No fabrication — if per-item gross is absent, we
+  // leave the row blank rather than printing a fake number.
+  const rowNetKg = (i: any): number => {
+    if (i.netKg) return Number(i.netKg);
+    const lbs = Number(i.netLbs || i.quantity || 0);
+    return lbs * 0.453592;
+  };
+  const rowGrossKg = (i: any): number => {
+    if (i.grossKg) return Number(i.grossKg);
+    const lbs = Number(i.grossLbs || 0);
+    return lbs * 0.453592;
+  };
+
   if (items.length > 0) {
     items.forEach((item: any) => {
       if (y > 260) return;
@@ -267,15 +328,16 @@ export function generateSliPdf(
       if (!desc) desc = item.productDescription || item.description || '';
       const hsCode = item.hsCode || '';
       const descWithHS = hsCode ? `${hsCode} - ${desc}` : desc;
-      const qty = Number(item.netLbs || item.quantity || 0);
-      const qtyKg = qty * 0.453592;
+      const netKg = rowNetKg(item);
+      const grossKg = rowGrossKg(item);
       const amount = Number(item.amount || 0);
+      const fmtKg = (n: number) => n > 0 ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
 
       doc.text('D', leftCol + 4, y);
       const descLines = doc.splitTextToSize(descWithHS.substring(0, 70), 78);
       doc.text(descLines, leftCol + 14, y);
-      doc.text(qtyKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), leftCol + 95, y);
-      doc.text(qtyKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), leftCol + 113, y);
+      doc.text(fmtKg(netKg),   leftCol + 95,  y);   // 20. QTY (net kg)
+      doc.text(fmtKg(grossKg), leftCol + 113, y);   // 22. SHIP WT (gross kg)
       doc.text('EAR99', leftCol + 140, y);
       doc.text(`$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, leftCol + 160, y);
 
@@ -292,9 +354,10 @@ export function generateSliPdf(
   doc.rect(leftCol, y - 3, 182, 7, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
+  const fmtKg = (n: number) => n > 0 ? `${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG` : '-';
   doc.text('TOTALS:', leftCol + 14, y);
-  doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG`, leftCol + 95, y);
-  doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG`, leftCol + 113, y);
+  doc.text(fmtKg(totalNetKg),   leftCol + 95,  y);   // QTY total
+  doc.text(fmtKg(totalGrossKg), leftCol + 113, y);   // SHIP WT total
   doc.text(`$${Number((inv as any).totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, leftCol + 160, y);
   y += 10;
 
@@ -358,12 +421,12 @@ export function generateSliPdf(
   doc.setFont('helvetica', 'bold');
   doc.text('Gross Weight:', leftCol, y);
   doc.setFont('helvetica', 'normal');
-  doc.text(`${totalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG`, leftValCol, y);
+  doc.text(fmtKg(totalGrossKg), leftValCol, y);
 
   doc.setFont('helvetica', 'bold');
   doc.text('Net Weight:', rightCol, y);
   doc.setFont('helvetica', 'normal');
-  doc.text(`${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KG`, rightValCol, y);
+  doc.text(fmtKg(totalNetKg), rightValCol, y);
   y += lineHeight + 1;
 
   doc.setFont('helvetica', 'bold');
@@ -414,12 +477,15 @@ export function generateSliPdf(
   const specialNotes = (inv as any).specialNotes || inv.memo || DEFAULT_MEMO;
   doc.text(specialNotes, leftValCol, y);
 
-  if (ctx.stampUrl && companyName.toUpperCase().includes('EC4')) {
+  if (ctx.stampUrl) {
     try {
       const stampSize = 30;
       const stampX = 196 - stampSize;
       const stampY = Math.min(y + 10, 255);
-      doc.addImage(ctx.stampUrl, 'JPEG', stampX, stampY, stampSize, stampSize);
+      let fmt = 'PNG';
+      const m = ctx.stampUrl.match(/^data:image\/(\w+);/i);
+      if (m) { fmt = m[1].toUpperCase(); if (fmt === 'JPG') fmt = 'JPEG'; }
+      doc.addImage(ctx.stampUrl, fmt, stampX, stampY, stampSize, stampSize);
     } catch (e) { console.warn('[SLI PDF] Could not add stamp:', e); }
   }
 

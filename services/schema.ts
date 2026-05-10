@@ -47,6 +47,8 @@ create table if not exists customers (
   "taxId" text,
   "contactPerson" text,
   "email" text,
+  "email2" text,
+  "email3" text,
   "phone" text,
   "location" text,
   "city" text,
@@ -143,7 +145,13 @@ create table if not exists products (
   "tdsFile" text,
   "tdsUrl" text,
   "sharedWith" text[],
-  "imageIds" text[]
+  "imageIds" text[],
+  -- Curated-vs-auto distinction. Defaults to true so existing rows
+  -- stay visible in the system-product dropdowns. New rows
+  -- auto-created from OCR via ensureProducts() write false, so they
+  -- live in the catalog (still searchable by Products page) but stay
+  -- out of curated dropdowns until a human picks/promotes them.
+  "isSystemProduct" boolean not null default true
 );
 
 create table if not exists inventory (
@@ -679,6 +687,9 @@ create table if not exists commission_sales_orders (
   "invoiceStatus" text,
   "commissionPaymentStatus" text,
   "invoiceNumber" text,
+  "commissionInvoiceNumber" text,
+  "commissionInvoiceDate" text,
+  "commissionInvoicePdfUrl" text,
   "createdAt" text,
   "approvedBy" text
 );
@@ -714,7 +725,63 @@ create table if not exists ai_learned_tasks (
   "createdAt" text
 );
 
--- 10. Activity Logging (AI-Trainable)
+-- 10. AI Sales Agent
+create table if not exists prospects (
+  "id" text primary key,
+  "companyId" text,
+  "name" text,
+  "companyName" text,
+  "email" text,
+  "phone" text,
+  "country" text,
+  "source" text,
+  "stage" text default 'new',
+  "notes" text,
+  "assignedTo" text,
+  "createdAt" text
+);
+
+create table if not exists ai_agent_identities (
+  "id" text primary key,
+  "companyId" text,
+  "role" text,
+  "displayName" text,
+  "emailAddress" text,
+  "whatsappSender" text,
+  "signature" text,
+  "createdAt" text
+);
+
+create table if not exists ai_sales_proposals (
+  "id" text primary key,
+  "companyId" text,
+  "audience" text,
+  "customerId" text,
+  "prospectId" text,
+  "salesRepId" text,
+  "recipientName" text,
+  "recipientEmail" text,
+  "recipientPhone" text,
+  "channel" text,
+  "status" text default 'draft',
+  "mode" text default 'review',
+  "intent" text,
+  "subject" text,
+  "body" text,
+  "whatsappPreview" text,
+  "pdfUrl" text,
+  "reasoning" text,
+  "items" jsonb,
+  "totalAmount" numeric,
+  "currency" text,
+  "agentIdentityId" text,
+  "sentAt" text,
+  "errorMessage" text,
+  "createdBy" text,
+  "createdAt" text
+);
+
+-- 11. Activity Logging (AI-Trainable)
 create table if not exists activity_logs (
   "id" text primary key,
   "timestamp" timestamptz default now(),

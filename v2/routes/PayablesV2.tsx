@@ -1,7 +1,7 @@
 // Phase 3B — v2 Payables.
 
-import React, { useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AlertCircle, CheckCircle, Clock, Loader2, Send, Sparkles } from 'lucide-react';
 import { Button, Input, FormField, Label } from '../primitives';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
@@ -16,8 +16,50 @@ import { usePayables, Payable } from '../queries/usePayables';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
 import { formatMoney as fmtMoney } from '../lib/formatMoney';
+import { batchGetSyncStatuses, syncPayableBill } from '../../services/quickbooksService';
+import { getSupabaseClient } from '../../services/supabase';
+import type { QBSyncStatus, SupplierInvoice } from '../../types';
 
-const columns: DataTableColumn<Payable>[] = [
+// ─── Due-date / Status helpers (parity with v1 FinancePayables) ──
+const calcDueDate = (invoiceDate: string | null, paymentTerms: string | null): Date | null => {
+  if (!invoiceDate) return null;
+  const base = new Date(invoiceDate);
+  if (isNaN(base.getTime())) return null;
+  const days = paymentTerms ? parseInt((paymentTerms.match(/\d+/) || ['0'])[0], 10) : 0;
+  if (days > 0) base.setDate(base.getDate() + days);
+  return base;
+};
+
+type DueLabel = 'Overdue' | 'Due Soon' | 'On Track' | 'No Date';
+const getDueStatus = (r: Payable): { label: DueLabel; priority: number } => {
+  const due = calcDueDate(r.invoiceDate, r.paymentTerms);
+  if (!due) return { label: 'No Date', priority: 3 };
+  const diffDays = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0)  return { label: 'Overdue',  priority: 1 };
+  if (diffDays <= 7) return { label: 'Due Soon', priority: 2 };
+  return { label: 'On Track', priority: 4 };
+};
+
+const StatusPill: React.FC<{ label: DueLabel }> = ({ label }) => {
+  const map: Record<DueLabel, { cls: string; icon: React.ReactNode }> = {
+    'Overdue':  { cls: 'bg-rose-500/10 text-rose-300 border-rose-500/20', icon: <AlertCircle size={10} /> },
+    'Due Soon': { cls: 'bg-amber-500/10 text-amber-300 border-amber-500/20', icon: <Clock size={10} /> },
+    'On Track': { cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20', icon: <CheckCircle size={10} /> },
+    'No Date':  { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/20', icon: null },
+  };
+  const { cls, icon } = map[label];
+  return (
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold border ${cls}`}>
+      {icon}{label}
+    </span>
+  );
+};
+
+const buildColumns = (
+  qbStatuses: Record<string, QBSyncStatus>,
+  qbSyncingId: string | null,
+  onSendToQb: (row: Payable) => void,
+): DataTableColumn<Payable>[] => [
   { id: 'inv', header: 'Invoice #', mono: true, sortable: true, filterable: true,
     value: r => r.invoiceNumber, cell: r => r.invoiceNumber },
   { id: 'supplier', header: 'Supplier', sortable: true, filterable: true,
@@ -36,6 +78,41 @@ const columns: DataTableColumn<Payable>[] = [
         {fmtDate(r.invoiceDate)}
       </span>
     ) },
+  { id: 'status', header: 'Status', sortable: true, filterable: true,
+    value: r => getDueStatus(r).label,
+    cell: r => <StatusPill label={getDueStatus(r).label} /> },
+  { id: 'qb', header: 'QB', sortable: true, filterable: true,
+    value: r => (r.qbStatus === 'Sent' || qbStatuses[r.id]?.synced) ? 'Sent' : '—',
+    cell: r => {
+      const sent = r.qbStatus === 'Sent' || qbStatuses[r.id]?.synced;
+      if (sent) {
+        return (
+          <span
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+            title={qbStatuses[r.id]?.qbEntityId ? `Bill #${qbStatuses[r.id].qbEntityId}` : 'Synced to QuickBooks'}
+          >
+            <CheckCircle size={10} /> Sent
+          </span>
+        );
+      }
+      const syncing = qbSyncingId === r.id;
+      return (
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); onSendToQb(r); }}
+          disabled={syncing}
+          title={qbStatuses[r.id]?.error ? `Retry — last error: ${qbStatuses[r.id].error}` : 'Send to QuickBooks'}
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold border transition-colors ${
+            syncing
+              ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20 cursor-wait'
+              : 'bg-[#141414] text-slate-300 border-[#1f1f1f] hover:text-indigo-300 hover:border-indigo-500/40'
+          }`}
+        >
+          {syncing ? <Loader2 size={10} className="animate-spin" /> : <Send size={10} />}
+          {syncing ? 'Sending…' : 'Send to QB'}
+        </button>
+      );
+    } },
 ];
 
 const fields: FieldDef[] = [
@@ -125,6 +202,71 @@ const PayablesV2: React.FC = () => {
     idPrefix: 'SINV',
   });
 
+  // ─── QuickBooks sync state ────────────────────────────────────
+  const [qbStatuses, setQbStatuses] = useState<Record<string, QBSyncStatus>>({});
+  const [qbSyncingId, setQbSyncingId] = useState<string | null>(null);
+
+  // Batch-load QB sync statuses once the list arrives. Mirrors
+  // v1's qb_sync_log hydration — unsent rows show the Send button,
+  // synced rows show the "Sent" pill on refresh.
+  useEffect(() => {
+    const ids = (pay.data ?? []).map(r => r.id);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const map = await batchGetSyncStatuses(ids, 'invoices_suppliers');
+        if (!cancelled) setQbStatuses(prev => ({ ...prev, ...map }));
+      } catch (e) {
+        console.warn('QB sync status fetch failed:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pay.data]);
+
+  const handleSendToQb = useCallback(async (row: Payable) => {
+    if (qbSyncingId) return;
+    setQbSyncingId(row.id);
+    try {
+      // syncPayableBill expects the fuller SupplierInvoice shape; our
+      // Payable row carries the core fields and the edge function reads
+      // what it needs. Cast is safe for the bill-sync path.
+      const payload = {
+        id: row.id,
+        invoiceNumber: row.invoiceNumber,
+        shipperName: row.supplier ?? '',
+        invoiceDate: row.invoiceDate ?? '',
+        paymentTerms: row.paymentTerms ?? '',
+        totalAmount: row.totalAmount,
+        currency: row.currency,
+      } as unknown as SupplierInvoice;
+      const result = await syncPayableBill(currentCompanyId || 'ALL', payload);
+      setQbStatuses(prev => ({ ...prev, [row.id]: result }));
+      try {
+        const supabase = getSupabaseClient();
+        await supabase.from('invoices_suppliers').update({ qb_status: 'Sent' }).eq('id', row.id);
+      } catch (dbErr) {
+        console.warn('qb_status update failed:', dbErr);
+      }
+      toast.push({
+        kind: 'success',
+        title: 'Sent to QuickBooks',
+        description: result.qbEntityId ? `Bill #${result.qbEntityId}` : row.invoiceNumber,
+      });
+    } catch (err) {
+      const msg = (err as Error).message;
+      setQbStatuses(prev => ({ ...prev, [row.id]: { synced: false, error: msg } }));
+      toast.push({ kind: 'error', title: 'QuickBooks sync failed', description: msg });
+    } finally {
+      setQbSyncingId(null);
+    }
+  }, [currentCompanyId, qbSyncingId, toast]);
+
+  const columns = React.useMemo(
+    () => buildColumns(qbStatuses, qbSyncingId, handleSendToQb),
+    [qbStatuses, qbSyncingId, handleSendToQb],
+  );
+
   const { rowActions, drawers, openView } = useRowCrud<Payable>({
     table: 'invoices_suppliers',
     listQueryKeys: ['payables'],
@@ -169,7 +311,7 @@ const PayablesV2: React.FC = () => {
           </div>
         }
         emptyAction={search ? undefined : { label: '+ New bill', onClick: openCreate }}
-        skeletonCols={[100, 200, 100, 80, 60]}
+        skeletonCols={[100, 200, 100, 80, 60, 80, 80]}
       />
       <QuickCreateDrawer
         open={createOpen}

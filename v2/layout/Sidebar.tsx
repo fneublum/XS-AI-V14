@@ -9,6 +9,7 @@
 import React from 'react';
 import { cn } from '../primitives/utils';
 import { Kbd } from '../primitives/Kbd';
+import { useSystemLogo } from '../queries/useSystemLogo';
 
 export interface SidebarItem {
   id: string;
@@ -16,6 +17,9 @@ export interface SidebarItem {
   hint?: string;
   count?: number;
   disabled?: boolean;
+  /** Lucide icon component shown to the left of the label (and in
+   *  collapsed mode in place of the single-letter glyph). */
+  icon?: React.ComponentType<{ size?: number; className?: string }>;
   /** Override the default `onSelect(id)` — use for items that open a
    *  modal or jump to an external surface instead of routing. */
   onClick?: () => void;
@@ -24,8 +28,31 @@ export interface SidebarItem {
 export interface SidebarSection {
   id: string;
   label?: string;
+  /** Optional accent color for this section's icons / active dot. */
+  accent?: 'indigo' | 'emerald' | 'amber' | 'sky' | 'rose' | 'violet' | 'slate';
+  /** Lucide icon shown next to the section label. */
+  icon?: React.ComponentType<{ size?: number; className?: string }>;
   items: SidebarItem[];
 }
+
+const accentText: Record<NonNullable<SidebarSection['accent']>, string> = {
+  indigo:  'text-indigo-300',
+  emerald: 'text-emerald-300',
+  amber:   'text-amber-300',
+  sky:     'text-sky-300',
+  rose:    'text-rose-300',
+  violet:  'text-violet-300',
+  slate:   'text-slate-300',
+};
+const accentDot: Record<NonNullable<SidebarSection['accent']>, string> = {
+  indigo:  'bg-indigo-400',
+  emerald: 'bg-emerald-400',
+  amber:   'bg-amber-400',
+  sky:     'bg-sky-400',
+  rose:    'bg-rose-400',
+  violet:  'bg-violet-400',
+  slate:   'bg-slate-400',
+};
 
 interface SidebarProps {
   sections: SidebarSection[];
@@ -46,7 +73,11 @@ const glyph = (label: string): string => {
 
 export const Sidebar: React.FC<SidebarProps> = ({
   sections, activeId, onSelect, workspace, user, footer, collapsed,
-}) => (
+}) => {
+  const logoQuery = useSystemLogo();
+  const logoSrc = logoQuery.data;
+
+  return (
   <aside
     className={cn(
       'shrink-0 border-r border-[#1f1f1f] bg-[#0a0a0a] flex flex-col transition-[width] duration-150',
@@ -56,41 +87,61 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {workspace && (
       <div className={cn(
         'h-14 flex items-center gap-2 border-b border-[#1f1f1f]',
-        collapsed ? 'justify-center px-0' : 'px-4',
+        collapsed ? 'justify-center px-0' : 'px-3',
       )}>
-        <div
-          className="w-5 h-5 rounded bg-gradient-to-br from-indigo-500 to-purple-500"
-          aria-hidden
-        />
-        {!collapsed && (
-          <>
-            <span className="text-[13px] font-semibold tracking-tight text-slate-100">
-              {workspace.name}
-            </span>
-            {workspace.subtitle && (
-              <span className="ml-auto text-[10px] text-slate-600 font-mono tabular-nums">
-                {workspace.subtitle}
-              </span>
-            )}
-          </>
+        {logoSrc
+          ? (
+            <img
+              src={logoSrc}
+              alt={workspace.name}
+              className={cn(
+                'object-contain',
+                collapsed ? 'max-h-7 max-w-[32px]' : 'max-h-9 max-w-[140px]',
+              )}
+            />
+          )
+          : (
+            <div
+              className="w-5 h-5 rounded bg-gradient-to-br from-indigo-500 to-purple-500 shrink-0"
+              aria-hidden
+            />
+          )
+        }
+        {!collapsed && workspace.subtitle && (
+          <span className="ml-auto text-[10px] text-slate-600 font-mono tabular-nums">
+            {workspace.subtitle}
+          </span>
         )}
       </div>
     )}
 
+    {/* Comfortable density — items breathe without introducing a
+     *  scroll on a typical viewport. Spacer between sections uses
+     *  `flex-1`-free flow plus a balanced `mt-3.5` so gaps read as
+     *  intentional rather than empty canvas. */}
     <nav className={cn(
-      'flex-1 overflow-y-auto',
+      'flex-1 min-h-0 overflow-y-auto custom-scrollbar',
       collapsed ? 'px-1 py-2' : 'px-2 py-3',
     )}>
-      {sections.map((section, i) => (
+      {sections.map((section, i) => {
+        const accent = section.accent ?? 'slate';
+        const SectionIcon = section.icon;
+        return (
         <div key={section.id} className={cn(i > 0 && (collapsed ? 'mt-2 pt-2 border-t border-[#1f1f1f]' : 'mt-4'))}>
           {section.label && !collapsed && (
-            <div className="px-2 text-[10px] uppercase tracking-widest text-slate-600 font-medium mb-1.5">
-              {section.label}
+            <div className="px-2 mb-1.5 flex items-center gap-1.5">
+              {SectionIcon && (
+                <SectionIcon size={11} className={cn(accentText[accent], 'opacity-80')} />
+              )}
+              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
+                {section.label}
+              </span>
             </div>
           )}
-          <ul className="space-y-px">
+          <ul className="space-y-0.5">
             {section.items.map(item => {
               const active = item.id === activeId;
+              const Icon = item.icon;
               return (
                 <li key={item.id}>
                   <button
@@ -104,9 +155,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     aria-current={active ? 'page' : undefined}
                     title={collapsed ? item.label : undefined}
                     className={cn(
-                      'w-full text-left transition-colors rounded-md',
+                      'w-full text-left transition-colors rounded-md group',
                       collapsed
-                        ? 'flex items-center justify-center h-8 text-[11px]'
+                        ? 'flex items-center justify-center h-8'
                         : 'flex items-center justify-between gap-2 px-2 py-1.5 text-[13px]',
                       active
                         ? 'bg-[#161616] text-slate-100'
@@ -115,22 +166,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
                   >
                     {collapsed ? (
-                      <span className={cn(
-                        'font-semibold text-[11px] tracking-wider',
-                        active ? 'text-indigo-300' : 'text-slate-500',
-                      )}>
-                        {glyph(item.label)}
-                      </span>
+                      Icon ? (
+                        <Icon size={15} className={cn(active ? accentText[accent] : 'text-slate-500 group-hover:text-slate-200')} />
+                      ) : (
+                        <span className={cn(
+                          'font-semibold text-[11px] tracking-wider',
+                          active ? accentText[accent] : 'text-slate-500',
+                        )}>
+                          {glyph(item.label)}
+                        </span>
+                      )
                     ) : (
                       <>
                         <span className="flex items-center gap-2 truncate">
-                          <span
-                            className={cn(
-                              'w-1 h-1 rounded-full transition-colors',
-                              active ? 'bg-indigo-400' : 'bg-slate-600',
-                            )}
-                            aria-hidden
-                          />
+                          {Icon ? (
+                            <Icon
+                              size={14}
+                              className={cn(
+                                'shrink-0 transition-colors',
+                                active ? accentText[accent] : 'text-slate-500 group-hover:text-slate-200',
+                              )}
+                            />
+                          ) : (
+                            <span
+                              className={cn(
+                                'w-1 h-1 rounded-full transition-colors',
+                                active ? accentDot[accent] : 'bg-slate-600',
+                              )}
+                              aria-hidden
+                            />
+                          )}
                           <span className="truncate">{item.label}</span>
                         </span>
                         {item.hint && <Kbd>{item.hint}</Kbd>}
@@ -147,7 +212,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             })}
           </ul>
         </div>
-      ))}
+        );
+      })}
     </nav>
 
     {!collapsed && (footer
@@ -165,4 +231,5 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       ))}
   </aside>
-);
+  );
+};

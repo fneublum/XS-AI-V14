@@ -5,18 +5,29 @@
 // Pass `undefined` for any handler to hide that icon.
 
 import React from 'react';
-import { Eye, Pencil, Trash2, Mail, FileText } from 'lucide-react';
+import { Eye, Pencil, Trash2, Mail, FileText, Copy, FileDown, ArrowRight, X as XIcon } from 'lucide-react';
 
 interface Props {
   onView?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
   onEmail?: () => void;
+  onDuplicate?: () => void;
   /** Opens a "documents" flow for the row — Delivery Docs on Invoices,
    *  Proforma on Sales Orders, etc. */
   onDeliveryDocs?: () => void;
   /** Custom tooltip/aria for the documents icon. Default: "Delivery documents". */
   deliveryDocsLabel?: string;
+  /** Generate and preview the row's PDF (e.g. PO PDF). */
+  onPdf?: () => void;
+  /** Custom tooltip for the PDF icon. Default: "Preview PDF". */
+  pdfLabel?: string;
+  /** Stage-promotion action — e.g. Approve a Proposal → Offer. */
+  onApprove?: () => void;
+  approveLabel?: string;
+  /** Reject action — counterpart to onApprove. */
+  onReject?: () => void;
+  rejectLabel?: string;
   disabled?: boolean;
 }
 
@@ -37,8 +48,11 @@ const stop = (fn?: () => void) => (e: React.MouseEvent) => {
 };
 
 export const RowActions: React.FC<Props> = ({
-  onView, onEdit, onDelete, onEmail, onDeliveryDocs,
+  onView, onEdit, onDelete, onEmail, onDuplicate, onDeliveryDocs,
   deliveryDocsLabel = 'Delivery documents',
+  onPdf, pdfLabel = 'Preview PDF',
+  onApprove, approveLabel = 'Approve',
+  onReject,  rejectLabel  = 'Reject',
   disabled,
 }) => (
   <div className="flex items-center justify-end gap-0.5">
@@ -78,6 +92,18 @@ export const RowActions: React.FC<Props> = ({
         <Pencil size={14} />
       </button>
     )}
+    {onPdf && (
+      <button
+        type="button"
+        onClick={stop(onPdf)}
+        disabled={disabled}
+        title={pdfLabel}
+        aria-label={pdfLabel}
+        className={iconBtn}
+      >
+        <FileDown size={14} />
+      </button>
+    )}
     {onEmail && (
       <button
         type="button"
@@ -88,6 +114,42 @@ export const RowActions: React.FC<Props> = ({
         className={iconBtn}
       >
         <Mail size={14} />
+      </button>
+    )}
+    {onDuplicate && (
+      <button
+        type="button"
+        onClick={stop(onDuplicate)}
+        disabled={disabled}
+        title="Duplicate"
+        aria-label="Duplicate"
+        className={iconBtn}
+      >
+        <Copy size={14} />
+      </button>
+    )}
+    {onApprove && (
+      <button
+        type="button"
+        onClick={stop(onApprove)}
+        disabled={disabled}
+        title={approveLabel}
+        aria-label={approveLabel}
+        className="p-1 rounded-sm text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-1 focus-visible:ring-emerald-500"
+      >
+        <ArrowRight size={14} />
+      </button>
+    )}
+    {onReject && (
+      <button
+        type="button"
+        onClick={stop(onReject)}
+        disabled={disabled}
+        title={rejectLabel}
+        aria-label={rejectLabel}
+        className="p-1 rounded-sm text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-1 focus-visible:ring-amber-500"
+      >
+        <XIcon size={14} />
       </button>
     )}
     {onDelete && (

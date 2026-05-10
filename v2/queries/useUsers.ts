@@ -15,6 +15,9 @@ export interface UserRow {
   phone: string | null;
   allowedCompanies: string[];
   allowedModules: string[];
+  /** `cargo_agents.id` — gates the Agent Portal for 'Cargo Agent'
+   *  role users. Column is snake_case in the DB. */
+  linked_entity_id: string | null;
 }
 
 interface Raw {
@@ -26,6 +29,7 @@ interface Raw {
   phone: string | null;
   allowed_company_ids: string[] | null;
   allowed_modules: string[] | null;
+  linked_entity_id: string | null;
 }
 
 export function useUsers(search?: string) {
@@ -36,7 +40,7 @@ export function useUsers(search?: string) {
     async () => {
       const supabase = getSupabaseClient();
       let q = supabase.from('users')
-        .select('id, name, username, email, role, phone, allowed_company_ids, allowed_modules')
+        .select('id, name, username, email, role, phone, allowed_company_ids, allowed_modules, linked_entity_id')
         .order('name', { ascending: true })
         .limit(200);
 
@@ -55,6 +59,7 @@ export function useUsers(search?: string) {
         phone: r.phone,
         allowedCompanies: r.allowed_company_ids ?? [],
         allowedModules: r.allowed_modules ?? [],
+        linked_entity_id: r.linked_entity_id ?? null,
       }));
     },
   );

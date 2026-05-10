@@ -36,7 +36,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 // Set via: supabase secrets set APP_JWT_SIGNING_SECRET=<jwt-secret-from-dashboard>
 const APP_JWT_SIGNING_SECRET = Deno.env.get('APP_JWT_SIGNING_SECRET') || '';
 
-const TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
+const TOKEN_TTL_SECONDS = 60 * 60 * 12; // 12 hours — survives a typical workday
 
 interface LoginRequest {
     username?: string;

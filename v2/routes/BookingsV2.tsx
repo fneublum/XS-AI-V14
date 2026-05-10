@@ -15,15 +15,26 @@ import { useEntityInsert } from '../queries/useEntityMutations';
 import { useBookings, Booking } from '../queries/useBookings';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
+import { vividStatusClass, BadgeTone } from '../lib/statusBadge';
 
-type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (status: string): BadgeTone => {
   const s = status.toUpperCase();
-  if (s.includes('CONFIRM') || s.includes('ROLL'))  return 'info';
-  if (s.includes('LOAD') || s.includes('DEPART'))   return 'success';
-  if (s.includes('BOOK') || s.includes('PEND'))     return 'warning';
-  if (s.includes('CANCEL'))                         return 'danger';
+  // SHIPPED (cargo on the water / delivered) → green; AVAILABLE (ready
+  // to ship but not yet moved) → yellow. Matches AgentPortalV2.
+  if (s.includes('SHIP') || s.includes('LOAD') || s.includes('DEPART')) return 'success';
+  if (s.includes('AVAIL') || s.includes('BOOK') || s.includes('PEND'))  return 'warning';
+  if (s.includes('CONFIRM') || s.includes('ROLL'))                      return 'info';
+  if (s.includes('CANCEL'))                                             return 'danger';
   return 'neutral';
+};
+
+/** Normalise booking `freeTime` for display. Column is free-text (see
+ *  useBookings) — extract the leading number and render as `"N d"`. */
+const fmtFreeTime = (v: string | null): string => {
+  const s = (v ?? '').trim();
+  if (!s) return '—';
+  const m = s.match(/-?\d+(?:\.\d+)?/);
+  return m ? `${m[0]} d` : '—';
 };
 
 const columns: DataTableColumn<Booking>[] = [
@@ -46,7 +57,16 @@ const columns: DataTableColumn<Booking>[] = [
     value: r => r.equipment ?? '', cell: r => r.equipment ?? '—' },
   { id: 'status', header: 'Status', sortable: true, filterable: true,
     value: r => r.status,
-    cell: r => <Badge variant={statusTone(r.status)} dot>{r.status}</Badge> },
+    cell: r => {
+      const tone = statusTone(r.status);
+      return <Badge variant={tone} dot className={vividStatusClass(tone)}>{r.status}</Badge>;
+    } },
+  { id: 'free', header: 'Free time', align: 'right', mono: true, sortable: true,
+    value: r => r.freeTime ?? '',
+    cell: r => <span className="text-slate-300">{fmtFreeTime(r.freeTime)}</span> },
+  { id: 'transit', header: 'Transit', align: 'right', mono: true, sortable: true,
+    value: r => r.transitDays ?? 0,
+    cell: r => r.transitDays !== null ? `${r.transitDays} d` : '—' },
   { id: 'etd', header: 'ETD', align: 'right', sortable: true,
     value: r => r.etd ?? '',
     cell: r => (
@@ -83,11 +103,18 @@ const fields: FieldDef[] = [
       secondaryColumn: 'country',
     } },
   { key: 'equipment',     label: 'Equipment' },
-  { key: 'freeTime',      label: 'Free time (days)', type: 'number',
-    mono: true, min: 0, step: 1 },
+  // `freeTime` is a text column in the DB — values in the wild include
+  // `"21 Day(s)"`, `"7"`, `""`. Rendering as a number input coerces to
+  // blank whenever the stored value has units. Keep it as free text.
+  { key: 'freeTime',      label: 'Free time', mono: true, placeholder: 'e.g. 21 or 21 Day(s)' },
   { key: 'terminal',      label: 'Terminal' },
+  { key: 'salesOrderId',  label: 'Sales order',
+    source: {
+      table: 'sales_orders', valueColumn: 'id', labelColumn: 'orderNumber',
+      secondaryColumn: 'customerName', scopeByCompany: true,
+    } },
   { key: 'status',        label: 'Status', type: 'select',
-    options: ['BOOKED', 'CONFIRMED', 'LOADED', 'DEPARTED', 'CANCELLED'],
+    options: ['AVAILABLE', 'BOOKED', 'CONFIRMED', 'LOADED', 'DEPARTED', 'SHIPPED', 'CANCELLED'],
     defaultValue: 'BOOKED' },
   { key: 'etd',           label: 'ETD', type: 'date' },
   { key: 'eta',           label: 'ETA', type: 'date' },

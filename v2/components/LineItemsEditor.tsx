@@ -51,6 +51,41 @@ const kgsToLbs   = (kgs: number): number => round2(kgs / LB_TO_KG);
 const pricePerLbToKg = (p: number): number => round2(p / LB_TO_KG);
 const pricePerKgToLb = (p: number): number => round4(p * LB_TO_KG);
 
+/** Format a quantity as 999,999.9 — commas + 1 decimal. */
+const fmtQty = (n: number): string =>
+  n.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+/** Numeric quantity input — shows 999,999.9 format when blurred, raw
+ *  digits while focused so typing stays responsive. Emits a number. */
+const QtyInput: React.FC<{
+  value: number;
+  onChange: (next: number) => void;
+  className?: string;
+  title?: string;
+}> = ({ value, onChange, className, title }) => {
+  const [focused, setFocused] = React.useState(false);
+  const display = focused
+    ? (value === 0 ? '' : String(value))
+    : (value === 0 ? '' : fmtQty(value));
+  return (
+    <Input
+      type={focused ? 'number' : 'text'}
+      inputMode="decimal"
+      min={0}
+      step={1}
+      value={display}
+      title={title}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onChange={e => {
+        const raw = e.target.value.replace(/,/g, '');
+        onChange(Number(raw) || 0);
+      }}
+      className={className}
+    />
+  );
+};
+
 const fmtMoney = (n: number, currency = 'USD') => {
   try {
     return n.toLocaleString('en-US', {
@@ -123,7 +158,7 @@ export const LineItemsEditor: React.FC<Props> = ({
           <thead>
             <tr className="border-b border-[#1f1f1f] bg-[#0f0f0f]">
               <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left w-8">#</th>
-              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left">Product</th>
+              <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left">Original / system product</th>
               {showCustomerDescription && (
                 <th className="px-2 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider text-left">Description</th>
               )}
@@ -158,30 +193,51 @@ export const LineItemsEditor: React.FC<Props> = ({
             ) : items.map((it, i) => (
               <tr key={i} className={i < items.length - 1 ? 'border-b border-[#1f1f1f]' : ''}>
                 <td className="px-2 py-1 text-slate-500 font-mono tabular-nums">{i + 1}</td>
-                <td className="px-2 py-1">
+                <td className="px-2 py-1 align-top">
                   {readOnly ? (
-                    <span className="text-slate-100">{it.productName || '—'}</span>
+                    <div className="space-y-0.5">
+                      <div className="text-slate-100 whitespace-normal break-words">
+                        {it.productName || '—'}
+                      </div>
+                      {it.productId && (
+                        <div className="text-[10.5px] text-indigo-300/80 whitespace-normal break-words">
+                          → {productOptions.find(p => p.id === it.productId)?.name ?? it.productId}
+                        </div>
+                      )}
+                    </div>
                   ) : (
-                    <div className="flex gap-1">
+                    <div className="space-y-1">
+                      <Input
+                        value={it.productName}
+                        onChange={e => update(i, { productName: e.target.value })}
+                        placeholder="Original product name (OCR or type)"
+                        title="Raw name as it appears on the supplier doc"
+                        className={cellInput + ' w-full'}
+                      />
                       <select
                         value={it.productId ?? ''}
                         onChange={e => {
-                          const found = productOptions.find(p => p.id === e.target.value);
-                          selectProduct(i, found);
+                          const id = e.target.value;
+                          if (!id) { update(i, { productId: undefined }); return; }
+                          const found = productOptions.find(p => p.id === id);
+                          if (!found) return;
+                          // Enrich only blank companion fields — don't
+                          // overwrite the original product name.
+                          update(i, {
+                            productId: found.id,
+                            hsCode:    it.hsCode    || found.hsCode    || '',
+                            grade:     it.grade     || found.grade     || '',
+                            unitPrice: it.unitPrice || found.price     || 0,
+                          });
                         }}
-                        className={cellInput + ' w-[160px] appearance-none'}
+                        className={cellInput + ' w-full appearance-none'}
+                        title="Link to a product in the system catalog"
                       >
-                        <option value="">— custom —</option>
+                        <option value="">— link to system product —</option>
                         {productOptions.map(p => (
                           <option key={p.id} value={p.id}>{p.name}</option>
                         ))}
                       </select>
-                      <Input
-                        value={it.productName}
-                        onChange={e => update(i, { productName: e.target.value })}
-                        placeholder="Product name"
-                        className={cellInput + ' flex-1'}
-                      />
                     </div>
                   )}
                 </td>
@@ -228,35 +284,26 @@ export const LineItemsEditor: React.FC<Props> = ({
                 <td className="px-2 py-1 text-right align-top">
                   {readOnly ? (
                     <div className="font-mono tabular-nums text-slate-200">
-                      <div>{(Number(it.quantity) || 0).toLocaleString('en-US')} lbs</div>
+                      <div>{fmtQty(Number(it.quantity) || 0)} lbs</div>
                       <div className="text-slate-500 text-[10.5px]">
-                        {lbsToKgs(Number(it.quantity) || 0).toLocaleString('en-US')} kgs
+                        {fmtQty(lbsToKgs(Number(it.quantity) || 0))} kgs
                       </div>
                     </div>
                   ) : (
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-1">
-                        <Input
-                          type="number"
-                          min={0}
-                          step={1}
-                          value={it.quantity || ''}
-                          onChange={e => update(i, { quantity: Number(e.target.value) || 0 })}
+                        <QtyInput
+                          value={Number(it.quantity) || 0}
+                          onChange={(n) => update(i, { quantity: n })}
                           className={cellInputMono + ' text-right flex-1'}
                           title="Quantity in pounds"
                         />
                         <span className="text-[10px] text-slate-500 w-6 text-left">lbs</span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <Input
-                          type="number"
-                          min={0}
-                          step={1}
-                          value={lbsToKgs(Number(it.quantity) || 0) || ''}
-                          onChange={e => {
-                            const kgs = Number(e.target.value) || 0;
-                            update(i, { quantity: kgsToLbs(kgs) });
-                          }}
+                        <QtyInput
+                          value={lbsToKgs(Number(it.quantity) || 0)}
+                          onChange={(kgs) => update(i, { quantity: kgsToLbs(kgs) })}
                           className={cellInputMono + ' text-right flex-1'}
                           title="Quantity in kilograms"
                         />
@@ -369,13 +416,34 @@ export const computeSubtotal = (items: LineItem[]): number =>
 export const sanitizeItems = (items: LineItem[]): LineItem[] =>
   items
     .filter(it => (Number(it.quantity) || 0) > 0 || (it.productName ?? '').trim() !== '')
-    .map(it => ({
-      productId: it.productId,
-      productName: (it.productName ?? '').trim(),
-      customerDescription: it.customerDescription ?? '',
-      hsCode: it.hsCode ?? '',
-      grade: it.grade ?? '',
-      quantity: Number(it.quantity) || 0,
-      unitPrice: Number(it.unitPrice) || 0,
-      total: round2((Number(it.quantity) || 0) * (Number(it.unitPrice) || 0)),
-    }));
+    // Spread the raw item first so downstream consumers (PDF generators,
+    // BR-mode adjuster, packing-list summaries) still see unmapped
+    // fields — `grossKg`/`grossLbs`/`netKg`/`netLbs`/`volumes`/
+    // `containerNo`/`sealNo`/`supplier`/`blNumber`/etc. Without this
+    // spread, the very first drawer save wiped every per-item weight
+    // the OCR pipeline captured, leaving only the 8 canonical fields.
+    // Explicit properties below still win so the canonical shape is
+    // unchanged.
+    .map((it: any) => {
+      const q = Number(it.quantity) || 0;
+      const p = Number(it.unitPrice) || 0;
+      const total = round2(q * p);
+      return {
+        ...it,
+        productId: it.productId,
+        productName: (it.productName ?? '').trim(),
+        customerDescription: it.customerDescription ?? '',
+        hsCode: it.hsCode ?? '',
+        grade: it.grade ?? '',
+        quantity: q,
+        unitPrice: p,
+        total,
+        // Resync OCR-origin duplicate fields from the canonical ones.
+        // The PDF generator prefers item.netLbs / item.amount over
+        // quantity / total; without this sync, drawer edits wouldn't
+        // flow into the generated PDF.
+        netLbs: q,
+        netKg: round2(q * LB_TO_KG),
+        amount: total,
+      };
+    });

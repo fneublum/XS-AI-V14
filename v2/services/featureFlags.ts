@@ -15,10 +15,15 @@ const STORAGE_KEY = 'xs_feature_flags';
 
 export interface FeatureFlags {
   'v2-default': boolean;
+  /** Mounts the Agent v2 chat panel. Off by default — opt-in until
+   *  allowlist / audit flow is battle-tested. Enable via
+   *  `?agent=1` URL param or from the UI (coming soon). */
+  'agent-v2': boolean;
 }
 
 const DEFAULTS: FeatureFlags = {
-  'v2-default': false,
+  'v2-default': true,
+  'agent-v2': false,
 };
 
 function readAll(): FeatureFlags {
@@ -59,4 +64,18 @@ export function shouldMountV2(): boolean {
   if (v2Param === '1') return true;
   if (v2Param === '0') return false;
   return getFlag('v2-default');
+}
+
+/**
+ * Whether to mount the Agent v2 chat panel. URL `?agent=1`/`?agent=0`
+ * overrides the stored flag. Check happens on every render — no
+ * reload needed to flip it at runtime.
+ */
+export function shouldMountAgentV2(): boolean {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  const p = params.get('agent');
+  if (p === '1') return true;
+  if (p === '0') return false;
+  return getFlag('agent-v2');
 }

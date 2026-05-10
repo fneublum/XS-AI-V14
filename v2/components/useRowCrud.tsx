@@ -26,6 +26,8 @@ interface Config<T extends { id: string }> {
   onDeleted?: (row: T) => void;
   /** If provided, adds a Mail icon to row actions that calls this. */
   onEmail?: (row: T) => void;
+  /** If provided, adds a Copy icon that calls this with the source row. */
+  onDuplicate?: (row: T) => void;
 }
 
 interface Result<T> {
@@ -38,7 +40,7 @@ interface Result<T> {
 }
 
 export function useRowCrud<T extends { id: string }>({
-  table, listQueryKeys, rowLabel, fields, title, onDeleted, onEmail,
+  table, listQueryKeys, rowLabel, fields, title, onDeleted, onEmail, onDuplicate,
 }: Config<T>): Result<T> {
   const toast = useToast();
   const [inspectRow, setInspectRow] = useState<T | null>(null);
@@ -55,6 +57,7 @@ export function useRowCrud<T extends { id: string }>({
       onView={() => openView(row)}
       onEdit={() => openEdit(row)}
       onEmail={onEmail ? () => onEmail(row) : undefined}
+      onDuplicate={onDuplicate ? () => onDuplicate(row) : undefined}
       onDelete={() => setDeleteRow(row)}
     />
   );

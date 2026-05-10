@@ -3,12 +3,15 @@
 import React from 'react';
 import { ModuleLanding } from '../components/ModuleLanding';
 import { ActivityFeed } from '../components/ActivityFeed';
+import { ExceptionsPanel } from '../components/ExceptionsPanel';
 import { useToast } from '../primitives/Toast';
 
 const AiDashboardV2: React.FC = () => {
   const toast = useToast();
   return (
-    <ModuleLanding
+    <div className="flex flex-col gap-4">
+      <ExceptionsPanel />
+      <ModuleLanding
       title="AI Dashboard"
       badge="Beta"
       description="Unified view of AI-driven automations — emails processed, documents extracted, insights generated. Every AI call across the platform is tracked here."
@@ -34,6 +37,7 @@ const AiDashboardV2: React.FC = () => {
       ]}
       recent={<ActivityFeed title="Recent AI events" />}
     />
+    </div>
   );
 };
 

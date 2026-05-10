@@ -10,13 +10,14 @@ import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { useRowCrud } from '../components/useRowCrud';
 import { useEntityInsert } from '../queries/useEntityMutations';
+import { nextFQNumber } from '../lib/fqNumber';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import { useFreightQuotes, FreightQuote } from '../queries/useFreightQuotes';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { formatMoney as fmtMoney } from '../lib/formatMoney';
+import { vividStatusClass, BadgeTone } from '../lib/statusBadge';
 
-type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (status: string): BadgeTone => {
   const s = status.toUpperCase();
   if (s.includes('ACTIVE') || s.includes('ACCEPT')) return 'success';
@@ -26,17 +27,22 @@ const statusTone = (status: string): BadgeTone => {
 };
 
 const columns: DataTableColumn<FreightQuote>[] = [
+  // `freight_quotes` has no separate number column — `id` (e.g.
+  // `FQ1769642878151`) is the only identifier. Surface it up front.
+  { id: 'number', header: 'Quote #', mono: true, sortable: true, filterable: true,
+    value: r => r.id, cell: r => r.id },
   { id: 'agent', header: 'Agent', sortable: true, filterable: true,
     value: r => r.agentName ?? '',
     cell: r => <span className="text-slate-100 font-medium">{r.agentName ?? '—'}</span> },
   { id: 'type', header: 'Type', sortable: true, filterable: true,
     value: r => r.freightType ?? '', cell: r => r.freightType ?? '—' },
-  { id: 'route', header: 'Route', sortable: true, filterable: true,
-    value: r => `${r.originPort ?? ''} → ${r.destinationPort ?? ''}`,
+  // Pickup city — replaces the old Route column (POA/POD already
+  // covered by the columns to the right). Shows where the cargo
+  // physically gets picked up before reaching the origin port.
+  { id: 'pickupCity', header: 'Pickup city', sortable: true, filterable: true,
+    value: r => r.pickupCity ?? '',
     cell: r => (
-      <span className="font-mono tabular-nums text-[11.5px] text-slate-300">
-        {(r.originPort ?? '—')} → {(r.destinationPort ?? '—')}
-      </span>
+      <span className="text-[11.5px] text-slate-300">{r.pickupCity ?? '—'}</span>
     ) },
   // POA / POD — UN/LOCODE-style 5-char codes pulled directly from
   // origin_port_code / destination_port_code on the freight_quotes row.
@@ -65,7 +71,10 @@ const columns: DataTableColumn<FreightQuote>[] = [
     cell: r => r.transitTime !== null ? `${r.transitTime} d` : '—' },
   { id: 'status', header: 'Status', sortable: true, filterable: true,
     value: r => r.status,
-    cell: r => <Badge variant={statusTone(r.status)} dot>{r.status}</Badge> },
+    cell: r => {
+      const tone = statusTone(r.status);
+      return <Badge variant={tone} dot className={vividStatusClass(tone)}>{r.status}</Badge>;
+    } },
   { id: 'until', header: 'Valid until', align: 'right', sortable: true,
     value: r => r.validUntil ?? '',
     cell: r => (
@@ -97,8 +106,15 @@ const fields: FieldDef[] = [
       secondaryColumn: 'scac',
       scopeByCompany: true,
     } },
-  { key: 'freightType', dbKey: 'freight_type', label: 'Type', type: 'select',
-    options: ['OCEAN', 'AIR', 'TRUCK', 'RAIL'] },
+  // Status sits next to Carrier per layout. Schema-driven drawer
+  // renders fields left-to-right in a 2-col grid so order = layout.
+  { key: 'status', label: 'Status', type: 'select',
+    options: ['ACTIVE', 'PENDING', 'ACCEPTED', 'EXPIRED', 'REJECTED'],
+    defaultValue: 'ACTIVE' },
+  // Type / freightType is now hidden in the editor (assumes OCEAN by
+  // default for this trade lane). Defaults are still written on
+  // create via emptyFreightQuote → freightType: ''. AI upload may
+  // populate it; existing rows keep their value.
   { key: 'originPortCode', dbKey: 'origin_port_code',
     label: 'POA (origin port code)', mono: true,
     source: {
@@ -117,18 +133,83 @@ const fields: FieldDef[] = [
       secondaryColumn: 'country',
       writeAlso: [{ sourceColumn: 'name', targetKey: 'destinationPort' }],
     } },
-  { key: 'originPort', dbKey: 'origin_port', label: 'Origin port (name)' },
-  { key: 'destinationPort', dbKey: 'destination_port', label: 'Destination port (name)' },
+  // Shadow fields — the POA/POD code selectors above resolve the
+  // human-readable port name via `writeAlso` and write it into these
+  // keys. We keep them in the schema so the InspectDrawer's save loop
+  // persists them, but flag `hidden` so the drawer doesn't render
+  // duplicate inputs. The Freight Quotes table's `Route` column reads
+  // from these saved name fields, so without them the route shows
+  // blank dashes after a save.
+  { key: 'originPort',      dbKey: 'origin_port',      label: 'Origin port (name)',      hidden: true },
+  { key: 'destinationPort', dbKey: 'destination_port', label: 'Destination port (name)', hidden: true },
   { key: 'rate', label: 'Rate', type: 'number', mono: true, min: 0, step: 1 },
-  { key: 'currency', label: 'Currency', mono: true, defaultValue: 'USD' },
+  // Currency is hidden in the editor (defaulted to USD for this trade
+  // lane). Existing rows keep their value; new rows pick up the
+  // emptyFreightQuote default.
   { key: 'freeTime', dbKey: 'free_time', label: 'Free time (days)',
     type: 'number', mono: true, min: 0, step: 1 },
   { key: 'transitTime', dbKey: 'transit_time', label: 'Transit (days)',
     type: 'number', mono: true, min: 0, step: 1 },
   { key: 'validUntil', dbKey: 'valid_until', label: 'Valid until', type: 'date' },
-  { key: 'status', label: 'Status', type: 'select',
-    options: ['ACTIVE', 'PENDING', 'ACCEPTED', 'EXPIRED', 'REJECTED'],
-    defaultValue: 'ACTIVE' },
+  // (Status moved up — appears right of Carrier above.)
+
+  // Pickup / delivery — free-form addresses (e.g. "200 Curtis Harley
+  // Drive, Spartanburg, SC"). There's no canonical `locations` table,
+  // so we source the dropdown from distinct `pickup_location` /
+  // `delivery_location` values already stored on freight_quotes. That
+  // surfaces the locations this org has used before as quick picks
+  // while `allowFreeText` still lets the agent type a brand-new one.
+  { key: 'pickupLocation', dbKey: 'pickup_location', label: 'Pickup location', fullWidth: true,
+    source: { table: 'freight_quotes', valueColumn: 'pickup_location',
+              orderBy: 'pickup_location', scopeByCompany: true, companyIdColumn: 'company_id' },
+    allowFreeText: true },
+  { key: 'pickupZip',      dbKey: 'pickup_zip', label: 'Pickup ZIP', mono: true },
+  { key: 'pickupCity',     label: 'Pickup city' },
+  { key: 'pickupCountry',  label: 'Pickup country' },
+  { key: 'deliveryLocation', dbKey: 'delivery_location', label: 'Delivery location', fullWidth: true,
+    source: { table: 'freight_quotes', valueColumn: 'delivery_location',
+              orderBy: 'delivery_location', scopeByCompany: true, companyIdColumn: 'company_id' },
+    allowFreeText: true },
+  { key: 'deliveryZip',    dbKey: 'delivery_zip', label: 'Delivery ZIP', mono: true },
+
+  // Equipment + demurrage / release windows.
+  { key: 'containerCount',   dbKey: 'container_count',   label: 'Container count',
+    type: 'number', mono: true, min: 0, step: 1 },
+  // The four container types this trade lane actually uses. Trimmed
+  // from the full ISO list so the dropdown is scannable.
+  { key: 'containerType', dbKey: 'container_type', label: 'Container type', type: 'select',
+    options: ['20DC', '20HC', '40DC', '40HC'] },
+  { key: 'containerReturn',  dbKey: 'container_return',  label: 'Container return' },
+  // `BL release` and `Chassis` hidden — rarely edited and were
+  // cluttering the drawer. Keep their DB columns intact for
+  // round-trip; existing values still load and persist via the
+  // schema's catch-all.
+
+  // `overweight` flag remains visible. `is_all_in` is a true bool
+  // column; we explicitly cast to JSON bool so PostgREST never sees
+  // a string "true"/"false".
+  { key: 'overweight', label: 'Overweight', type: 'select', castType: 'number',
+    options: [{ value: '', label: '—' }, { value: '1', label: 'Yes' }, { value: '0', label: 'No' }] },
+  { key: 'isAllIn',    dbKey: 'is_all_in', label: 'All-in rate', type: 'select', castType: 'boolean',
+    options: [{ value: '', label: '—' }, { value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] },
+
+  // Cost breakdown — the "Rate" field above is usually the all-in
+  // figure; itemisation is optional but round-trips via the drawer.
+  { key: 'pickupCost',      dbKey: 'pickup_cost',      label: 'Pickup cost',      type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'oceanCost',       dbKey: 'ocean_cost',       label: 'Ocean cost',       type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'deliveryCost',    dbKey: 'delivery_cost',    label: 'Delivery cost',    type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'portFees',        dbKey: 'port_fees',        label: 'Port fees',        type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'thc',             label: 'THC',              type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'isps',            label: 'ISPS',             type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'trs',             label: 'TRS',              type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'deconsolidation', label: 'Deconsolidation',  type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'securityFee',     dbKey: 'security_fee',     label: 'Security fee',     type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'bunkerSurcharge', dbKey: 'bunker_surcharge', label: 'Bunker surcharge', type: 'number', mono: true, min: 0, step: 1 },
+  { key: 'exwCharges',      dbKey: 'exw_charges',      label: 'EXW charges',      type: 'number', mono: true, min: 0, step: 1 },
+
+  // Notes.
+  { key: 'comments',    label: 'Comments',   type: 'textarea', fullWidth: true },
+  { key: 'observation', label: 'Observation', type: 'textarea', fullWidth: true },
 ];
 
 interface FQDraft {
@@ -217,6 +298,7 @@ const FreightQuotesV2: React.FC = () => {
   const { currentCompanyId } = useCompany();
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [createSeed, setCreateSeed] = useState<Record<string, string> | undefined>(undefined);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
   const quotes = useFreightQuotes(search);
   const insert = useEntityInsert<Record<string, unknown>>({
@@ -226,11 +308,24 @@ const FreightQuotesV2: React.FC = () => {
     withCreatedAt: false,
   });
 
+  const duplicateQuote = (row: FreightQuote) => {
+    const { id: _id, ...rest } = row as unknown as Record<string, unknown>;
+    const seed: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rest)) {
+      if (v == null) continue;
+      if (Array.isArray(v)) seed[k] = v.map(String).join(',');
+      else seed[k] = String(v);
+    }
+    setCreateSeed(seed);
+    setCreateOpen(true);
+  };
+
   const { rowActions, drawers, openView } = useRowCrud<FreightQuote>({
     table: 'freight_quotes',
     listQueryKeys: ['freightQuotes', 'logisticsDocs'],
     rowLabel: r => r.agentName ?? r.id,
     fields,
+    onDuplicate: duplicateQuote,
   });
 
   const openCreate = () => setCreateOpen(true);
@@ -256,6 +351,7 @@ const FreightQuotesV2: React.FC = () => {
         onRetry={quotes.refetch}
         onRowClick={openView}
         rowActions={rowActions}
+        density="compact"
         headerAction={
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={openCreate}
@@ -274,8 +370,8 @@ const FreightQuotesV2: React.FC = () => {
       />
       <QuickCreateDrawer
         open={createOpen}
-        onOpenChange={setCreateOpen}
-        title="New freight quote"
+        onOpenChange={(o) => { setCreateOpen(o); if (!o) setCreateSeed(undefined); }}
+        title={createSeed ? 'Duplicate freight quote' : 'New freight quote'}
         description="Record a quote received from a forwarder."
         table="freight_quotes"
         idPrefix="FQ"
@@ -283,6 +379,8 @@ const FreightQuotesV2: React.FC = () => {
         scopeByCompany
         companyIdColumn="company_id"
         fields={fields}
+        seed={createSeed}
+        idGenerator={nextFQNumber}
       />
       {aiUploadOpen && (
         <AiUploadModal<FQDraft>
@@ -312,20 +410,6 @@ const FreightQuotesV2: React.FC = () => {
                     source={{ table: 'carriers', valueColumn: 'name', labelColumn: 'name', secondaryColumn: 'scac', scopeByCompany: true }}
                     value={d.carrier}
                     onPick={v => setD({ ...d, carrier: v })} />
-                </FormField>
-                <FormField>
-                  <FieldLabel>Type</FieldLabel>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(['OCEAN','AIR','TRUCK','RAIL'] as const).map(opt => (
-                      <button key={opt} type="button"
-                        onClick={() => setD({ ...d, freightType: opt })}
-                        className={d.freightType === opt
-                          ? 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
-                          : 'px-2.5 py-1 rounded-md text-[11px] text-slate-400 border border-[#1f1f1f] hover:text-slate-200 hover:border-[#2a2a2a]'}>
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
                 </FormField>
                 <FormField>
                   <FieldLabel>POA (origin port)</FieldLabel>
@@ -358,28 +442,10 @@ const FreightQuotesV2: React.FC = () => {
                     })} />
                 </FormField>
                 <FormField>
-                  <FieldLabel>Origin port (name)</FieldLabel>
-                  <Input value={d.originPort}
-                    onChange={e => setD({ ...d, originPort: e.target.value })}
-                    className={inputCls} />
-                </FormField>
-                <FormField>
-                  <FieldLabel>Destination port (name)</FieldLabel>
-                  <Input value={d.destinationPort}
-                    onChange={e => setD({ ...d, destinationPort: e.target.value })}
-                    className={inputCls} />
-                </FormField>
-                <FormField>
                   <FieldLabel>Rate</FieldLabel>
                   <Input type="number" value={d.rate}
                     onChange={e => setD({ ...d, rate: e.target.value })}
                     className={inputCls + ' font-mono tabular-nums'} />
-                </FormField>
-                <FormField>
-                  <FieldLabel>Currency</FieldLabel>
-                  <Input value={d.currency}
-                    onChange={e => setD({ ...d, currency: e.target.value.toUpperCase() })}
-                    className={inputCls + ' font-mono'} />
                 </FormField>
                 <FormField>
                   <FieldLabel>Free time (days)</FieldLabel>
@@ -443,6 +509,7 @@ const FreightQuotesV2: React.FC = () => {
               if (currentCompanyId && currentCompanyId !== 'ALL') {
                 payload.company_id = currentCompanyId;
               }
+              try { payload.id = await nextFQNumber(); } catch { /* fall back to random */ }
               await insert.mutateAsync(payload);
               toast.push({
                 kind: 'success',

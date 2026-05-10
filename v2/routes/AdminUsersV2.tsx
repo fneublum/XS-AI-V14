@@ -1,12 +1,14 @@
 // Phase 3B — v2 Admin Users.
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Badge, Button } from '../primitives';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
 import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
 import { useRowCrud } from '../components/useRowCrud';
 import { useUsers, UserRow } from '../queries/useUsers';
+import { useCompanies } from '../queries/useCompanies';
+import { useCargoAgents } from '../queries/useCargoAgents';
 
 type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const roleTone = (role: string): BadgeTone => {
@@ -51,20 +53,82 @@ const columns: DataTableColumn<UserRow>[] = [
     ) },
 ];
 
-const fields: FieldDef[] = [
-  { key: 'name',     label: 'Name', required: true, fullWidth: true },
-  { key: 'username', label: 'Username', required: true, mono: true },
-  { key: 'email',    label: 'Email', placeholder: 'name@company.com' },
-  { key: 'phone',    label: 'Phone', mono: true },
-  { key: 'role',     label: 'Role', required: true, type: 'select',
-    options: ['OWNER', 'ADMIN', 'MANAGER', 'FINANCE', 'USER'],
-    defaultValue: 'USER' },
+// Canonical module list — mirrors `allowed_modules` values stored on
+// the ADMIN user and the top-level keys in `config/navigation.ts`.
+// Rows created before a module shipped still round-trip via the raw
+// array value, so adding new modules here is additive.
+const MODULE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'DASHBOARD',          label: 'Dashboard' },
+  { value: 'CONNECTIONS',        label: 'Connections' },
+  { value: 'BUY',                label: 'Purchase & Cost' },
+  { value: 'COST_PROFIT_AI',     label: 'Cost / Profit AI' },
+  { value: 'PAPERWORK',          label: 'Paperwork' },
+  { value: 'SALES_HUB',          label: 'Sales Hub' },
+  { value: 'SALES_FORCE',        label: 'Sales Force' },
+  { value: 'COMMISSIONS',        label: 'Commissions' },
+  { value: 'LOGISTICS',          label: 'Logistics' },
+  { value: 'FINANCE',            label: 'Finance' },
+  { value: 'DATA',               label: 'Data' },
+  { value: 'AI_UPLOAD',          label: 'AI Upload' },
+  { value: 'SETTINGS',           label: 'Settings' },
+  { value: 'CUSTOMER_PORTAL',    label: 'Customer Portal' },
+  { value: 'CARGO_AGENT_PORTAL', label: 'Cargo Agent Portal' },
+];
+
+const ROLE_OPTIONS = [
+  // Display labels are all-caps for visual consistency; `value`
+  // stays at whatever string the role gates expect (sidebar checks
+  // `user.role === 'Cargo Agent'`, so the stored value must keep
+  // its title-case form with the space). Keep legacy uppercase
+  // values verbatim so existing rows still round-trip unchanged.
+  { value: 'OWNER',       label: 'OWNER' },
+  { value: 'ADMIN',       label: 'ADMIN' },
+  { value: 'MANAGER',     label: 'MANAGER' },
+  { value: 'FINANCE',     label: 'FINANCE' },
+  { value: 'USER',        label: 'USER' },
+  { value: 'Cargo Agent', label: 'CARGO AGENT' },
+  { value: 'Sales Agent', label: 'SALES AGENT' },
 ];
 
 const AdminUsersV2: React.FC = () => {
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const users = useUsers(search);
+  // Companies list is async — once loaded we rebuild `fields` so the
+  // companies multiselect shows real names. Modules are static.
+  const companies = useCompanies();
+  const cargoAgents = useCargoAgents();
+
+  const fields: FieldDef[] = useMemo(() => [
+    { key: 'name',     label: 'Name', required: true, fullWidth: true },
+    { key: 'username', label: 'Username', required: true, mono: true },
+    { key: 'email',    label: 'Email', placeholder: 'name@company.com' },
+    { key: 'phone',    label: 'Phone', mono: true },
+    { key: 'role',     label: 'Role', required: true, type: 'select',
+      options: ROLE_OPTIONS,
+      defaultValue: 'USER' },
+    // Only meaningful for the 'Cargo Agent' role — picks which row(s) in
+    // `cargo_agents` this user represents so the Agent Portal can
+    // scope its freight quotes + bookings list. Ignored for other
+    // roles. Stored CSV-encoded in the existing text column
+    // `users.linked_entity_id` (see serialize: 'csv') so admins can
+    // link one user to several agent offices without a schema change.
+    { key: 'linked_entity_id', label: 'Linked cargo agents',
+      type: 'multiselect',
+      serialize: 'csv',
+      fullWidth: true,
+      options: (cargoAgents.data ?? []).map(a => ({ value: a.id, label: a.name || a.id })),
+    },
+    // View/read uses the hook's camelCase keys (`allowedCompanies` /
+    // `allowedModules` per useUsers.ts). `dbKey` maps back to the
+    // snake_case column PostgREST expects on write.
+    { key: 'allowedCompanies', dbKey: 'allowed_company_ids',
+      label: 'Companies', type: 'multiselect', fullWidth: true,
+      options: (companies.data ?? []).map(c => ({ value: c.id, label: c.name || c.id })) },
+    { key: 'allowedModules',   dbKey: 'allowed_modules',
+      label: 'Modules',   type: 'multiselect', fullWidth: true,
+      options: MODULE_OPTIONS },
+  ], [companies.data, cargoAgents.data]);
 
   const { rowActions, drawers, openView } = useRowCrud<UserRow>({
     table: 'users',

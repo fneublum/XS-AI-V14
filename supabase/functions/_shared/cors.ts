@@ -10,8 +10,10 @@
 
 const FALLBACK_ALLOWED_ORIGINS = [
   'https://xs-erp.appspot.com',
+  'https://xs-erp-489872954398.us-central1.run.app',
   'http://localhost:3000',
   'http://localhost:5173',
+  'http://localhost:62121',
 ];
 
 function parseAllowlist(): string[] {
@@ -23,10 +25,24 @@ function parseAllowlist(): string[] {
     .filter(Boolean);
 }
 
+/** Always allow any localhost / 127.0.0.1 origin regardless of the
+ *  ALLOWED_ORIGINS secret. Dev ports shift all the time (Vite may
+ *  pick 5173, 62121, 3000…) and we don't want to re-set the secret
+ *  every time. Safe because localhost requests only reach this edge
+ *  function from a developer's own machine. */
+function isLocalhostOrigin(origin: string): boolean {
+  try {
+    const u = new URL(origin);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
 export function buildCorsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('Origin') ?? '';
   const allowlist = parseAllowlist();
-  const allowed = allowlist.includes(origin);
+  const allowed = allowlist.includes(origin) || isLocalhostOrigin(origin);
 
   // Echo back the exact origin (so credentials can flow) ONLY if allowed.
   // If not allowed, send 'null' — browsers block the response.

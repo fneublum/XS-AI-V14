@@ -259,12 +259,33 @@ export const executeAction = async (
                 if (!crud.onAddSalesOrder) return { success: false, message: 'Sales order creation not available.' };
                 // Resolve customer
                 const customer = findByName(e.customerName || '', dataArrays.customers || []);
+                // SO# = last sequential SO + 1, format `SO-NNNNN`. Falls
+                // back to the timestamp-derived id only if the lookup
+                // fails so we never block creation.
+                let nextOrderNumber: string;
+                try {
+                    const { data } = await supabase()
+                        .from('sales_orders')
+                        .select('orderNumber')
+                        .ilike('orderNumber', 'SO-%')
+                        .limit(5000);
+                    // Floor: 5082 → first generated number is 5083.
+                    let max = 5082;
+                    for (const row of (data ?? []) as Array<{ orderNumber?: string }>) {
+                        const m = String(row.orderNumber ?? '').match(/(\d+)\s*$/);
+                        const n = m ? parseInt(m[1], 10) : NaN;
+                        if (Number.isFinite(n) && n > max) max = n;
+                    }
+                    nextOrderNumber = `SO-${String(max + 1).padStart(5, '0')}`;
+                } catch {
+                    nextOrderNumber = `SO-${Date.now().toString(36).toUpperCase()}`;
+                }
                 const result = await crud.onAddSalesOrder({
                     id: `SO${Date.now()}`,
                     companyId,
                     customerId: customer?.id || '',
                     customerName: e.customerName || customer?.name || '',
-                    orderNumber: `SO-${Date.now().toString(36).toUpperCase()}`,
+                    orderNumber: nextOrderNumber,
                     status: 'Draft',
                     items: e.productName ? [{
                         productName: e.productName,
@@ -434,10 +455,28 @@ export const executeAction = async (
             case 'CREATE_FREIGHT_QUOTE': {
                 // Direct Supabase insert — bypasses useSupabase hook because select=* fails on this table
                 try {
+                    // Formatted FQ id — last "FQ-NNNN" + 1, fall back to UUID if lookup fails.
+                    let fqId: string;
+                    try {
+                        const { data } = await supabase()
+                            .from('freight_quotes')
+                            .select('id')
+                            .ilike('id', 'FQ-%')
+                            .limit(5000);
+                        let max = 0;
+                        for (const row of (data ?? []) as Array<{ id?: string }>) {
+                            const m = String(row.id ?? '').match(/(\d+)\s*$/);
+                            const n = m ? parseInt(m[1], 10) : NaN;
+                            if (Number.isFinite(n) && n > max) max = n;
+                        }
+                        fqId = `FQ-${String(max + 1).padStart(4, '0')}`;
+                    } catch {
+                        fqId = crypto.randomUUID();
+                    }
                     const { error: insertErr } = await supabase()
                         .from('freight_quotes')
                         .insert({
-                            id: crypto.randomUUID(),
+                            id: fqId,
                             company_id: companyId,
                             agent_name: e.agentName || e.carrier || '',
                             carrier: e.carrier || '',

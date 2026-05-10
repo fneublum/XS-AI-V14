@@ -79,21 +79,32 @@ export function generatePackingListPdf(
   doc.setTextColor(cyanColor);
   doc.text('Packing Slip', 14, 54);
 
-  // Bill to / Ship to / Invoice info
+  // Consignee (bill to) / Notify (ship to) / Invoice info —
+  // whitespace- and case-tolerant customer lookup so the addresses +
+  // CNPJ render even when stored names carry trailing whitespace.
+  const normalize = (s: string) => (s ?? '').trim().toLowerCase();
+  const findCust = (name: string) => {
+    const key = normalize(name);
+    if (!key) return undefined;
+    return ctx.customers.find(c => normalize(c.name ?? '') === key);
+  };
   let y = 68;
-  const billToName = inv.billToName || inv.soldTo || '';
-  const customer = ctx.customers.find(c => c.name === billToName || c.id === inv.customerId);
-  let customerAddress = '';
-  if (customer) {
-    customerAddress = [customer.location, customer.city, customer.state, customer.zip, customer.country]
-      .filter(Boolean).join(', ');
-  }
+  const consigneeName = inv.soldTo || inv.billToName || inv.consignee || '';
+  const notifyName = inv.billToName || inv.consignee || consigneeName;
+  const consigneeCust = findCust(consigneeName)
+    ?? ctx.customers.find(c => c.id === inv.customerId);
+  const notifyCust = findCust(notifyName) ?? consigneeCust;
+  const fmtAddr = (c: typeof consigneeCust) => c
+    ? [c.location, c.city, c.state, c.zip, c.country].filter(Boolean).join(', ')
+    : '';
+  const consigneeAddress = fmtAddr(consigneeCust);
+  const notifyAddress = fmtAddr(notifyCust);
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(darkGray);
-  doc.text('BILL TO', 14, y);
-  doc.text('SHIP TO', 75, y);
+  doc.text('CONSIGNEE (bill to)', 14, y);
+  doc.text('NOTIFY (ship to)', 75, y);
 
   doc.text('INVOICE #', 140, y);
   doc.setFont('helvetica', 'normal');
@@ -118,49 +129,41 @@ export function generatePackingListPdf(
   doc.setFont('helvetica', 'normal');
   doc.text(inv.bookingNumber || inv.transportRef || '-', 170, y);
 
-  // Bill to content
+  // Consignee (bill to) content
   y = 74;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  let billToY = y;
+  let consigneeY = y;
 
   doc.setFont('helvetica', 'bold');
-  const billToLines = doc.splitTextToSize(billToName, 55);
-  doc.text(billToLines, 14, billToY);
-  billToY += billToLines.length * 4;
+  const consigneeLines = doc.splitTextToSize(consigneeName, 55);
+  doc.text(consigneeLines, 14, consigneeY);
+  consigneeY += consigneeLines.length * 4;
 
   doc.setFont('helvetica', 'normal');
-  if (customerAddress) {
-    const lines = doc.splitTextToSize(customerAddress, 55);
-    doc.text(lines, 14, billToY);
-    billToY += lines.length * 4;
+  if (consigneeAddress) {
+    const lines = doc.splitTextToSize(consigneeAddress, 55);
+    doc.text(lines, 14, consigneeY);
+    consigneeY += lines.length * 4;
   }
-  if (customer?.email) { doc.text(customer.email, 14, billToY); billToY += 4; }
-  if (customer?.taxId) { doc.text(`CNPJ : ${customer.taxId}`, 14, billToY); }
+  if (consigneeCust?.email) { doc.text(consigneeCust.email, 14, consigneeY); consigneeY += 4; }
+  if (consigneeCust?.taxId) { doc.text(`CNPJ : ${consigneeCust.taxId}`, 14, consigneeY); }
 
-  // Ship to
-  let shipToY = y;
-  const shipToName = inv.consignee || billToName;
-  const shipToCustomer = ctx.customers.find(c => c.name === shipToName) || customer;
-  let shipToAddress = '';
-  if (shipToCustomer) {
-    shipToAddress = [shipToCustomer.location, shipToCustomer.city, shipToCustomer.state, shipToCustomer.zip, shipToCustomer.country]
-      .filter(Boolean).join(', ');
-  }
-
+  // Notify (ship to)
+  let notifyY = y;
   doc.setFont('helvetica', 'bold');
-  const shipToLines = doc.splitTextToSize(shipToName, 55);
-  doc.text(shipToLines, 75, shipToY);
-  shipToY += shipToLines.length * 4;
+  const notifyLines = doc.splitTextToSize(notifyName, 55);
+  doc.text(notifyLines, 75, notifyY);
+  notifyY += notifyLines.length * 4;
 
   doc.setFont('helvetica', 'normal');
-  if (shipToAddress) {
-    const lines = doc.splitTextToSize(shipToAddress, 55);
-    doc.text(lines, 75, shipToY);
-    shipToY += lines.length * 4;
+  if (notifyAddress) {
+    const lines = doc.splitTextToSize(notifyAddress, 55);
+    doc.text(lines, 75, notifyY);
+    notifyY += lines.length * 4;
   }
-  if (shipToCustomer?.email) { doc.text(shipToCustomer.email, 75, shipToY); shipToY += 4; }
-  if (shipToCustomer?.taxId) { doc.text(`CNPJ : ${shipToCustomer.taxId}`, 75, shipToY); }
+  if (notifyCust?.email) { doc.text(notifyCust.email, 75, notifyY); notifyY += 4; }
+  if (notifyCust?.taxId) { doc.text(`CNPJ : ${notifyCust.taxId}`, 75, notifyY); }
 
   // Terms / Incoterm / POD
   y = 110;
@@ -256,42 +259,109 @@ export function generatePackingListPdf(
     type CRow = { container: string; seal: string; volumes: number; netKg: number; grossKg: number };
     const rows: CRow[] = containerData.map((cont: any) => {
       const contItems = items.filter((i: any) => i.containerNo === cont.container);
-      const vols = contItems.reduce((s: number, i: any) => s + (i.volumes || 0), 0);
+      const itemsVol = contItems.reduce((s: number, i: any) => s + (i.volumes || 0), 0);
+      // Use the container's own persisted `volumes` if items don't
+      // attribute any (legacy rows where sanitizeItems stripped extras).
+      const vols = itemsVol > 0 ? itemsVol : (Number(cont?.volumes) || 0);
       const netKg = contItems.reduce((s: number, i: any) => s + (i.netKg || (i.netLbs || 0) * 0.453592), 0);
       const grossKg = contItems.reduce((s: number, i: any) => s + (i.grossKg || (i.grossLbs || 0) * 0.453592), 0);
       return { container: cont.container || '-', seal: cont.seal || '-', volumes: vols, netKg, grossKg };
     });
 
-    const anyMatched = rows.some(r => r.volumes > 0 || r.netKg > 0 || r.grossKg > 0);
-    if (!anyMatched && items.length > 0 && rows.length > 0) {
-      const allVolumes = items.reduce((s: number, i: any) => s + (i.volumes || 0), 0);
-      const allNetKg = items.reduce((s: number, i: any) => s + (i.netKg || (i.netLbs || 0) * 0.453592), 0);
-      const allGrossKg = items.reduce((s: number, i: any) => s + (i.grossKg || (i.grossLbs || 0) * 0.453592), 0);
+    // Per-dimension fallback — before, we only back-filled when EVERY
+    // dimension was zero. That missed the common case where containers
+    // carry `volumes` (pre-filled in the drawer) but items lost their
+    // `netKg/grossKg` during an older save. Now each dimension is
+    // topped up independently: if the per-container column sums to 0,
+    // distribute the invoice row-level fallback evenly.
+    if (items.length > 0 && rows.length > 0) {
+      const parseNum = (v: unknown): number => {
+        if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+        if (typeof v === 'string') {
+          const n = Number(v.replace(/[^\d.\-]/g, ''));
+          return Number.isFinite(n) ? n : 0;
+        }
+        return 0;
+      };
       const n = rows.length;
-      rows.forEach(r => {
-        r.volumes = Math.round(allVolumes / n);
-        r.netKg = allNetKg / n;
-        r.grossKg = allGrossKg / n;
-      });
-      const assignedVols = rows.reduce((s, r) => s + r.volumes, 0);
-      if (assignedVols !== allVolumes) rows[0].volumes += (allVolumes - assignedVols);
+      const sumVol   = rows.reduce((s, r) => s + r.volumes, 0);
+
+      // Source-of-truth: the invoice's saved gross/net/volumes fields.
+      // When those are populated, override the per-row distribution so
+      // the table TOTAL always matches the saved invoice — line items
+      // drift when imported separately. Distribute proportionally to
+      // each container's existing volumes (falls back to even split).
+      const distribute = (total: number, key: 'volumes' | 'netKg' | 'grossKg') => {
+        if (total <= 0) return;
+        const totalVolForRatio = rows.reduce((s, r) => s + r.volumes, 0);
+        if (totalVolForRatio > 0) {
+          let assigned = 0;
+          rows.forEach((r, i) => {
+            if (i === rows.length - 1) {
+              r[key] = key === 'volumes' ? Math.round(total - assigned) : total - assigned;
+            } else {
+              const share = (r.volumes / totalVolForRatio) * total;
+              r[key] = key === 'volumes' ? Math.round(share) : share;
+              assigned += r[key];
+            }
+          });
+        } else {
+          // No per-row volumes to use as ratio — split evenly.
+          rows.forEach(r => { r[key] = key === 'volumes' ? Math.round(total / n) : total / n; });
+          if (key === 'volumes') {
+            const assigned = rows.reduce((s, r) => s + r.volumes, 0);
+            if (assigned !== total) rows[0].volumes += (total - assigned);
+          }
+        }
+      };
+
+      // Volumes — first try invoice's saved totalVolumes, then container
+      // JSON sum, then per-item volumes. Apply only when rows still
+      // have no volumes assigned (preserve OCR-extracted per-container
+      // volumes when those are present).
+      if (sumVol === 0) {
+        const containerSum = (containerData as any[]).reduce((s: number, c: any) => s + (Number(c?.volumes) || 0), 0);
+        const itemsVol = items.reduce((s: number, i: any) => s + (i.volumes || 0), 0);
+        const total = parseNum((inv as any).totalVolumes ?? (inv as any).volumes)
+          || (containerSum > 0 ? containerSum : itemsVol);
+        distribute(total, 'volumes');
+      }
+      // Net + gross — invoice-saved values ALWAYS win when present.
+      const invNet = parseNum((inv as any).netWeight);
+      if (invNet > 0) {
+        distribute(invNet, 'netKg');
+      } else {
+        const sumNet = rows.reduce((s, r) => s + r.netKg, 0);
+        if (sumNet === 0) {
+          const itemsNet = items.reduce((s: number, i: any) => s + (i.netKg || (i.netLbs || 0) * 0.453592), 0);
+          if (itemsNet > 0) distribute(itemsNet, 'netKg');
+        }
+      }
+      const invGross = parseNum((inv as any).grossWeight);
+      if (invGross > 0) {
+        distribute(invGross, 'grossKg');
+      } else {
+        const sumGross = rows.reduce((s, r) => s + r.grossKg, 0);
+        if (sumGross === 0) {
+          const itemsGross = items.reduce((s: number, i: any) => s + (i.grossKg || (i.grossLbs || 0) * 0.453592), 0);
+          if (itemsGross > 0) distribute(itemsGross, 'grossKg');
+        }
+      }
     }
 
+    const fmtN = (n: number) => n > 0 ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+    const fmtV = (n: number) => n > 0 ? n.toString() : '-';
     const head2 = [['CONTAINER NO.', 'SEAL NO.', 'VOLUMES', 'NET WEIGHT (KG)', 'GROSS WEIGHT (KG)']];
     const body2 = rows.map(r => [
-      r.container, r.seal, r.volumes.toString(),
-      r.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      r.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      r.container, r.seal, fmtV(r.volumes), fmtN(r.netKg), fmtN(r.grossKg),
     ]);
 
-    const totalVols = items.reduce((s: number, i: any) => s + (i.volumes || 0), 0);
-    const totalNet  = items.reduce((s: number, i: any) => s + (i.netKg || (i.netLbs || 0) * 0.453592), 0);
-    const totalGross = items.reduce((s: number, i: any) => s + (i.grossKg || (i.grossLbs || 0) * 0.453592), 0);
-    body2.push([
-      'TOTAL', '', totalVols.toString(),
-      totalNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      totalGross.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-    ]);
+    // TOTAL row mirrors the row-distribution fallback above so the
+    // bottom sum matches when items lack per-row weights.
+    const totalVols  = rows.reduce((s, r) => s + r.volumes, 0);
+    const totalNet   = rows.reduce((s, r) => s + r.netKg, 0);
+    const totalGross = rows.reduce((s, r) => s + r.grossKg, 0);
+    body2.push(['TOTAL', '', fmtV(totalVols), fmtN(totalNet), fmtN(totalGross)]);
 
     autoTable(doc, {
       startY: finalY,
@@ -331,6 +401,57 @@ export function generatePackingListPdf(
     productSummary[key].volumes += item.volumes || 0;
   });
 
+  // Same row-level fallback as the per-container summary: if no item
+  // reported a gross/net/volume, top up the aggregate from the
+  // invoice-level `grossWeight` / `netWeight` / `totalVolumes` fields
+  // so the product summary isn't stuck at zero.
+  {
+    const parseNum = (v: unknown): number => {
+      if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+      if (typeof v === 'string') {
+        const n = Number(v.replace(/[^\d.\-]/g, ''));
+        return Number.isFinite(n) ? n : 0;
+      }
+      return 0;
+    };
+    const entries = Object.values(productSummary);
+    const sumNet   = entries.reduce((s, p) => s + p.netKg, 0);
+    const sumGross = entries.reduce((s, p) => s + p.grossKg, 0);
+    const sumVol   = entries.reduce((s, p) => s + p.volumes, 0);
+    // Container-level volumes fallback — drawer-persisted `containers[].volumes`.
+    const containerVolSum = (() => {
+      try {
+        const arr = typeof (inv as any).containers === 'string'
+          ? JSON.parse((inv as any).containers || '[]')
+          : ((inv as any).containers as any[] | undefined) || [];
+        return (arr as any[]).reduce((s, c) => s + (Number(c?.volumes) || 0), 0);
+      } catch { return 0; }
+    })();
+    if (entries.length > 0) {
+      // Source-of-truth: the invoice's saved totals. When the user
+      // typed gross/net/volumes on the invoice drawer, the product
+      // summary must reflect those numbers — not whatever the line
+      // items happen to add up to. Scale the per-product breakdown
+      // proportionally so each product's slice is consistent with the
+      // displayed grand total.
+      const scaleTo = (target: number, key: 'netKg' | 'grossKg' | 'volumes', sum: number) => {
+        if (target <= 0) return;
+        if (sum > 0) {
+          const ratio = target / sum;
+          entries.forEach(p => { p[key] = key === 'volumes' ? Math.round(p[key] * ratio) : p[key] * ratio; });
+        } else {
+          entries[0][key] += target;
+        }
+      };
+      const invNet   = parseNum((inv as any).netWeight);
+      const invGross = parseNum((inv as any).grossWeight);
+      const invVol   = parseNum((inv as any).totalVolumes ?? (inv as any).volumes) || containerVolSum;
+      if (invNet   > 0) scaleTo(invNet,   'netKg',   sumNet);
+      if (invGross > 0) scaleTo(invGross, 'grossKg', sumGross);
+      if (invVol   > 0) scaleTo(invVol,   'volumes', sumVol);
+    }
+  }
+
   const productRows = Object.values(productSummary);
   if (productRows.length > 0) {
     doc.setFont('helvetica', 'bold');
@@ -339,21 +460,23 @@ export function generatePackingListPdf(
     doc.text('SUMMARY BY PRODUCT', 14, finalY);
     finalY += 5;
 
+    const fmtN = (n: number) => n > 0 ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+    const fmtV = (n: number) => n > 0 ? n.toString() : '-';
     const head3 = [['PRODUCT DESCRIPTION', 'VOLUMES', 'NET WEIGHT (KG)', 'GROSS WEIGHT (KG)']];
     const body3 = productRows.map(p => [
       p.description.length > 60 ? p.description.substring(0, 60) + '...' : p.description,
-      p.volumes.toString(),
-      p.netKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      p.grossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      fmtV(p.volumes),
+      fmtN(p.netKg),
+      fmtN(p.grossKg),
     ]);
 
     const grandVol = productRows.reduce((s, p) => s + p.volumes, 0);
     const grandNet = productRows.reduce((s, p) => s + p.netKg, 0);
     const grandGross = productRows.reduce((s, p) => s + p.grossKg, 0);
     body3.push([
-      'TOTAL', grandVol.toString(),
-      grandNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      grandGross.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      'TOTAL', fmtV(grandVol),
+      fmtN(grandNet),
+      fmtN(grandGross),
     ]);
 
     autoTable(doc, {
@@ -372,13 +495,16 @@ export function generatePackingListPdf(
     });
   }
 
-  if (ctx.stampUrl && companyName.toUpperCase().includes('EC4')) {
+  if (ctx.stampUrl) {
     try {
       const lastPage = (doc as any).lastAutoTable?.finalY || 200;
       const stampSize = 35;
       const stampX = 196 - stampSize;
       const stampY = Math.min(lastPage + 5, 255);
-      doc.addImage(ctx.stampUrl, 'JPEG', stampX, stampY, stampSize, stampSize);
+      let fmt = 'PNG';
+      const m = ctx.stampUrl.match(/^data:image\/(\w+);/i);
+      if (m) { fmt = m[1].toUpperCase(); if (fmt === 'JPG') fmt = 'JPEG'; }
+      doc.addImage(ctx.stampUrl, fmt, stampX, stampY, stampSize, stampSize);
     } catch (e) { console.warn('[PL PDF] Could not add stamp:', e); }
   }
 

@@ -52,35 +52,64 @@ export const InspectDrawer: React.FC<Props> = ({
   const rowId = (row && typeof row.id === 'string') ? row.id : null;
 
   const initial = useMemo(() => {
-    const seed: Record<string, string> = {};
+    const seed: Record<string, unknown> = {};
     if (!row) return seed;
     for (const f of fields) {
       const v = row[f.key];
-      seed[f.key] = v === null || v === undefined ? '' : String(v);
+      if (f.type === 'multiselect') {
+        if (Array.isArray(v)) {
+          seed[f.key] = v;
+        } else if (f.serialize === 'csv' && typeof v === 'string' && v.length > 0) {
+          // CSV-encoded scalar column (e.g. users.linked_entity_id storing
+          // multiple cargo_agents.id). Split and trim; drop empty chunks.
+          seed[f.key] = v.split(',').map(s => s.trim()).filter(Boolean);
+        } else {
+          seed[f.key] = [];
+        }
+      } else {
+        seed[f.key] = v === null || v === undefined ? '' : String(v);
+      }
     }
     return seed;
   }, [row, fields]);
 
-  const [values, setValues] = useState<Record<string, string>>(initial);
+  const [values, setValues] = useState<Record<string, unknown>>(initial);
   useEffect(() => { setValues(initial); }, [initial]);
 
-  const set = (k: string, v: string) => setValues(prev => ({ ...prev, [k]: v }));
+  const set = (k: string, v: unknown) => setValues(prev => ({ ...prev, [k]: v }));
 
-  const dirty = Object.keys(values).some(k => values[k] !== (initial[k] ?? ''));
+  // Deep-ish compare — arrays stringified, primitives compared directly.
+  const sameVal = (a: unknown, b: unknown): boolean => {
+    if (Array.isArray(a) || Array.isArray(b)) {
+      return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+    }
+    return a === b;
+  };
+  const dirty = Object.keys(values).some(k => !sameVal(values[k], initial[k]));
 
   const save = () => {
     if (!rowId) return;
     const patch: Record<string, unknown> = { id: rowId };
     for (const f of fields) {
-      const raw = values[f.key]?.trim() ?? '';
       const col = f.dbKey ?? f.key;
-      if (raw === '') {
+      const raw = values[f.key];
+      if (f.type === 'multiselect') {
+        const arr = Array.isArray(raw) ? raw : [];
+        if (f.serialize === 'csv') {
+          patch[col] = arr.length === 0 ? null : arr.join(',');
+        } else {
+          patch[col] = arr;
+        }
+        continue;
+      }
+      const s = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
+      if (s === '') {
         patch[col] = null;
       } else if (f.type === 'number') {
-        const n = Number(raw);
+        const n = Number(s);
         patch[col] = Number.isFinite(n) ? n : null;
       } else {
-        patch[col] = raw;
+        patch[col] = s;
       }
     }
     update.mutate(patch as never, {
@@ -139,7 +168,7 @@ export const InspectDrawer: React.FC<Props> = ({
         <div className="space-y-4">
           {isEdit ? (
             <div className="grid grid-cols-2 gap-3">
-              {fields.map(f => {
+              {fields.filter(f => !f.hidden).map(f => {
                 const colSpan = f.fullWidth || f.type === 'textarea' ? 'col-span-2' : '';
                 return (
                   <FormField key={f.key} className={colSpan}>
@@ -149,33 +178,67 @@ export const InspectDrawer: React.FC<Props> = ({
                     {f.source ? (
                       <SupabaseSelectField
                         source={f.source}
-                        value={values[f.key] ?? ''}
+                        value={(values[f.key] as string | undefined) ?? ''}
                         mono={f.mono}
                         placeholder={f.placeholder}
+                        allowFreeText={f.allowFreeText}
                         onPick={(v, extras) => {
                           setValues(prev => ({ ...prev, [f.key]: v, ...extras }));
                         }}
                       />
                     ) : f.type === 'select' ? (
                       <div className="flex flex-wrap gap-1.5">
-                        {(f.options ?? []).map(opt => (
-                          <button
-                            key={opt}
-                            type="button"
-                            onClick={() => set(f.key, opt)}
-                            className={
-                              values[f.key] === opt
-                                ? 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
-                                : 'px-2.5 py-1 rounded-md text-[11px] text-slate-400 border border-[#1f1f1f] hover:text-slate-200 hover:border-[#2a2a2a]'
-                            }
-                          >
-                            {opt}
-                          </button>
-                        ))}
+                        {(f.options ?? []).map(opt => {
+                          const value = typeof opt === 'string' ? opt : opt.value;
+                          const label = typeof opt === 'string' ? opt : opt.label;
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => set(f.key, value)}
+                              className={
+                                values[f.key] === value
+                                  ? 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
+                                  : 'px-2.5 py-1 rounded-md text-[11px] text-slate-400 border border-[#1f1f1f] hover:text-slate-200 hover:border-[#2a2a2a]'
+                              }
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : f.type === 'multiselect' ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {(f.options ?? []).map(opt => {
+                          const value = typeof opt === 'string' ? opt : opt.value;
+                          const label = typeof opt === 'string' ? opt : opt.label;
+                          const current = Array.isArray(values[f.key]) ? values[f.key] as string[] : [];
+                          const checked = current.includes(value);
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => {
+                                const next = checked ? current.filter(v => v !== value) : [...current, value];
+                                set(f.key, next as any);
+                              }}
+                              className={
+                                checked
+                                  ? 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
+                                  : 'px-2.5 py-1 rounded-md text-[11px] text-slate-400 border border-[#1f1f1f] hover:text-slate-200 hover:border-[#2a2a2a]'
+                              }
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                        {(f.options ?? []).length === 0 && (
+                          <span className="text-[11px] text-slate-600 italic">No options available.</span>
+                        )}
                       </div>
                     ) : f.type === 'textarea' ? (
                       <textarea
-                        value={values[f.key] ?? ''}
+                        value={(values[f.key] as string | undefined) ?? ''}
                         onChange={e => set(f.key, e.target.value)}
                         rows={3}
                         className="bg-[#111111] border border-[#1f1f1f] rounded-md px-2 py-1.5 text-[12.5px] text-slate-200 resize-y"
@@ -183,7 +246,7 @@ export const InspectDrawer: React.FC<Props> = ({
                     ) : (
                       <Input
                         type={f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text'}
-                        value={values[f.key] ?? ''}
+                        value={(values[f.key] as string | undefined) ?? ''}
                         onChange={e => set(f.key, e.target.value)}
                         min={f.min} max={f.max} step={f.step}
                         className={inputClass + (f.mono ? ' font-mono tabular-nums' : '')}
@@ -195,19 +258,29 @@ export const InspectDrawer: React.FC<Props> = ({
             </div>
           ) : (
             <dl className="grid grid-cols-[140px_1fr] gap-x-4 gap-y-2 text-[12.5px]">
-              {fields.map(f => (
-                <React.Fragment key={f.key}>
-                  <dt className="text-[11px] text-slate-500 uppercase tracking-wider py-1.5">
-                    {f.label}
-                  </dt>
-                  <dd className={
-                    (f.mono ? 'font-mono tabular-nums ' : '') +
-                    'py-1.5 text-slate-200 break-words'
-                  }>
-                    {fmtValue(row[f.key])}
-                  </dd>
-                </React.Fragment>
-              ))}
+              {fields.filter(f => !f.hidden).map(f => {
+                // CSV-encoded multiselect: split before formatting so the
+                // view renders "AGT1, AGT2" instead of the raw joined blob.
+                let displayVal: unknown = row[f.key];
+                if (f.type === 'multiselect' && f.serialize === 'csv' && typeof displayVal === 'string') {
+                  displayVal = displayVal.length === 0
+                    ? []
+                    : displayVal.split(',').map(s => s.trim()).filter(Boolean);
+                }
+                return (
+                  <React.Fragment key={f.key}>
+                    <dt className="text-[11px] text-slate-500 uppercase tracking-wider py-1.5">
+                      {f.label}
+                    </dt>
+                    <dd className={
+                      (f.mono ? 'font-mono tabular-nums ' : '') +
+                      'py-1.5 text-slate-200 break-words'
+                    }>
+                      {fmtValue(displayVal)}
+                    </dd>
+                  </React.Fragment>
+                );
+              })}
             </dl>
           )}
 

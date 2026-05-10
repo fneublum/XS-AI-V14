@@ -2499,7 +2499,7 @@ const Commissions: React.FC<CommissionsProps> = ({ commissions, onAdd, onUpdate,
                                     <option value={editingOrder.incoterm}>📄 {editingOrder.incoterm} (OCR)</option>
                                 )}
                                 <option value="FOB">FOB - Free On Board</option>
-                                <option value="CIF">CIF - Cost, Insurance & Freight</option>
+                                <option value="CIF">CIF - Cost + Insurance + Freight</option>
                                 <option value="CFR">CFR - Cost & Freight</option>
                                 <option value="EXW">EXW - Ex Works</option>
                                 <option value="FCA">FCA - Free Carrier</option>

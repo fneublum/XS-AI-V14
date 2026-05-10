@@ -14,6 +14,8 @@ export interface Customer {
   taxId: string | null;
   contactPerson: string | null;
   email: string | null;
+  email2: string | null;
+  email3: string | null;
   phone: string | null;
   location: string | null;
   city: string | null;
@@ -27,6 +29,8 @@ export interface Customer {
   lastOrderDate: string | null;
   sharedWith: string[];
   pod: string | null;
+  brokerName: string | null;
+  brokerEmail: string | null;
 }
 
 interface Raw {
@@ -37,6 +41,8 @@ interface Raw {
   taxId: string | null;
   contactPerson: string | null;
   email: string | null;
+  email2: string | null;
+  email3: string | null;
   phone: string | null;
   location: string | null;
   city: string | null;
@@ -50,6 +56,8 @@ interface Raw {
   lastOrderDate: string | null;
   sharedWith: string[] | null;
   pod: string | null;
+  brokerName: string | null;
+  brokerEmail: string | null;
 }
 
 function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
@@ -93,6 +101,8 @@ export function useCustomers(search?: string) {
         taxId: r.taxId,
         contactPerson: r.contactPerson,
         email: r.email,
+        email2: r.email2,
+        email3: r.email3,
         phone: r.phone,
         location: r.location,
         city: r.city,
@@ -108,6 +118,8 @@ export function useCustomers(search?: string) {
         lastOrderDate: r.lastOrderDate,
         sharedWith: r.sharedWith ?? [],
         pod: r.pod,
+        brokerName: r.brokerName ?? null,
+        brokerEmail: r.brokerEmail ?? null,
       }));
     },
   );

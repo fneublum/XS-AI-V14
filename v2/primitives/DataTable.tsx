@@ -41,6 +41,12 @@ interface DataTableProps<T> {
   rowActions?: (row: T) => React.ReactNode;
   /** Initial sort. Leave off to render in the order `rows` is in. */
   defaultSort?: { columnId: string; direction: 'asc' | 'desc' };
+  /** Alternate row background for readability on dense tables. */
+  zebra?: boolean;
+  /** Row density — "compact" halves vertical padding and drops the font
+   *  a hair so more rows fit above the fold. Default keeps the standard
+   *  padding other routes expect. */
+  density?: 'default' | 'compact';
 }
 
 const alignClass: Record<NonNullable<DataTableColumn<unknown>['align']>, string> = {
@@ -158,7 +164,8 @@ function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClos
 }
 
 export function DataTable<T>({
-  columns, rows, getRowId, onRowClick, emptyMessage = 'No rows', rowActions, defaultSort,
+  columns, rows, getRowId, onRowClick, emptyMessage = 'No rows', rowActions, defaultSort, zebra = true,
+  density = 'default',
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<SortState>(defaultSort ?? null);
   const [filters, setFilters] = useState<Record<string, Set<string>>>({});
@@ -218,10 +225,20 @@ export function DataTable<T>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, columns, sort, filters]);
 
+  const isCompact = density === 'compact';
+  const cellPadClass = isCompact ? 'px-2 py-0.5' : 'px-3 py-1.5';
+  const tableFontClass = isCompact ? 'text-[11px] leading-[14px]' : 'text-[11.5px] leading-[16px]';
+
   return (
-    <div className="w-full overflow-x-auto">
-      <table className="w-full text-[11.5px] leading-[16px]">
-        <thead>
+    // No overflow-x-auto here — it breaks the sticky-thead chain.
+    // Horizontal scrolling is delegated to ListPage's scroll container.
+    <div className="w-full">
+      <table className={cn('w-full', tableFontClass)}>
+        {/* Sticky header stays visible while the table body scrolls inside
+         *  its ListPage container. Opaque bg-[#0a0a0a] (flipped to white
+         *  via globals.css in light mode) so scrolled rows don't show
+         *  through. */}
+        <thead className="sticky top-0 z-10 bg-[#0a0a0a]">
           <tr className="border-b border-[#1f1f1f]">
             {columns.map(col => {
               const sortActive = sort?.columnId === col.id;
@@ -323,6 +340,7 @@ export function DataTable<T>({
                   'transition-colors group',
                   i < viewRows.length - 1 && 'border-b border-[#1f1f1f]',
                   onRowClick && 'cursor-pointer',
+                  zebra && i % 2 === 1 && 'bg-sky-400/10',
                   'hover:bg-[#111111]',
                 )}
               >
@@ -330,7 +348,8 @@ export function DataTable<T>({
                   <td
                     key={col.id}
                     className={cn(
-                      'px-3 py-1.5 text-slate-200 align-middle',
+                      cellPadClass,
+                      'text-slate-200 align-middle',
                       alignClass[col.align ?? 'left'],
                       col.mono && 'font-mono tabular-nums',
                     )}
@@ -339,7 +358,7 @@ export function DataTable<T>({
                   </td>
                 ))}
                 {rowActions && (
-                  <td className="px-3 py-1.5 text-right align-middle">
+                  <td className={cn(cellPadClass, 'text-right align-middle')}>
                     {rowActions(row)}
                   </td>
                 )}

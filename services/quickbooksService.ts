@@ -164,6 +164,18 @@ export async function syncPayableBill(companyId: string, invoice: SupplierInvoic
 }
 
 /**
+ * Voids an invoice directly in QuickBooks by its QB Invoice Id.
+ * QBO marks the invoice status as Voided and zeroes out the balance.
+ */
+export async function voidQbInvoice(companyId: string, qbInvoiceId: string): Promise<{ success: boolean; voidedAt: string }> {
+    const data = await callEdgeFunction('qb-sync', 'void-invoice', {
+        method: 'POST',
+        body: { companyId, qbInvoiceId },
+    });
+    return { success: !!data.success, voidedAt: data.voidedAt };
+}
+
+/**
  * Syncs a single receivable (invoice) to QuickBooks as an Invoice.
  */
 export async function syncReceivableInvoice(companyId: string, invoice: Invoice): Promise<QBSyncStatus> {

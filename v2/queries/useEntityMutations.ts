@@ -50,8 +50,14 @@ export function useEntityInsert<Fields extends Record<string, unknown>>({
   return useMutation<string, Error, Fields>({
     mutationFn: async (fields) => {
       const supabase = getSupabaseClient();
-      const id = newId(idPrefix);
-      const payload: Record<string, unknown> = { id, ...fields };
+      // Honor a pre-set `id` in the payload (e.g. PurchaseOrderDrawer
+      // generates a formatted "PO-NNNNNXX" ahead of save). Fall back
+      // to the random idPrefix-based id otherwise.
+      const explicitId = typeof (fields as unknown as { id?: unknown }).id === 'string'
+        ? ((fields as unknown as { id: string }).id).trim()
+        : '';
+      const id = explicitId || newId(idPrefix);
+      const payload: Record<string, unknown> = { ...fields, id };
       if (withCreatedAt) payload.createdAt = new Date().toISOString();
       const { error } = await supabase.from(table).insert(payload);
       if (error) throw new Error(error.message);

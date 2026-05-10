@@ -120,7 +120,14 @@ const parseItems = (raw: unknown): LineItem[] => {
       const quantity = Number(r?.quantity ?? r?.qty ?? r?.qtyLbs ?? r?.quantityLbs ?? r?.grossLbs) || 0;
       const unitPrice = Number(r?.unitPrice ?? r?.price ?? r?.unitPriceLbs) || 0;
       const total = Number(r?.total ?? r?.amount) || quantity * unitPrice;
+      // Spread the raw row first so every downstream consumer (PDF
+      // generators, drawers, BR-mode adjuster) can still see the
+      // unmapped fields — `grossKg`/`grossLbs`/`netKg`/`netLbs`/
+      // `volumes`/`containerNo`/`sealNo`/`amount`/`supplier` etc.
+      // The explicit properties below win over any raw equivalents
+      // so the canonical LineItem shape stays the same.
       return {
+        ...r,
         productId: r?.productId ?? undefined,
         productName,
         customerDescription: r?.customerDescription ?? r?.description ?? '',

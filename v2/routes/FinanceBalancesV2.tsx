@@ -13,11 +13,12 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Calendar, CheckCircle2, Download, FileText, Loader2, Mail,
+  AlertCircle, Ban, Calendar, CheckCircle2, Download, FileText, Loader2, Mail,
   RefreshCw, Scale, Send, User, X as XIcon,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
   Card, CardBody, Badge, EmptyState, StatCard, StatGrid,
@@ -32,7 +33,7 @@ import {
 } from '../lib/datePresets';
 import { formatDate } from '../lib/formatDate';
 import {
-  fetchQBCustomers, fetchCustomerStatement,
+  fetchQBCustomers, fetchCustomerStatement, voidQbInvoice,
   QBCustomer, QBCustomerStatement, QBStatementInvoice, QBStatementReceipt,
 } from '../../services/quickbooksService';
 import { sendEmail } from '../../services/emailService';
@@ -126,6 +127,10 @@ const FinanceBalancesV2: React.FC = () => {
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState<string | null>(null);
 
+  // Void-invoice dialog state
+  const [voidTarget, setVoidTarget] = useState<QBStatementInvoice | null>(null);
+  const [voidingId, setVoidingId]   = useState<string | null>(null);
+
   // Email draft
   const [emailPreviewOpen, setEmailPreviewOpen] = useState(false);
   const [emailDraft, setEmailDraft] = useState<EmailDraft>({
@@ -208,11 +213,57 @@ const FinanceBalancesV2: React.FC = () => {
     }
   }, [companyId, selectedCustomer, startDate, endDate]);
 
+  const handleConfirmVoid = useCallback(async () => {
+    if (!voidTarget) return;
+    setVoidingId(voidTarget.id);
+    try {
+      await voidQbInvoice(companyId, voidTarget.id);
+      toast.push({
+        kind: 'success',
+        title: 'Invoice voided',
+        description: `INVOICE # ${voidTarget.docNumber || voidTarget.id} has been voided in QuickBooks.`,
+      });
+      setVoidTarget(null);
+      await runStatement();
+    } catch (err) {
+      toast.push({
+        kind: 'error',
+        title: 'Void failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setVoidingId(null);
+    }
+  }, [voidTarget, companyId, runStatement, toast]);
+
   // Merge invoices + receipts into a single chronological entry list
   // with running balance. Prefer `receipts` (deposit-grouped) when
   // the backend returns them — collapses multi-payment deposits.
+  // One-off client-side void: hide these invoice numbers from every
+  // Customer Balances view (rows + totals + PDF + email). Remove an
+  // entry once the corresponding invoice is voided upstream in QB.
+  const HIDDEN_INVOICE_NUMBERS = useMemo(() => new Set(['INV-4358', '4358']), []);
+
+  const hiddenAmount = useMemo(() => {
+    if (!statement) return 0;
+    return statement.invoices
+      .filter(inv => HIDDEN_INVOICE_NUMBERS.has((inv.docNumber || '').trim()))
+      .reduce((s, inv) => s + (inv.totalAmount || 0), 0);
+  }, [statement, HIDDEN_INVOICE_NUMBERS]);
+
+  const adjustedTotals = useMemo(() => {
+    if (!statement) return { totalInvoiced: 0, totalPaid: 0 };
+    return {
+      totalInvoiced: statement.totals.totalInvoiced - hiddenAmount,
+      totalPaid: statement.totals.totalPaid,
+    };
+  }, [statement, hiddenAmount]);
+
   const entries = useMemo<Array<StatementEntry & { runningBalance: number }>>(() => {
     if (!statement) return [];
+    const visibleInvoices = statement.invoices.filter(
+      inv => !HIDDEN_INVOICE_NUMBERS.has((inv.docNumber || '').trim()),
+    );
     const receiptRows: QBStatementReceipt[] = statement.receipts && statement.receipts.length > 0
       ? statement.receipts
       : statement.payments.map<QBStatementReceipt>(p => ({
@@ -230,7 +281,7 @@ const FinanceBalancesV2: React.FC = () => {
           paymentCount: 1,
         }));
     const merged: StatementEntry[] = [
-      ...statement.invoices.map<StatementEntry>(inv => ({ kind: 'invoice', date: inv.txnDate, data: inv })),
+      ...visibleInvoices.map<StatementEntry>(inv => ({ kind: 'invoice', date: inv.txnDate, data: inv })),
       ...receiptRows.map<StatementEntry>(r  => ({ kind: 'receipt', date: r.txnDate,   data: r   })),
     ];
     merged.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
@@ -339,8 +390,8 @@ const FinanceBalancesV2: React.FC = () => {
         ? acctName.slice(0, digitMatch.index).replace(/[\s*#•-]+$/, '').trim()
         : acctName;
       const refText = acctName
-        ? (last4 ? `${bankOnly} **${last4}` : bankOnly)
-        : (r.paymentRefNum || (isDeposit ? `${r.paymentCount} payments` : r.id));
+        ? `Received on ${last4 ? `${bankOnly} **${last4}` : bankOnly}`
+        : 'Received on Bank';
       return [
         formatDate(r.txnDate),
         isDeposit ? 'Deposit' : 'Payment',
@@ -352,7 +403,7 @@ const FinanceBalancesV2: React.FC = () => {
       ];
     });
 
-    const periodBalance = statement.totals.totalInvoiced - statement.totals.totalPaid;
+    const periodBalance = adjustedTotals.totalInvoiced - adjustedTotals.totalPaid;
 
     autoTable(doc, {
       startY: tableStartY,
@@ -360,8 +411,8 @@ const FinanceBalancesV2: React.FC = () => {
       body,
       foot: [[
         { content: 'TOTALS', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold' } },
-        { content: formatCurrency(statement.totals.totalInvoiced), styles: { halign: 'right', fontStyle: 'bold' } },
-        { content: formatCurrency(statement.totals.totalPaid),     styles: { halign: 'right', fontStyle: 'bold', textColor: '#047857' } },
+        { content: formatCurrency(adjustedTotals.totalInvoiced), styles: { halign: 'right', fontStyle: 'bold' } },
+        { content: formatCurrency(adjustedTotals.totalPaid),     styles: { halign: 'right', fontStyle: 'bold', textColor: '#047857' } },
         {
           content: formatCurrency(periodBalance),
           styles: {
@@ -388,7 +439,7 @@ const FinanceBalancesV2: React.FC = () => {
     );
 
     return doc;
-  }, [statement, entries, companyLogoUrl, currentCompany]);
+  }, [statement, entries, companyLogoUrl, currentCompany, adjustedTotals]);
 
   const handleDownloadPDF = useCallback(() => {
     const doc = buildStatementPDF();
@@ -398,6 +449,75 @@ const FinanceBalancesV2: React.FC = () => {
     doc.save(`Statement_${safeName}_${periodTag}.pdf`);
     toast.push({ kind: 'success', title: 'Statement downloaded', description: `Statement_${safeName}_${periodTag}.pdf` });
   }, [buildStatementPDF, statement, toast]);
+
+  const handleDownloadXlsx = useCallback(() => {
+    if (!statement || entries.length === 0) return;
+    const periodLabel =
+      statement.startDate && statement.endDate
+        ? `${formatDate(statement.startDate)} — ${formatDate(statement.endDate)}`
+        : 'All dates';
+
+    const header = ['Date', 'Type', 'Reference', 'Details', 'Invoice', 'Received', 'Balance'];
+    const body = entries.map(e => {
+      if (e.kind === 'invoice') {
+        const inv = e.data;
+        return [
+          formatDate(inv.txnDate),
+          'Invoice',
+          `INVOICE # ${inv.docNumber || inv.id}`,
+          `Due ${formatDate(inv.dueDate)}`,
+          inv.totalAmount || 0,
+          '',
+          e.runningBalance,
+        ];
+      }
+      const r = e.data;
+      const isDeposit = r.kind === 'deposit';
+      const acctName = (r.depositAccount || '').trim();
+      const digitMatch = acctName.match(/(\d{3,})\s*$/);
+      const last4 = digitMatch ? digitMatch[1].slice(-4) : '';
+      const bankOnly = digitMatch
+        ? acctName.slice(0, digitMatch.index).replace(/[\s*#•-]+$/, '').trim()
+        : acctName;
+      const refText = acctName
+        ? `Received on ${last4 ? `${bankOnly} **${last4}` : bankOnly}`
+        : 'Received on Bank';
+      return [
+        formatDate(r.txnDate),
+        isDeposit ? 'Deposit' : 'Payment',
+        refText,
+        isDeposit ? 'Bank deposit' : 'Payment',
+        '',
+        r.totalAmount || 0,
+        e.runningBalance,
+      ];
+    });
+    const periodBalance = adjustedTotals.totalInvoiced - adjustedTotals.totalPaid;
+    const totalsRow = [
+      '', '', '', '', adjustedTotals.totalInvoiced, adjustedTotals.totalPaid, periodBalance,
+    ];
+
+    const titleRows = [
+      ['Customer Statement'],
+      [statement.customerName],
+      [`Period: ${periodLabel}`],
+      [],
+    ];
+    const aoa = [...titleRows, header, ...body, totalsRow];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [
+      { wch: 12 }, { wch: 10 }, { wch: 32 }, { wch: 20 },
+      { wch: 14 }, { wch: 14 }, { wch: 14 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Statement');
+
+    const safeName = statement.customerName.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
+    const periodTag = [statement.startDate, statement.endDate].filter(Boolean).join('_to_') || 'all';
+    const filename = `Statement_${safeName}_${periodTag}.xlsx`;
+    XLSX.writeFile(wb, filename);
+    toast.push({ kind: 'success', title: 'Statement downloaded', description: filename });
+  }, [statement, entries, adjustedTotals, toast]);
 
   // ── Email ────────────────────────────────────────────────────
 
@@ -414,7 +534,7 @@ const FinanceBalancesV2: React.FC = () => {
       statement.startDate && statement.endDate
         ? `${formatDate(statement.startDate)} — ${formatDate(statement.endDate)}`
         : 'All dates';
-    const periodBalance = statement.totals.totalInvoiced - statement.totals.totalPaid;
+    const periodBalance = adjustedTotals.totalInvoiced - adjustedTotals.totalPaid;
 
     const customer = customers.find(c => c.displayName === statement.customerName);
     const toAddress = customer?.primaryEmail || '';
@@ -423,8 +543,8 @@ const FinanceBalancesV2: React.FC = () => {
       `Dear ${statement.customerName},\n\n` +
       `Please find attached your account statement.\n\n` +
       `Period: ${periodLabel}\n` +
-      `Total Invoiced: ${formatCurrency(statement.totals.totalInvoiced)}\n` +
-      `Total Paid: ${formatCurrency(statement.totals.totalPaid)}\n` +
+      `Total Invoiced: ${formatCurrency(adjustedTotals.totalInvoiced)}\n` +
+      `Total Paid: ${formatCurrency(adjustedTotals.totalPaid)}\n` +
       `Balance: ${formatCurrency(periodBalance)}\n\n` +
       `If you have any questions about your account, please don't hesitate to reach out.\n\n` +
       `Best regards`;
@@ -441,7 +561,7 @@ const FinanceBalancesV2: React.FC = () => {
       }],
     });
     setEmailPreviewOpen(true);
-  }, [buildStatementPDF, statement, customers]);
+  }, [buildStatementPDF, statement, customers, adjustedTotals]);
 
   const sendEmailFromPreview = useCallback(async () => {
     if (!emailDraft.to) {
@@ -489,7 +609,7 @@ const FinanceBalancesV2: React.FC = () => {
   // ── UI ───────────────────────────────────────────────────────
 
   const periodBalance = statement
-    ? statement.totals.totalInvoiced - statement.totals.totalPaid
+    ? adjustedTotals.totalInvoiced - adjustedTotals.totalPaid
     : 0;
 
   const hasStatement = statement !== null;
@@ -620,12 +740,12 @@ const FinanceBalancesV2: React.FC = () => {
         <StatGrid columns={3}>
           <StatCard
             label="Total Invoiced"
-            value={formatCurrency(statement.totals.totalInvoiced)}
+            value={formatCurrency(adjustedTotals.totalInvoiced)}
             delta={{ text: `${statement.invoices.length} invoice${statement.invoices.length === 1 ? '' : 's'}`, tone: 'neutral' }}
           />
           <StatCard
             label="Total Paid"
-            value={formatCurrency(statement.totals.totalPaid)}
+            value={formatCurrency(adjustedTotals.totalPaid)}
             delta={{
               text: `${(statement.receipts?.length ?? statement.payments.length)} receipt${(statement.receipts?.length ?? statement.payments.length) === 1 ? '' : 's'}`,
               tone: 'positive',
@@ -663,6 +783,14 @@ const FinanceBalancesV2: React.FC = () => {
               </button>
               <button
                 type="button"
+                onClick={handleDownloadXlsx}
+                disabled={entries.length === 0}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] font-medium bg-[#161616] border border-[#1f1f1f] text-slate-200 hover:bg-[#1a1a1a] hover:border-[#2a2a2a] disabled:opacity-50 transition-colors"
+              >
+                <Download size={12} /> Download XLSX
+              </button>
+              <button
+                type="button"
                 onClick={handlePrepareEmailDraft}
                 disabled={entries.length === 0}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
@@ -689,6 +817,7 @@ const FinanceBalancesV2: React.FC = () => {
                     <th className="px-3 py-2 font-medium text-right">Invoice</th>
                     <th className="px-3 py-2 font-medium text-right">Received</th>
                     <th className="px-3 py-2 font-medium text-right">Balance</th>
+                    <th className="px-3 py-2 font-medium text-right w-[60px]">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -710,6 +839,18 @@ const FinanceBalancesV2: React.FC = () => {
                           <td className="px-3 py-1.5 text-right tabular-nums text-slate-100">{formatCurrency(inv.totalAmount, inv.currency)}</td>
                           <td className="px-3 py-1.5 text-right text-slate-700">—</td>
                           <td className="px-3 py-1.5 text-right tabular-nums font-medium text-slate-100">{formatCurrency(entry.runningBalance)}</td>
+                          <td className="px-3 py-1.5 text-right">
+                            <button
+                              type="button"
+                              onClick={() => setVoidTarget(inv)}
+                              disabled={voidingId === inv.id}
+                              title={`Void invoice ${inv.docNumber || inv.id} in QuickBooks`}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold border bg-[#141414] text-slate-400 border-[#1f1f1f] hover:text-rose-300 hover:border-rose-500/40 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                            >
+                              {voidingId === inv.id ? <Loader2 size={10} className="animate-spin" /> : <Ban size={10} />}
+                              {voidingId === inv.id ? 'Voiding…' : 'Void'}
+                            </button>
+                          </td>
                         </tr>
                       );
                     }
@@ -722,8 +863,8 @@ const FinanceBalancesV2: React.FC = () => {
                       ? acctName.slice(0, digitMatch.index).replace(/[\s*#•-]+$/, '').trim()
                       : acctName;
                     const refText   = acctName
-                      ? (last4 ? `${bankOnly} **${last4}` : bankOnly)
-                      : (r.paymentRefNum || (isDeposit ? `${r.paymentCount} payments` : r.id));
+                      ? `Received on ${last4 ? `${bankOnly} **${last4}` : bankOnly}`
+                      : 'Received on Bank';
                     return (
                       <tr key={`rec-${r.id}`} className="border-b border-[#141414] hover:bg-[#0f0f0f] transition-colors">
                         <td className="px-3 py-1.5 whitespace-nowrap text-slate-400 font-mono tabular-nums">{formatDate(r.txnDate)}</td>
@@ -737,6 +878,7 @@ const FinanceBalancesV2: React.FC = () => {
                         <td className="px-3 py-1.5 text-right text-slate-700">—</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-emerald-300">{formatCurrency(r.totalAmount, r.currency)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums font-medium text-slate-100">{formatCurrency(entry.runningBalance)}</td>
+                        <td className="px-3 py-1.5" />
                       </tr>
                     );
                   })}
@@ -744,14 +886,15 @@ const FinanceBalancesV2: React.FC = () => {
                 <tfoot className="bg-[#0f0f0f] border-t-2 border-[#1f1f1f]">
                   <tr className="text-[11.5px]">
                     <td className="px-3 py-2 font-semibold text-slate-300" colSpan={4}>TOTALS</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">{formatCurrency(statement.totals.totalInvoiced)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-300">{formatCurrency(statement.totals.totalPaid)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">{formatCurrency(adjustedTotals.totalInvoiced)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-300">{formatCurrency(adjustedTotals.totalPaid)}</td>
                     <td className={cn(
                       'px-3 py-2 text-right tabular-nums font-semibold',
                       periodBalance > 0 ? 'text-amber-300' : 'text-slate-100',
                     )}>
                       {formatCurrency(periodBalance)}
                     </td>
+                    <td />
                   </tr>
                 </tfoot>
               </table>
@@ -858,6 +1001,52 @@ const FinanceBalancesV2: React.FC = () => {
                   ? <Loader2 size={12} className="animate-spin" />
                   : <Send size={12} />}
                 {sendingEmail ? 'Sending…' : 'Send email'}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      {/* Void-invoice confirm dialog */}
+      <Dialog.Root open={!!voidTarget} onOpenChange={(o) => !o && !voidingId && setVoidTarget(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/60 z-40" />
+          <Dialog.Content className="fixed left-1/2 top-[30%] -translate-x-1/2 z-50 w-[min(96vw,460px)] rounded-md border border-[#1f1f1f] bg-[#0a0a0a] shadow-[0_16px_48px_rgba(0,0,0,0.6)]">
+            <div className="px-5 py-4 border-b border-[#1f1f1f] flex items-start gap-3">
+              <div className="p-1.5 rounded-md bg-rose-500/10 text-rose-300">
+                <Ban size={14} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <Dialog.Title className="text-[14px] font-semibold text-slate-100">
+                  Void invoice in QuickBooks?
+                </Dialog.Title>
+                <Dialog.Description className="text-[12px] text-slate-500 mt-0.5">
+                  {voidTarget
+                    ? `INVOICE # ${voidTarget.docNumber || voidTarget.id} — ${formatCurrency(voidTarget.totalAmount, voidTarget.currency)}`
+                    : ''}
+                </Dialog.Description>
+              </div>
+            </div>
+            <div className="px-5 py-4 text-[12.5px] text-slate-400">
+              This marks the invoice as Voided in QuickBooks and zeroes the balance. The action is recorded by QuickBooks and cannot be reversed through this app.
+            </div>
+            <div className="px-5 py-3 border-t border-[#1f1f1f] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setVoidTarget(null)}
+                disabled={!!voidingId}
+                className="px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#141414] border border-[#1f1f1f] text-slate-300 hover:text-slate-100 hover:border-[#2a2a2a] transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmVoid}
+                disabled={!!voidingId}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-rose-600 text-white hover:bg-rose-500 transition-colors disabled:opacity-60 disabled:cursor-wait"
+              >
+                {voidingId ? <Loader2 size={12} className="animate-spin" /> : <Ban size={12} />}
+                {voidingId ? 'Voiding…' : 'Void invoice'}
               </button>
             </div>
           </Dialog.Content>

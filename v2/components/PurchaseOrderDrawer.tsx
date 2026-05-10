@@ -13,7 +13,9 @@ import { PurchaseOrder } from '../queries/usePurchaseOrders';
 import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { LineItemsEditor, LineItem, computeSubtotal, sanitizeItems } from './LineItemsEditor';
 import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
+import { resolveRecipientsSync } from '../services/recipients';
 import { SupabaseSelectField } from './SupabaseSelectField';
+import { nextPONumber } from '../lib/poNumber';
 import type { EditorMode } from '../providers/EditorProvider';
 
 const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'OPEN', 'RECEIVED', 'COMPLETED', 'CANCELLED'];
@@ -124,14 +126,22 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     notes: notes || null,
   });
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) {
       toast.push({ kind: 'warning', title: 'Supplier is required' });
       return;
     }
     const payload = buildPayload();
     if (mode === 'create') {
-      insert.mutate(payload, {
+      // Assign the formatted "PO-NNNNNXX" id ourselves — useEntityInsert
+      // honours an explicit `id` field. Failure during the lookup
+      // falls through to the random PO-{ts}-{rand} fallback inside
+      // newId() so creation never blocks.
+      let formattedId: string | null = null;
+      try {
+        formattedId = await nextPONumber(payload.supplierName);
+      } catch { /* ignore — fall back to random id */ }
+      insert.mutate(formattedId ? { ...payload, id: formattedId } : payload, {
         onSuccess: () => {
           toast.push({ kind: 'success', title: 'Purchase order created', description: payload.supplierName });
           onOpenChange(false);
@@ -169,10 +179,15 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
   };
 
   const sendEmail = () => {
-    const selectedSupplier = availableSuppliers.find(s => s.id === supplierId);
+    const r = resolveRecipientsSync({
+      actors: [{ supplierId, supplierName }],
+      customers: [],
+      suppliers: availableSuppliers,
+    });
     const poRef = po?.id ? po.id.slice(0, 12) : 'NEW';
     setEmailDraft({
-      to: selectedSupplier?.email ?? '',
+      to: r.to.join('; '),
+      cc: r.cc.length ? r.cc.join('; ') : undefined,
       subject: `Purchase Order ${poRef} — ${supplierName}`,
       body: [
         `Hello ${supplierName},`,

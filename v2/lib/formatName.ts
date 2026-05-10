@@ -11,12 +11,12 @@
 //   "BRX"                           → "BRX"
 //   null                            → "—"
 
-export const shortName = (s: string | null | undefined): string => {
+export const shortName = (s: string | null | undefined, words = 2): string => {
   if (s === null || s === undefined) return '—';
   const trimmed = String(s).trim();
   if (!trimmed) return '—';
   const parts = trimmed.split(/\s+/);
-  return parts.slice(0, 2).join(' ');
+  return parts.slice(0, Math.max(1, words)).join(' ');
 };
 
 /** Full name for `title` tooltips; falls back to em-dash. */

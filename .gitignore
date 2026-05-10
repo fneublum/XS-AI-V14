@@ -45,3 +45,5 @@ gcp-key*.json
 
 # Claude scheduled tasks
 .claude/scheduled_tasks.lock
+.claude/scheduled_tasks*.lock
+.claude/worktrees/

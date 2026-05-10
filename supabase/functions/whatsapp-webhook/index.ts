@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
+import { runAgentFromWhatsApp, transcribeWhatsAppAudio, sendWhatsAppReply } from "../_shared/agentServer.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -117,7 +118,70 @@ serve(async (req: Request) => {
                                 if (msg.type === "text") messageBody = msg.text.body;
                                 else if (msg.type === "image") messageBody = `[Image attached: ${msg.image.id}]`;
                                 else if (msg.type === "document") messageBody = `[Document attached: ${msg.document.id}]`;
+                                else if (msg.type === "audio" || msg.type === "voice") messageBody = `[Voice message: ${msg.audio?.id || msg.voice?.id}]`;
                                 else messageBody = `[Unsupported message type: ${msg.type}]`;
+
+                                // ── Agent routing (Phase 5) ────────────────────────────
+                                // If the phone is on the allowlist, hand the message to
+                                // the agent runtime instead of the legacy WhatsApp chat
+                                // store. Falls through to legacy on any error so an agent
+                                // outage doesn't black-hole customer messages.
+                                let agentHandled = false;
+                                try {
+                                    const { data: allowed } = await supabase
+                                        .from("agent_allowed_phones")
+                                        .select("phone, userId, companyId")
+                                        .eq("phone", fromNumber)
+                                        .maybeSingle();
+
+                                    if (allowed) {
+                                        const userId = allowed.userId;
+                                        const companyId = allowed.companyId || "ALL";
+
+                                        let userText = "";
+                                        if (msg.type === "text") {
+                                            userText = msg.text.body;
+                                        } else if (msg.type === "audio" || msg.type === "voice") {
+                                            const accessToken = Deno.env.get("WHATSAPP_ACCESS_TOKEN") || "";
+                                            const mediaId = msg.audio?.id || msg.voice?.id;
+                                            if (mediaId && accessToken) {
+                                                try {
+                                                    userText = await transcribeWhatsAppAudio(mediaId, accessToken);
+                                                } catch (err) {
+                                                    console.error("[agent] audio transcribe failed", err);
+                                                    userText = "[voice transcription failed]";
+                                                }
+                                            }
+                                        } else {
+                                            userText = messageBody; // passes image/document markers through
+                                        }
+
+                                        if (userText) {
+                                            const threadId = `THR-WA-${fromNumber.replace(/\D/g, "")}`;
+                                            // Ensure the thread exists (idempotent upsert).
+                                            await supabase.from("agent_threads").upsert({
+                                                id: threadId,
+                                                userId,
+                                                companyId: companyId === "ALL" ? null : companyId,
+                                                channel: "whatsapp",
+                                                title: `WhatsApp ${fromNumber}`,
+                                            }, { onConflict: "id" });
+
+                                            const result = await runAgentFromWhatsApp({
+                                                supabase,
+                                                threadId,
+                                                userId,
+                                                companyId,
+                                                userText,
+                                            });
+                                            await sendWhatsAppReply(fromNumber, result.replyText);
+                                            agentHandled = true;
+                                        }
+                                    }
+                                } catch (err) {
+                                    console.error("[agent] routing failed, falling through to legacy", err);
+                                }
+                                if (agentHandled) continue;
 
                                 console.log(`Received message from ${fromNumber} (${customerProfileName}): ${messageBody}`);
 

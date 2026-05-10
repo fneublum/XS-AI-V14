@@ -10,6 +10,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import * as XLSX from 'xlsx';
 import {
   Sparkles, Upload, Clipboard, FileText, Loader2, AlertCircle,
   X as XIcon, Check, RotateCcw, Send,
@@ -28,8 +29,20 @@ export interface AiUploadModalConfig<T> {
   description: string;
   /** Blank draft factory. Called on open and on Clear. */
   emptyDraft: () => T;
-  /** Converts the Gemini result into a draft. */
-  fromExtracted: (parsed: T) => T;
+  /**
+   * Converts the Gemini result into a draft. Receives the extracted
+   * data plus an optional `originalDocument` data URL when the input
+   * was a file/image — consumers that want to persist the original
+   * source document can spread it onto the draft here.
+   */
+  fromExtracted: (parsed: T, originalDocument?: string | null) => T;
+  /**
+   * Optional local parser for .xlsx / .xls inputs. When provided and
+   * the user picks a spreadsheet, we parse the workbook in-browser and
+   * skip the Gemini round-trip. Return `null` to fall back to Gemini.
+   * Receives the parsed workbook (xlsx) and should produce a draft.
+   */
+  xlsxParser?: (workbook: import('xlsx').WorkBook) => T | null;
   /** The extraction spec — prompt + normalizer. Passed to Gemini. */
   extractSpec: ExtractSpec<T>;
   /** Renders the review form. Returns the edited draft. */
@@ -76,12 +89,24 @@ export function AiUploadModal<T>({ open, onOpenChange, config }: Props<T>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const run = (input: ExtractInput, label: string) => {
+  const readFileAsDataUrl = (f: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ''));
+      reader.onerror = () => reject(reader.error ?? new Error('Read failed'));
+      reader.readAsDataURL(f);
+    });
+
+  const run = (
+    input: ExtractInput,
+    label: string,
+    originalDocument: string | null = null,
+  ) => {
     setSourceLabel(label);
     setDraft(config.emptyDraft());
     extract.mutate(input, {
       onSuccess: (parsed) => {
-        const next = config.fromExtracted(parsed);
+        const next = config.fromExtracted(parsed, originalDocument);
         setDraft(next);
         toast.push({
           kind: 'success',
@@ -99,8 +124,72 @@ export function AiUploadModal<T>({ open, onOpenChange, config }: Props<T>) {
     });
   };
 
+  const isXlsxFile = (f: File): boolean =>
+    /\.(xlsx|xls)$/i.test(f.name)
+    || /spreadsheet|excel/i.test(f.type);
+
+  const runXlsx = async (f: File, label: string) => {
+    if (!config.xlsxParser) return false;
+    setSourceLabel(label);
+    setDraft(config.emptyDraft());
+    extract.reset();
+    let originalDocument: string | null = null;
+    try {
+      originalDocument = await readFileAsDataUrl(f);
+    } catch {
+      // non-fatal — proceed without
+    }
+    try {
+      const buf = await f.arrayBuffer();
+      const workbook = XLSX.read(buf, { type: 'array' });
+      const parsed = config.xlsxParser(workbook);
+      if (!parsed) {
+        toast.push({
+          kind: 'warning',
+          title: 'No items found',
+          description: 'Falling back to AI extraction.',
+        });
+        return false;
+      }
+      const next = config.fromExtracted(parsed, originalDocument);
+      setDraft(next);
+      toast.push({
+        kind: 'success',
+        title: 'Extracted',
+        description: config.extractSummary?.(next) ?? 'Review the fields and Save.',
+      });
+      return true;
+    } catch (err) {
+      toast.push({
+        kind: 'error',
+        title: 'Spreadsheet parse failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+      return true; // surfaced — don't double-run via Gemini
+    }
+  };
+
   const onFilePicked = (f: File) => {
-    run({ kind: 'file', file: f }, `${f.name} · ${(f.size / 1024).toFixed(0)} KB`);
+    const label = `${f.name} · ${(f.size / 1024).toFixed(0)} KB`;
+    // XLSX path: parse locally if the consumer supplied a parser. We
+    // only fall through to Gemini when there's no parser configured or
+    // the parser returned null without explaining itself.
+    if (isXlsxFile(f) && config.xlsxParser) {
+      runXlsx(f, label).then(handled => {
+        if (!handled) {
+          readFileAsDataUrl(f)
+            .then((dataUrl) => run({ kind: 'file', file: f }, label, dataUrl))
+            .catch(() => run({ kind: 'file', file: f }, label, null));
+        }
+      });
+      return;
+    }
+    // Read the data URL alongside the extraction so consumers can
+    // persist the original source. Failure to read is non-fatal —
+    // extraction still proceeds.
+    readFileAsDataUrl(f)
+      .then((dataUrl) => run({ kind: 'file', file: f }, label, dataUrl))
+      .catch(() => run({ kind: 'file', file: f }, label, null));
   };
 
   const onDrop: React.DragEventHandler<HTMLDivElement> = (e) => {
@@ -233,14 +322,16 @@ export function AiUploadModal<T>({ open, onOpenChange, config }: Props<T>) {
                     Drop file, click to browse, or paste screenshot
                   </div>
                   <div className="text-[11.5px] text-slate-500">
-                    PDF · PNG · JPG — or just ⌘V a screenshot from your clipboard
+                    PDF · PNG · JPG{config.xlsxParser ? ' · XLSX · XLS' : ''} — or just ⌘V a screenshot from your clipboard
                   </div>
                 </>
               )}
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/pdf,image/png,image/jpeg"
+                accept={config.xlsxParser
+                  ? 'application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.xlsx,.xls'
+                  : 'application/pdf,image/png,image/jpeg'}
                 className="hidden"
                 onChange={e => {
                   const f = e.target.files?.[0];

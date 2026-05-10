@@ -16,6 +16,7 @@ export interface Payable {
   paymentTerms: string | null;
   totalAmount: number;
   currency: string;
+  qbStatus: string | null;
   createdAt: string;
 }
 
@@ -28,6 +29,7 @@ interface Raw {
   paymentTerms: string | null;
   totalAmount: number | string | null;
   currency: string | null;
+  qb_status: string | null;
   createdAt: string | null;
 }
 
@@ -45,7 +47,7 @@ export function usePayables(search?: string) {
       const supabase = getSupabaseClient();
       let q = scopeByCompany(
         supabase.from('invoices_suppliers')
-          .select('id, invoiceNumber, shipperName, soldTo, invoiceDate, paymentTerms, totalAmount, currency, createdAt')
+          .select('id, invoiceNumber, shipperName, soldTo, invoiceDate, paymentTerms, totalAmount, currency, qb_status, createdAt')
           .order('invoiceDate', { ascending: false, nullsFirst: false })
           .limit(200),
         currentCompanyId,
@@ -64,6 +66,7 @@ export function usePayables(search?: string) {
         paymentTerms: r.paymentTerms,
         totalAmount: Number(r.totalAmount) || 0,
         currency: r.currency ?? 'USD',
+        qbStatus: r.qb_status ?? null,
         createdAt: r.createdAt ?? '',
       }));
     },

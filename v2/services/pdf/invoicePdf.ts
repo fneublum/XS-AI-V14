@@ -98,23 +98,37 @@ export function generateInvoicePdf(
   doc.setTextColor(cyanColor);
   doc.text('INVOICE', 14, 54);
 
-  // ─── BILL TO / SHIP TO / INVOICE INFO ────────────────────────
+  // ─── CONSIGNEE (bill to) / NOTIFY (ship to) / INVOICE INFO ──
+  //
+  // Drawer model:
+  //   • "Consignee (Sold to)" → inv.soldTo  — the consignee / bill-to
+  //   • "Notify (Bill to)"    → inv.billToName — the notify / ship-to
+  //
+  // Customer rows are matched case- and whitespace-tolerant because
+  // the DB sometimes carries trailing whitespace on the name.
+  const normalize = (s: string) => (s ?? '').trim().toLowerCase();
+  const findCust = (name: string) => {
+    const key = normalize(name);
+    if (!key) return undefined;
+    return ctx.customers.find(c => normalize(c.name) === key);
+  };
   let y = 68;
-  const billToName = inv.billToName || inv.soldTo || '';
-  const customer = ctx.customers.find(
-    c => c.name === billToName || c.id === inv.customerId,
-  );
-  let customerAddress = '';
-  if (customer) {
-    customerAddress = [customer.location, customer.city, customer.state, customer.zip, customer.country]
-      .filter(Boolean).join(', ');
-  }
+  const consigneeName = inv.soldTo || inv.billToName || inv.consignee || '';
+  const notifyName    = inv.billToName || inv.consignee || consigneeName;
+  const consigneeCust = findCust(consigneeName)
+    ?? ctx.customers.find(c => c.id === inv.customerId);
+  const notifyCust = findCust(notifyName) ?? consigneeCust;
+  const fmtAddr = (c: typeof consigneeCust) => c
+    ? [c.location, c.city, c.state, c.zip, c.country].filter(Boolean).join(', ')
+    : '';
+  const consigneeAddress = fmtAddr(consigneeCust);
+  const notifyAddress    = fmtAddr(notifyCust);
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(darkGray);
-  doc.text('BILL TO', 14, y);
-  doc.text('SHIP TO', 75, y);
+  doc.text('CONSIGNEE (bill to)', 14, y);
+  doc.text('NOTIFY (ship to)', 75, y);
 
   const lineHeight = 6;
   doc.setTextColor(darkGray);
@@ -141,59 +155,51 @@ export function generateInvoicePdf(
   doc.setFont('helvetica', 'normal');
   doc.text(inv.bookingNumber || inv.transportRef || '-', 175, y);
 
-  // Bill To content
+  // Consignee (bill to) content
   const contentLineHeight = 4;
   y = 74;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  let billToY = y;
+  let consigneeY = y;
 
   doc.setFont('helvetica', 'bold');
-  const billToNameLines = doc.splitTextToSize(billToName, 55);
-  doc.text(billToNameLines, 14, billToY);
-  billToY += billToNameLines.length * contentLineHeight;
+  const consigneeLines = doc.splitTextToSize(consigneeName, 55);
+  doc.text(consigneeLines, 14, consigneeY);
+  consigneeY += consigneeLines.length * contentLineHeight;
 
   doc.setFont('helvetica', 'normal');
-  if (customerAddress) {
-    const addrLines = doc.splitTextToSize(customerAddress, 55);
-    doc.text(addrLines, 14, billToY);
-    billToY += addrLines.length * contentLineHeight;
+  if (consigneeAddress) {
+    const addrLines = doc.splitTextToSize(consigneeAddress, 55);
+    doc.text(addrLines, 14, consigneeY);
+    consigneeY += addrLines.length * contentLineHeight;
   }
-  if (customer?.email) {
-    doc.text(customer.email, 14, billToY);
-    billToY += contentLineHeight;
+  if (consigneeCust?.email) {
+    doc.text(consigneeCust.email, 14, consigneeY);
+    consigneeY += contentLineHeight;
   }
-  if (customer?.taxId) {
-    doc.text(`CNPJ : ${customer.taxId}`, 14, billToY);
-  }
-
-  // Ship To content
-  let shipToY = y;
-  const shipToName = inv.consignee || billToName;
-  const shipToCustomer = ctx.customers.find(c => c.name === shipToName) || customer;
-  let shipToAddress = '';
-  if (shipToCustomer) {
-    shipToAddress = [shipToCustomer.location, shipToCustomer.city, shipToCustomer.state, shipToCustomer.zip, shipToCustomer.country]
-      .filter(Boolean).join(', ');
+  if (consigneeCust?.taxId) {
+    doc.text(`CNPJ : ${consigneeCust.taxId}`, 14, consigneeY);
   }
 
+  // Notify (ship to) content
+  let notifyY = y;
   doc.setFont('helvetica', 'bold');
-  const shipToNameLines = doc.splitTextToSize(shipToName, 55);
-  doc.text(shipToNameLines, 75, shipToY);
-  shipToY += shipToNameLines.length * contentLineHeight;
+  const notifyLines = doc.splitTextToSize(notifyName, 55);
+  doc.text(notifyLines, 75, notifyY);
+  notifyY += notifyLines.length * contentLineHeight;
 
   doc.setFont('helvetica', 'normal');
-  if (shipToAddress) {
-    const addrLines = doc.splitTextToSize(shipToAddress, 55);
-    doc.text(addrLines, 75, shipToY);
-    shipToY += addrLines.length * contentLineHeight;
+  if (notifyAddress) {
+    const addrLines = doc.splitTextToSize(notifyAddress, 55);
+    doc.text(addrLines, 75, notifyY);
+    notifyY += addrLines.length * contentLineHeight;
   }
-  if (shipToCustomer?.email) {
-    doc.text(shipToCustomer.email, 75, shipToY);
-    shipToY += contentLineHeight;
+  if (notifyCust?.email) {
+    doc.text(notifyCust.email, 75, notifyY);
+    notifyY += contentLineHeight;
   }
-  if (shipToCustomer?.taxId) {
-    doc.text(`CNPJ : ${shipToCustomer.taxId}`, 75, shipToY);
+  if (notifyCust?.taxId) {
+    doc.text(`CNPJ : ${notifyCust.taxId}`, 75, notifyY);
   }
 
   // ─── TERMS / INCOTERM / POD ──────────────────────────────────
@@ -228,7 +234,7 @@ export function generateInvoicePdf(
   const items = parseItems(inv.items);
 
   const tableHead = [[
-    'DESCRIPTION', 'HS CODE', 'QTY (LBS/KG)', 'UNIT PRICE ($/LB - $/KG)', 'AMOUNT US$',
+    'DESCRIPTION', 'HS CODE', 'QTY (LBS/KG)', 'Rate\n($/LB - $/KG)', 'AMOUNT US$',
   ]];
 
   // Consolidate items by HS code + description so rows merge.
@@ -300,12 +306,45 @@ export function generateInvoicePdf(
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(darkGray);
-  const totalNetKg = consolidated.reduce((s, ci) => s + ci.netKg, 0);
-  const totalGrossKg = items.reduce((s: number, item: any) => s + (item.grossKg || (item.grossLbs || 0) * 0.453592), 0);
-  const totalVolumes = items.reduce((s: number, item: any) => s + (item.volumes || 0), 0);
-  doc.text(`Net weight : ${totalNetKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kgs`, 14, finalY);
-  doc.text(`Gross Weight : ${totalGrossKg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kgs`, 14, finalY + 5);
-  doc.text(`Total volumes : ${totalVolumes}`, 14, finalY + 10);
+  const parseNum = (v: unknown): number => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+    if (typeof v === 'string') {
+      const n = Number(v.replace(/[^\d.\-]/g, ''));
+      return Number.isFinite(n) ? n : 0;
+    }
+    return 0;
+  };
+  // Always use the row-level totals saved on the invoice (drawer's
+  // GROSS WEIGHT / NET WEIGHT / TOTAL VOLUMES fields) when present.
+  // The user has explicitly typed those numbers — line items can drift
+  // when they're imported from OCR or copied between PLs/invoices, so
+  // item-level sums are only a fallback when nothing was saved.
+  const itemsNetKg = consolidated.reduce((s, ci) => s + ci.netKg, 0);
+  const itemsGrossKg = items.reduce((s: number, item: any) => s + (item.grossKg || (item.grossLbs || 0) * 0.453592), 0);
+  const itemsVolumes = items.reduce((s: number, item: any) => s + (item.volumes || 0), 0);
+  // Also read from `containers` JSON — recent invoices persist
+  // per-container `volumes` there (drawer edits / OCR).
+  const parseContainers = (raw: unknown): any[] => {
+    try {
+      if (typeof raw === 'string') return JSON.parse(raw);
+      if (Array.isArray(raw)) return raw;
+      return [];
+    } catch { return []; }
+  };
+  const containerList = parseContainers((inv as any).containers);
+  const containerVolumes = containerList.reduce((s: number, c: any) => s + (Number(c?.volumes) || 0), 0);
+  const invNetKg   = parseNum((inv as any).netWeight);
+  const invGrossKg = parseNum((inv as any).grossWeight);
+  const invVolumes = parseNum((inv as any).totalVolumes ?? (inv as any).volumes);
+  const totalNetKg   = invNetKg   > 0 ? invNetKg   : itemsNetKg;
+  const totalGrossKg = invGrossKg > 0 ? invGrossKg : itemsGrossKg;
+  const totalVolumes = invVolumes > 0
+    ? invVolumes
+    : (containerVolumes > 0 ? containerVolumes : itemsVolumes);
+  const fmt = (n: number) => n > 0 ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+  doc.text(`Net weight : ${fmt(totalNetKg)} Kgs`, 14, finalY);
+  doc.text(`Gross Weight : ${fmt(totalGrossKg)} Kgs`, 14, finalY + 5);
+  doc.text(`Total volumes : ${totalVolumes > 0 ? totalVolumes : '-'}`, 14, finalY + 10);
 
   // ─── CONTAINERS ─────────────────────────────────────────────
   let savedContainers: any[] = [];
@@ -319,17 +358,26 @@ export function generateInvoicePdf(
       const contItems = items.filter((i: any) => i.containerNo === cont.container);
       const contVolumes = contItems.reduce((s: number, i: any) => s + (i.volumes || 0), 0);
       const contAmount  = contItems.reduce((s: number, i: any) => s + (i.amount || 0), 0);
+      // Prefer the container's own persisted `volumes` field when
+      // present — items often don't carry `containerNo`/`volumes`
+      // after older drawer saves stripped those fields.
+      const rowVolumes = contVolumes > 0 ? contVolumes : (Number(cont?.volumes) || 0);
       containerRows.push({
         container: cont.container || '-',
         seal: cont.seal || '',
-        volumes: contVolumes,
+        volumes: rowVolumes,
         amount: contAmount,
       });
     });
     const assigned = items.filter((i: any) => savedContainers.some((c: any) => c.container === i.containerNo));
     if (assigned.length === 0 && items.length > 0 && containerRows.length > 0) {
-      containerRows[0].volumes = items.reduce((s: number, i: any) => s + (i.volumes || 0), 0);
-      containerRows[0].amount  = items.reduce((s: number, i: any) => s + (i.amount || 0), 0);
+      // Only fall back to the items-level total on row 0 if no
+      // per-container volumes were supplied explicitly.
+      const anyExplicit = containerRows.some(r => r.volumes > 0);
+      if (!anyExplicit) {
+        containerRows[0].volumes = items.reduce((s: number, i: any) => s + (i.volumes || 0), 0);
+      }
+      containerRows[0].amount = items.reduce((s: number, i: any) => s + (i.amount || 0), 0);
     }
   }
 
@@ -416,11 +464,50 @@ export function generateInvoicePdf(
     finalY = drawBank(sectionY) + 5;
   }
 
+  // Stamp — renders whenever `ctx.stampUrl` is available. Positioned
+  // just below the Bank Details / Containers block at the right edge.
+  if (ctx.stampUrl) {
+    try {
+      const stampSize = 30;
+      const stampX = 130;
+      const stampY = Math.min(finalY + 2, 255);
+      let fmt = 'PNG';
+      const m = ctx.stampUrl.match(/^data:image\/(\w+);/i);
+      if (m) { fmt = m[1].toUpperCase(); if (fmt === 'JPG') fmt = 'JPEG'; }
+      doc.addImage(ctx.stampUrl, fmt, stampX, stampY, stampSize, stampSize);
+      finalY = Math.max(finalY, stampY + stampSize + 5);
+    } catch (e) {
+      console.warn('[Invoice PDF] Could not add stamp:', e);
+    }
+  }
+
   // ─── ADDITIONAL INFORMATION ─────────────────────────────────
   const countryOfAcquisition = company?.country || 'USA';
-  const poaCode = inv.poa || '';
-  const originPort = poaCode ? ctx.ports.find(p => p.code === poaCode || p.name === poaCode) : null;
-  const countryOfOrigin = originPort?.country || poaCode || '';
+  // POA priority: the invoice's own poa, else the linked booking's
+  // pol (so PLs that haven't manually set POA still yield the right
+  // origin country).
+  const linkedBooking = inv.bookingNumber
+    ? ctx.bookings.find(b =>
+        (b as { bookingNumber?: string | null }).bookingNumber === inv.bookingNumber)
+    : null;
+  const poaCode = ((inv.poa || '') || (linkedBooking as { pol?: string | null } | null)?.pol || '').toString().trim();
+  // Match by code (exact, case-insensitive) or by name so either a
+  // 5-letter UN/LOCODE ("USCHS") or a human name ("Charleston")
+  // resolves to the port row. Fall back to an em-dash when no match —
+  // showing the raw code as if it were a country name ("USCHS") is
+  // the wrong thing.
+  const originPort = poaCode
+    ? ctx.ports.find(p =>
+        p.code?.toUpperCase() === poaCode.toUpperCase() ||
+        p.name?.toLowerCase() === poaCode.toLowerCase(),
+      )
+    : null;
+  // Fallback order: resolved-port country → shipper/company country →
+  // literal USA. For domestic EC4 shipments the shipper is always the
+  // origin, so even a blank POA should never render "-".
+  const countryOfOrigin = originPort?.country
+    ?? company?.country
+    ?? 'USA';
 
   let memoY = finalY + 5;
   if (memoY > 270) { doc.addPage(); memoY = 20; }
@@ -470,17 +557,7 @@ export function generateInvoicePdf(
 
   finalY = memoY;
 
-  // EC4 stamp in bottom-right.
-  if (ctx.stampUrl && companyName.toUpperCase().includes('EC4')) {
-    try {
-      const stampSize = 35;
-      const stampX = 196 - stampSize;
-      const stampY = Math.min(finalY + 5, 255);
-      doc.addImage(ctx.stampUrl, 'JPEG', stampX, stampY, stampSize, stampSize);
-    } catch (e) {
-      console.warn('[Invoice PDF] Could not add stamp:', e);
-    }
-  }
+  // (Stamp rendered directly below the Bank Details block above.)
 
   if (autoDownload) {
     doc.save(`Invoice_${inv.invoiceNumber || 'unknown'}.pdf`);

@@ -16,6 +16,7 @@ import QuickAddModal from '../components/QuickAddModal';
 import { FormattedInput } from '../components/UnitInputs';
 import PDFPreviewModal from '../components/PDFPreviewModal';
 import { sendEmail } from '../services/emailService';
+import { resolveRecipients, joinRecipients } from '../v2/services/recipients';
 import { PAYMENT_TERM_OPTIONS } from '../constants';
 
 // ============================================================================
@@ -1652,87 +1653,65 @@ const PLInvoiceEngine: React.FC<PLInvoiceEngineProps> = ({
         setEmailStatus({ show: false, success: false, message: '' });
 
         try {
-            // Get customer / bill-to emails
-            const customer = customers.find(c => c.name === (inv.billToName || inv.soldTo));
-            const consigneeCustomer = customers.find(c => c.name === (inv.consignee || inv.shipTo));
-            const customerForEmail = consigneeCustomer || customer;
+            // BR mode: legacy lookup used the linked BL's agentName
+            // (not the booking's) so the keyword is a single name
+            // fragment; standard mode uses booking→agentName.
+            const brLinkedBL = brMode
+                ? billOfLadings.find(bl => bl.blNumber === ((inv as any).bl || inv.transportRef || (inv as any).bookingNumber))
+                : null;
+            const bookingNumberForLookup = brMode
+                ? brLinkedBL?.agentName ?? null
+                : ((inv as any).bookingNumber || inv.transportRef || null);
 
-            let toEmails = '';
-            let ccEmail = '';
+            // Standard mode lets the resolver do the booking→agent
+            // lookup. BR mode's lookup is against a BL, not a booking,
+            // so we pass a synthetic bookingNumber that the resolver
+            // will look up against `bookings.bookingNumber` — which
+            // won't match, but we fall back to a direct cargo_agents
+            // lookup below. Keep the legacy BR behavior byte-for-byte.
+            const recipients = brMode
+                ? await resolveRecipients({
+                    actors: [{
+                        customerName: (inv.consignee || inv.shipTo) || (inv.billToName || inv.soldTo) || null,
+                    }],
+                    includeBroker: true,
+                    brMode: true,
+                    customers,
+                  })
+                : await resolveRecipients({
+                    actors: [
+                        { customerName: inv.billToName || inv.soldTo || null, role: 'primary' },
+                        { customerName: inv.consignee || inv.shipTo || null, role: 'secondary' },
+                    ],
+                    bookingNumber: bookingNumberForLookup,
+                    includeBroker: true,
+                    customers,
+                  });
 
-            if (brMode) {
-                // BR MODE: TO = customer email, CC = cargo agent + broker
-                toEmails = [customerForEmail?.email, customerForEmail?.email2].filter(Boolean).join('; ');
-                const ccParts: string[] = [];
-                // Add broker email
-                if (customerForEmail?.brokerEmail) ccParts.push(customerForEmail.brokerEmail);
-                // Look up cargo agent email from DB
+            // BR mode: replicate v1's direct cargo_agents lookup off
+            // the linked BL's agentName (not via bookings table).
+            if (brMode && brLinkedBL?.agentName) {
                 try {
-                    const linkedBL = billOfLadings.find(bl => bl.blNumber === ((inv as any).bl || inv.transportRef || (inv as any).bookingNumber));
-                    const agentName = linkedBL?.agentName;
-                    if (agentName) {
-                        const client = getSupabaseClient();
-                        if (client) {
-                            const { data: agentData } = await client.from('cargo_agents').select('email, email2').ilike('name', `%${agentName}%`).limit(1);
-                            if (agentData && agentData.length > 0) {
-                                if (agentData[0].email) ccParts.push(agentData[0].email);
-                                if (agentData[0].email2) ccParts.push(agentData[0].email2);
-                            }
+                    const client = getSupabaseClient();
+                    if (client) {
+                        const { data: agentData } = await client
+                            .from('cargo_agents')
+                            .select('email, email2')
+                            .ilike('name', `%${brLinkedBL.agentName}%`)
+                            .limit(1);
+                        if (agentData && agentData.length > 0) {
+                            if (agentData[0].email)  recipients.cc.push(agentData[0].email);
+                            if (agentData[0].email2) recipients.cc.push(agentData[0].email2);
                         }
                     }
                 } catch (e) { console.warn('[Email][BR] Failed to lookup cargo agent email:', e); }
-                ccEmail = ccParts.filter(Boolean).join('; ');
-            } else {
-                // STANDARD MODE: Merge emails from BOTH Bill To AND Consignee/Customer companies
-                const allToEmails = new Set<string>();
-                const allCcEmails = new Set<string>();
-                // Collect from Bill To company
-                if (customer?.email) allToEmails.add(customer.email);
-                if (customer?.email2) allToEmails.add(customer.email2);
-                if (customer?.brokerEmail) allCcEmails.add(customer.brokerEmail);
-                // Collect from Consignee/Customer company (if different)
-                if (consigneeCustomer && consigneeCustomer.id !== customer?.id) {
-                    if (consigneeCustomer.email) allToEmails.add(consigneeCustomer.email);
-                    if (consigneeCustomer.email2) allToEmails.add(consigneeCustomer.email2);
-                    if (consigneeCustomer.brokerEmail) allCcEmails.add(consigneeCustomer.brokerEmail);
-                }
-                // Look up cargo agent email via booking (direct DB query + flexible matching)
-                try {
-                    const bookingRef = (inv as any).bookingNumber || inv.transportRef;
-                    if (bookingRef) {
-                        const client = getSupabaseClient();
-                        if (client) {
-                            // Query booking directly from DB to get agentName
-                            const { data: bookingData } = await client.from('bookings').select('agentName').eq('bookingNumber', bookingRef).limit(1);
-                            const agentName = bookingData?.[0]?.agentName;
-                            console.log('[Email] Booking lookup:', bookingRef, '→ agentName:', agentName);
-                            if (agentName) {
-                                // Extract significant keywords from agent name (skip common words)
-                                const skipWords = new Set(['inc', 'llc', 'ltd', 'co', 'corp', 'solutions', 'logistics', 'shipping', 'the', 'and', 'of']);
-                                const keywords = agentName.split(/[\s\/,]+/).filter((w: string) => w.length > 2 && !skipWords.has(w.toLowerCase()));
-                                console.log('[Email] Agent keywords:', keywords);
-                                
-                                // Try each keyword with ilike
-                                let foundAgent = false;
-                                for (const keyword of keywords) {
-                                    const { data: agentData } = await client.from('cargo_agents').select('email, email2, name').ilike('name', `%${keyword}%`).limit(1);
-                                    console.log('[Email] Trying keyword:', keyword, '→', agentData);
-                                    if (agentData && agentData.length > 0) {
-                                        if (agentData[0].email) allCcEmails.add(agentData[0].email);
-                                        if (agentData[0].email2) allCcEmails.add(agentData[0].email2);
-                                        foundAgent = true;
-                                        console.log('[Email] ✓ Matched cargo agent:', agentData[0].name, '→ emails:', agentData[0].email, agentData[0].email2);
-                                        break;
-                                    }
-                                }
-                                if (!foundAgent) console.warn('[Email] No cargo agent matched for:', agentName, 'keywords:', keywords);
-                            }
-                        }
-                    }
-                } catch (e) { console.warn('[Email] Failed to lookup cargo agent email:', e); }
-                toEmails = [...allToEmails].join('; ');
-                ccEmail = [...allCcEmails].join('; ');
             }
+
+            const joined = joinRecipients(recipients);
+            const toEmails = joined.to;
+            const ccEmail  = joined.cc;
+            // Used by the email body greeting.
+            const customer = customers.find(c => c.name === (inv.billToName || inv.soldTo));
 
             console.log('[Email] Preparing email draft for', inv.invoiceNumber, brMode ? '(BR MODE)' : '', 'TO:', toEmails, 'CC:', ccEmail);
 

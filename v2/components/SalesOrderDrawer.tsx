@@ -13,7 +13,9 @@ import { SalesOrder } from '../queries/useSalesOrders';
 import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
 import { LineItemsEditor, LineItem, computeSubtotal, sanitizeItems } from './LineItemsEditor';
 import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
+import { resolveRecipientsSync } from '../services/recipients';
 import { SupabaseSelectField } from './SupabaseSelectField';
+import { nextSONumber } from '../lib/soNumber';
 import type { EditorMode } from '../providers/EditorProvider';
 
 const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'REJECTED', 'FULFILLED', 'BOOKED'];
@@ -141,6 +143,26 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
     setApprovedBy(order.approvedBy ?? '');
   }, [order?.id, mode]);
 
+  // Auto-fill the SO# on Create — pulls the next sequential number
+  // from the sales_orders table (last existing number + 1, format
+  // `SO-NNNNN`). Runs only once when the drawer opens in create mode
+  // with an empty orderNumber so a user-typed override sticks.
+  useEffect(() => {
+    if (mode !== 'create') return;
+    if (orderNumber.trim() !== '') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const next = await nextSONumber();
+        if (!cancelled) setOrderNumber(prev => (prev.trim() === '' ? next : prev));
+      } catch { /* ignore — user can type their own */ }
+    })();
+    return () => { cancelled = true; };
+    // Intentional: only seed when the drawer first switches into
+    // create mode — a re-render shouldn't re-fetch and overwrite.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
   const availableCompanies = companies.data ?? [];
   const availableCustomers = customers.data ?? [];
   const isSystem = currentCompanyId === 'ALL';
@@ -240,9 +262,13 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
 
   const sendEmail = () => {
     if (!order && mode !== 'edit') return;
-    const selectedCustomer = availableCustomers.find(c => c.id === customerId);
+    const r = resolveRecipientsSync({
+      actors: [{ customerId, customerName }],
+      customers: availableCustomers,
+    });
     setEmailDraft({
-      to: selectedCustomer?.email ?? '',
+      to: r.to.join('; '),
+      cc: r.cc.length ? r.cc.join('; ') : undefined,
       subject: `Sales Order ${orderNumber} — ${customerName}`,
       body: [
         `Hello ${customerName},`,
@@ -329,9 +355,27 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
             )}
             <div className="grid grid-cols-3 gap-2">
               <FormField>
-                <Label className={labelClass}>Order # <span className="text-red-400 ml-1">*</span></Label>
-                <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)}
-                  className={inputClass + ' font-mono tabular-nums'} placeholder="SO-1234" />
+                <Label className={labelClass}>
+                  Order # <span className="text-red-400 ml-1">*</span>
+                  {mode === 'create' && (
+                    <span className="ml-2 text-[10px] text-slate-600 font-normal normal-case tracking-normal">auto-generated</span>
+                  )}
+                </Label>
+                {mode === 'create' ? (
+                  // Read-only in create mode — the SO# must follow the
+                  // canonical `SO-NNNNN` format (last sequential + 1).
+                  // Users used to be able to type free-text here, which
+                  // is how stray formats like "SO-FF-002435" got into
+                  // the database.
+                  <Input
+                    value={orderNumber || 'Generating…'}
+                    readOnly
+                    className={inputClass + ' font-mono tabular-nums opacity-80 cursor-not-allowed'}
+                  />
+                ) : (
+                  <Input value={orderNumber} onChange={e => setOrderNumber(e.target.value)}
+                    className={inputClass + ' font-mono tabular-nums'} placeholder="SO-12345" />
+                )}
               </FormField>
               <FormField>
                 <Label className={labelClass}>Order date</Label>

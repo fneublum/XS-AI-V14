@@ -410,10 +410,13 @@ const WhatsAppChatWidget: React.FC<Props> = ({ currentCompanyId, onOcrUpload }) 
                     </div>
                 </div>
 
-                <div className="flex-1 flex flex-col items-center justify-center p-6">
-                    <Mail size={32} className="mx-auto mb-3 text-slate-300" />
-                    <p className="text-sm text-slate-500 text-center">No accounts connected yet.</p>
-                    <p className="text-xs text-slate-400 mt-1 mb-6 text-center">Use the sign-in buttons below to connect your email.</p>
+                {/* Scrollable body — at ~420px column width the two
+                 *  provider cards don't fit vertically alongside the
+                 *  heading, so give this surface its own y-scroll. */}
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 flex flex-col items-center">
+                    <Mail size={32} className="mx-auto mb-3 text-slate-300 shrink-0" />
+                    <p className="text-sm text-slate-500 text-center shrink-0">No accounts connected yet.</p>
+                    <p className="text-xs text-slate-400 mt-1 mb-6 text-center shrink-0">Use the sign-in buttons below to connect your email.</p>
 
                     <div className="w-full space-y-4">
                         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col items-center text-center space-y-3">
@@ -706,28 +709,6 @@ const WhatsAppChatWidget: React.FC<Props> = ({ currentCompanyId, onOcrUpload }) 
                 ))}
             </div>
 
-            {/* OCR Drop Zone */}
-            {onOcrUpload && (
-                <div
-                    className={`shrink-0 mx-2 mb-2 border-2 border-dashed rounded-xl p-4 flex items-center justify-center gap-2 cursor-pointer transition-all ${dragOver
-                        ? 'border-orange-400 bg-orange-100'
-                        : 'border-orange-200 bg-orange-50 hover:border-orange-300 hover:bg-orange-100/70'
-                        }`}
-                    onClick={() => ocrFileRef.current?.click()}
-                    onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                    onDragLeave={() => setDragOver(false)}
-                    onDrop={(e) => {
-                        e.preventDefault(); setDragOver(false);
-                        const f = e.dataTransfer.files?.[0];
-                        if (f) onOcrUpload(f);
-                    }}
-                >
-                    <input type="file" ref={ocrFileRef} className="hidden" accept="application/pdf,image/jpeg,image/png,image/webp"
-                        onChange={(e) => { if (e.target.files?.[0]) { onOcrUpload(e.target.files[0]); e.target.value = ''; } }} />
-                    <UploadCloud size={16} className={dragOver ? 'text-orange-600' : 'text-orange-400'} />
-                    <span className={`text-[11px] font-medium ${dragOver ? 'text-orange-700' : 'text-orange-500'}`}>Drop document for OCR</span>
-                </div>
-            )}
         </div>
     );
 };

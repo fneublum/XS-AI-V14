@@ -9,6 +9,7 @@ import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { RowActions } from '../components/RowActions';
 import { useRowDelete } from '../components/useRowDelete';
 import { EmailComposeDrawer, EmailDraft } from '../components/EmailComposeDrawer';
+import { PurchaseOrderPreviewDialog } from '../components/PurchaseOrderPreviewDialog';
 import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { usePurchaseOrders, PurchaseOrder } from '../queries/usePurchaseOrders';
@@ -151,6 +152,7 @@ const PurchaseOrdersV2: React.FC = () => {
   const { currentCompanyId } = useCompany();
   const [search, setSearch] = useState('');
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
+  const [previewPO, setPreviewPO] = useState<PurchaseOrder | null>(null);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
   const { openPurchaseOrder, openPurchaseOrderCreate } = useEditor();
   const pos = usePurchaseOrders(search);
@@ -168,11 +170,23 @@ const PurchaseOrdersV2: React.FC = () => {
     rowLabel: r => r.id.slice(0, 12),
   });
 
+  const duplicatePO = (row: PurchaseOrder) => {
+    const { id: _id, ...rest } = row;
+    openPurchaseOrderCreate({
+      ...rest,
+      status: 'PENDING',
+      orderDate: new Date().toISOString().slice(0, 10),
+    });
+  };
+
   const rowActions = (row: PurchaseOrder) => (
     <RowActions
       onView={() => openPurchaseOrder(row)}
       onEdit={() => openPurchaseOrder(row)}
+      onPdf={() => setPreviewPO(row)}
+      pdfLabel="View / download PO"
       onEmail={() => setEmailDraft(buildEmailDraft(row))}
+      onDuplicate={() => duplicatePO(row)}
       onDelete={() => confirmDelete(row)}
     />
   );
@@ -193,7 +207,7 @@ const PurchaseOrdersV2: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={openPurchaseOrderCreate}
+          <Button size="sm" onClick={() => openPurchaseOrderCreate()}
             className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
             + New PO
           </Button>
@@ -262,6 +276,11 @@ const PurchaseOrdersV2: React.FC = () => {
       </Card>
 
       {deleteDialog}
+      <PurchaseOrderPreviewDialog
+        po={previewPO}
+        onOpenChange={(o) => !o && setPreviewPO(null)}
+        onEmail={(po) => setEmailDraft(buildEmailDraft(po))}
+      />
       <EmailComposeDrawer
         open={!!emailDraft}
         onOpenChange={(o) => !o && setEmailDraft(null)}

@@ -574,6 +574,56 @@ async function syncInvoice(req: Request): Promise<Response> {
     }
 }
 
+// ── Void an invoice in QuickBooks ────────────────────────────
+//
+// QBO's void flow: fetch the invoice to get its current SyncToken,
+// then POST to `/invoice?operation=void` with { Id, SyncToken }. QBO
+// returns the voided invoice (status=Voided, Balance=0).
+
+async function voidInvoice(req: Request): Promise<Response> {
+    const { companyId, qbInvoiceId } = await req.json();
+    if (!companyId || !qbInvoiceId) {
+        return new Response(
+            JSON.stringify({ error: "companyId and qbInvoiceId are required" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+
+    try {
+        const { accessToken, realmId } = await getValidToken(companyId);
+
+        const current = await qboRequest("GET", `/${realmId}/invoice/${qbInvoiceId}`, accessToken);
+        const syncToken = current?.Invoice?.SyncToken;
+        if (syncToken === undefined || syncToken === null) {
+            throw new Error(`Invoice ${qbInvoiceId} not found in QuickBooks`);
+        }
+
+        const result = await qboRequest(
+            "POST",
+            `/${realmId}/invoice?operation=void`,
+            accessToken,
+            { Id: qbInvoiceId, SyncToken: String(syncToken) },
+        );
+
+        return new Response(
+            JSON.stringify({
+                success: true,
+                qbEntityId: qbInvoiceId,
+                qbEntityType: "Invoice",
+                status: result?.Invoice?.PrivateNote || "Voided",
+                voidedAt: new Date().toISOString(),
+            }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    } catch (err: any) {
+        console.error("voidInvoice error:", err);
+        return new Response(
+            JSON.stringify({ error: err.message || "Failed to void invoice" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+}
+
 // ── Check sync status for a single invoice ───────────────────
 
 async function checkSyncStatus(req: Request): Promise<Response> {
@@ -1209,6 +1259,8 @@ Deno.serve(async (req: Request) => {
                 return await syncBill(req);
             case "sync-invoice":
                 return await syncInvoice(req);
+            case "void-invoice":
+                return await voidInvoice(req);
             case "sync-status":
                 return await checkSyncStatus(req);
             case "batch-status":

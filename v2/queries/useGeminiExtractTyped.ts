@@ -17,7 +17,7 @@ export interface ExtractSpec<T> {
   prompt: string;
   /** Convert the parsed JSON into the target draft shape. */
   normalize: (parsed: Record<string, unknown>) => T;
-  /** Gemini model id. Defaults to 'gemini-2.0-flash'. */
+  /** Gemini model id. Defaults to 'gemini-2.5-flash'. */
   model?: string;
 }
 
@@ -57,7 +57,7 @@ export function useGeminiExtractTyped<T>(spec: ExtractSpec<T>) {
       }
 
       const result = await ai.models.generateContent({
-        model: spec.model ?? 'gemini-2.0-flash',
+        model: spec.model ?? 'gemini-2.5-flash',
         contents: [{ role: 'user', parts }],
         config: { responseMimeType: 'application/json', temperature: 0 },
       });

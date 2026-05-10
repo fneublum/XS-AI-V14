@@ -108,6 +108,7 @@ export interface Customer {
   contactPerson: string;
   email: string;
   email2?: string;
+  email3?: string;
   phone?: string;
   location?: string;
   city?: string;
@@ -872,4 +873,83 @@ export interface QBConnectionStatus {
   realmId?: string;
   companyName?: string;
   lastRefreshed?: string;
+}
+
+// ── AI Sales Agent ────────────────────────────────────────────
+
+export type ProspectStage = 'new' | 'engaged' | 'qualified' | 'converted' | 'dropped';
+
+export interface Prospect {
+  id: string;
+  companyId: string;
+  name: string;
+  companyName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  country?: string | null;
+  source?: string | null;
+  stage: ProspectStage;
+  notes?: string | null;
+  assignedTo?: string | null;
+  createdAt: string;
+}
+
+export interface AiAgentIdentity {
+  id: string;
+  companyId: string;
+  role: 'sales' | 'support' | 'logistics';
+  displayName: string;
+  emailAddress: string;
+  whatsappSender: string;
+  signature?: string | null;
+  createdAt: string;
+}
+
+export type SalesProposalAudience = 'sales_rep' | 'customer' | 'prospect';
+export type SalesProposalChannel = 'email' | 'whatsapp' | 'both';
+export type SalesProposalStatus =
+  | 'draft'
+  | 'pending_approval'
+  | 'approved'
+  | 'sending'
+  | 'sent'
+  | 'failed'
+  | 'dismissed';
+export type SalesProposalMode = 'auto' | 'review';
+
+export interface AiSalesProposalLineItem {
+  productName: string;
+  customerDescription?: string | null;
+  quantity?: number | null;
+  unitPrice?: number | null;
+  total?: number | null;
+}
+
+export interface AiSalesProposal {
+  id: string;
+  companyId: string;
+  audience: SalesProposalAudience;
+  customerId?: string | null;
+  prospectId?: string | null;
+  salesRepId?: string | null;
+  recipientName: string;
+  recipientEmail?: string | null;
+  recipientPhone?: string | null;
+  channel: SalesProposalChannel;
+  status: SalesProposalStatus;
+  mode: SalesProposalMode;
+  intent: string;
+  subject?: string | null;
+  body?: string | null;
+  whatsappPreview?: string | null;
+  pdfUrl?: string | null;
+  reasoning?: string | null;
+  items?: AiSalesProposalLineItem[] | null;
+  totalAmount?: number | null;
+  currency?: string | null;
+  agentIdentityId?: string | null;
+  sentAt?: string | null;
+  errorMessage?: string | null;
+  createdBy?: string | null;
+  createdAt: string;
 }

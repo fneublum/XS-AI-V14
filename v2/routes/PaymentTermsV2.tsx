@@ -1,18 +1,18 @@
 // Phase 3B — v2 Payment Terms.
 //
-// Port of pages/PaymentTerms.tsx into the v2 shell. Installments are
-// stored as a JSONB array and shown as a compact summary in the list.
-// The AI Upload modal mirrors Freight Quotes: users can paste a
-// payment-terms clause from a contract or upload a PDF and Gemini
-// returns a structured draft ready to review + save.
+// Port of pages/PaymentTerms.tsx into the v2 shell. Full-fidelity
+// edit via PaymentTermDrawer: installments editor, active flag, and
+// every column on the `payment_terms` table.
 
 import React, { useState } from 'react';
 import { Sparkles } from 'lucide-react';
-import { Badge, Button } from '../primitives';
+import { Badge, Button, ConfirmDialog } from '../primitives';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
-import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
-import { useRowCrud } from '../components/useRowCrud';
+import { RowActions } from '../components/RowActions';
+import { PaymentTermDrawer } from '../components/PaymentTermDrawer';
+import { useEntityDelete } from '../queries/useEntityMutations';
+import { useToast } from '../primitives/Toast';
 import {
   usePaymentTerms, PaymentTerm, PaymentInstallment,
 } from '../queries/usePaymentTerms';
@@ -41,6 +41,20 @@ const summarizeInstallments = (inst: PaymentInstallment[]): string => {
   return inst
     .map(i => `${i.pct}% @ ${i.event}${i.days ? `+${i.days}d` : ''}`)
     .join(' · ');
+};
+
+const EMPTY_TERM: PaymentTerm = {
+  id: '',
+  companyId: null,
+  code: '',
+  description: '',
+  type: 'ALL',
+  method: 'TT',
+  numPayments: 1,
+  installments: [],
+  notes: null,
+  active: true,
+  createdAt: null,
 };
 
 const columns: DataTableColumn<PaymentTerm>[] = [
@@ -72,32 +86,24 @@ const columns: DataTableColumn<PaymentTerm>[] = [
       : <Badge variant="neutral">Inactive</Badge> },
 ];
 
-const fields: FieldDef[] = [
-  { key: 'code',        label: 'Code', required: true, mono: true },
-  { key: 'description', label: 'Description', required: true, fullWidth: true },
-  { key: 'type',        label: 'Type', type: 'select',
-    options: ['ALL', 'DOMESTIC', 'IMPORT', 'EXPORT'], defaultValue: 'ALL' },
-  { key: 'method',      label: 'Method', type: 'select',
-    options: ['TT', 'LC', 'CAD', 'DA', 'DP', 'ADVANCE', 'NET', 'COD', 'OTHER'],
-    defaultValue: 'NET' },
-  { key: 'numPayments', dbKey: 'num_payments', label: '# payments',
-    type: 'number', mono: true, min: 1, step: 1, defaultValue: '1' },
-  { key: 'notes', label: 'Notes', type: 'textarea', fullWidth: true },
-];
-
 const PaymentTermsV2: React.FC = () => {
+  const toast = useToast();
   const [search, setSearch] = useState('');
-  const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<{ term: PaymentTerm; mode: 'edit' | 'create' } | null>(null);
+  const [confirmDeleteRow, setConfirmDeleteRow] = useState<PaymentTerm | null>(null);
   const terms = usePaymentTerms(search);
+  const del = useEntityDelete({ table: 'payment_terms', listQueryKeys: ['paymentTerms'] });
 
-  const { rowActions, drawers, openView } = useRowCrud<PaymentTerm>({
-    table: 'payment_terms',
-    listQueryKeys: ['paymentTerms'],
-    rowLabel: r => r.code,
-    fields,
-  });
+  const openEdit = (row: PaymentTerm) => setEditing({ term: row, mode: 'edit' });
+  const openCreate = () => setEditing({ term: EMPTY_TERM, mode: 'create' });
 
-  const openCreate = () => setCreateOpen(true);
+  const rowActions = (row: PaymentTerm) => (
+    <RowActions
+      onView={() => openEdit(row)}
+      onEdit={() => openEdit(row)}
+      onDelete={() => setConfirmDeleteRow(row)}
+    />
+  );
 
   return (
     <>
@@ -118,7 +124,7 @@ const PaymentTermsV2: React.FC = () => {
         isLoading={terms.isLoading}
         error={terms.error}
         onRetry={terms.refetch}
-        onRowClick={openView}
+        onRowClick={openEdit}
         rowActions={rowActions}
         headerAction={
           <div className="flex items-center gap-2">
@@ -137,19 +143,33 @@ const PaymentTermsV2: React.FC = () => {
         emptyAction={search ? undefined : { label: '+ New term', onClick: openCreate }}
         skeletonCols={[80, 200, 80, 80, 40, 240]}
       />
-      <QuickCreateDrawer
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        title="New payment term"
-        description="Define a reusable payment schedule."
-        table="payment_terms"
-        idPrefix="PT"
-        listQueryKeys={['paymentTerms']}
-        scopeByCompany
-        fields={fields}
-        extras={{ active: true, installments: [] }}
+      <PaymentTermDrawer
+        term={editing?.term ?? null}
+        mode={editing?.mode ?? 'edit'}
+        onOpenChange={(o) => !o && setEditing(null)}
       />
-      {drawers}
+      <ConfirmDialog
+        open={!!confirmDeleteRow}
+        onOpenChange={(o) => !o && setConfirmDeleteRow(null)}
+        title={`Delete ${confirmDeleteRow?.code ?? ''}?`}
+        description="Invoices and orders referencing this term keep the text value but lose the live link."
+        confirmLabel="Delete"
+        loading={del.isPending}
+        onConfirm={() => {
+          if (!confirmDeleteRow) return;
+          const label = confirmDeleteRow.code;
+          del.mutate(confirmDeleteRow.id, {
+            onSuccess: () => {
+              toast.push({ kind: 'success', title: 'Deleted', description: label });
+              setConfirmDeleteRow(null);
+            },
+            onError: (err) => {
+              toast.push({ kind: 'error', title: 'Delete failed', description: err.message });
+              setConfirmDeleteRow(null);
+            },
+          });
+        }}
+      />
     </>
   );
 };

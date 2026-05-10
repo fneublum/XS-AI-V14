@@ -43,15 +43,44 @@ Classification Rules:
 
 Return ONLY the category name. Do not add any explanation or punctuation.`;
 
+// Shared LineItem shape persisted across estimates / proforma_invoices /
+// purchase_order_extracts / invoices_suppliers / packing_lists. Keep in sync
+// with LineItemsEditor.tsx (productName, quantity, unitPrice, total
+// required; customerDescription / hsCode / grade optional).
+const LINE_ITEM_SHAPE = `{ productName: string, customerDescription: string|null, hsCode: string|null, grade: string|null, quantity: number, unitPrice: number, total: number }`;
+
 const EXTRACTION_PROMPTS: Record<string, string> = {
-    'BILL OF LADING': `Extract the following fields for a BILL OF LADING. Return a valid JSON object. If a field is not found, return null.\nKEYS: DOC_NUMBER (B/L Number), SHIPPER, CONSIGNEE, NOTIFY, NUMBER_OF_ORIGINALS, PRODUCT_DESCRIPTION, MARKS_NUMBERS, CONTAINER, SEAL, PACKAGES, GROSS_WEIGHT, MEASUREMENT, VESSEL_VOYAGE, PORT_LOADING, PORT_DISCHARGE, PLACE_OF_ISSUE, PLACE_OF_RECEIPT, PLACE_OF_DELIVERY, SHIPPED_DATE, FREIGHT_PAYABLE, TERMS.`,
-    'BOOKING': `Extract the following fields for a SHIPPING BOOKING CONFIRMATION. Return a valid JSON object. If a field is not found, return null.\nKEYS: DOC_NUMBER (Booking Number), CUSTOMER, CARGO_AGENT, VESSEL_VOYAGE, POL (Port of Loading), POD (Port of Discharge), EQUIPMENT, ETD, ETA, CARGO_CUT_OFF, VGM_CUT_OFF, DRAFT_CUT_OFF, FREE_TIME, TERMINAL.`,
-    'ESTIMATE': `Extract the following fields for a PROFORMA INVOICE or ESTIMATE. Return a valid JSON object. If a field is not found, return null.\nKEYS: DOC_NUMBER, DATE, SELLER_NAME, BUYER_NAME, SHIP_TO, PAY_TO, PAYMENT_TERMS, INCOTERM, ITEMS (array of { activity, qty, rate, amount }), SUBTOTAL, TAX, TOTAL_AMOUNT, CURRENCY, ACCEPTED_BY, ACCEPTED_DATE.`,
-    'PROFORMA INVOICE': `Extract the following fields for a PROFORMA INVOICE. Return a valid JSON object. If a field is not found, return null.\nKEYS: DOC_NUMBER, DATE, SELLER_NAME, BUYER_NAME, SHIP_TO, PAY_TO, PAYMENT_TERMS, INCOTERM, ITEMS (array of { activity, qty, rate, amount }), SUBTOTAL, TAX, TOTAL_AMOUNT, CURRENCY, ACCEPTED_BY, ACCEPTED_DATE.`,
-    'PURCHASE ORDER': `Extract the following fields for a PURCHASE ORDER. Return a valid JSON object. If a field is not found, return null.\nKEYS: DOC_NUMBER, DATE, BUYER_NAME, SELLER_NAME, VENDOR_REF, FOLDER_NUMBER, PRODUCT_DESCRIPTION, QUANTITY, UNIT_OF_MEASURE, UNIT_PRICE, LINE_TOTAL, TOTAL_AMOUNT, CURRENCY, INCOTERM, PAYMENT_TERMS, PORT_DISCHARGE, PACKING_INSTRUCTIONS, SHIPMENT_INSTRUCTIONS, MARKINGS, INSPECTION, ITEMS (array of { description, quantity, unit, unit_price, total }).`,
-    'INVOICE': `Extract the following fields for a COMMERCIAL INVOICE. Return a valid JSON object. If a field is not found, return null.\nKEYS: INVOICE_NUMBER, INVOICE_DATE, SELLER_NAME, SELLER_ADDRESS, BUYER_NAME_ADDRESS, SHIP_TO_ADDRESS, PAYMENT_TERMS, INCOTERMS, DATE_SHIPPED, PO_NUMBER, CARRIER, TRANSPORT_ID, FREIGHT_TERMS, ITEMS (array of { description, hs_code, quantity, unit_price, amount }), WEIGHT_GROSS, WEIGHT_NET, WEIGHT_TARE, TOTAL_QUANTITY, SUBTOTAL, TOTAL_AMOUNT, CURRENCY, REMIT_TO_NAME, BANK_NAME, SWIFT_CODE, ROUTING_NUMBER, ACCOUNT_NUMBER.`,
-    'PACKING LIST': `Extract the following fields for a PACKING LIST / STRAIGHT BILL OF LADING. Return a valid JSON object. If a field is not found, return null.\nKEYS: BL_NUMBER, PL_NUMBER, SHIPPER, CONSIGNEE, SHIPPING_POINT, DESTINATION, DATE, CARRIER, CONTAINER_NUMBER, SEAL_NUMBER, VESSEL_VOYAGE, PRODUCT_DESCRIPTION, UNIT_COUNT, UNIT_NUMBERS, GROSS_WEIGHT, NET_WEIGHT, FREIGHT_TERMS, PO_NUMBER, NOTES, SCH_SHIP_DATE.`,
-    'FREIGHT QUOTE': `Extract the following fields for a FREIGHT QUOTE / FREIGHT RATE document. Return a valid JSON object. If a field is not found, return null.\nKEYS: AGENT_NAME, CARRIER, FREIGHT_TYPE (one of: PORT_PORT, PORT_DOOR, DOOR_PORT, DOOR_DOOR), ORIGIN_PORT, ORIGIN_PORT_CODE, PICKUP_LOCATION, PICKUP_ZIP, DESTINATION_PORT, DESTINATION_PORT_CODE, DELIVERY_LOCATION, DELIVERY_ZIP, RATE, CHASSIS, OVERWEIGHT, CONTAINER_COUNT, CURRENCY, VALID_UNTIL, COMMENTS, TRANSIT_TIME, FREE_TIME, IS_ALL_IN (boolean), PICKUP_COST, OCEAN_COST, DELIVERY_COST, PORT_FEES, DECONSOLIDATION, CONTAINER_RETURN, BL_RELEASE, THC, ISPS, TRS, SECURITY_FEE, OBSERVATION.`,
+    // Maps 1:1 to the `bill_landings` table columns.
+    'BILL OF LADING': `Extract every visible field from a BILL OF LADING. Return a single valid JSON object with the KEYS below. Use null when absent. Dates as ISO 8601 (YYYY-MM-DD). Keep units inline for weights/measurements (e.g. "23,500 KG", "42.5 CBM"). For multiple containers or seals, join with ", ".
+KEYS: DOC_NUMBER (B/L Number), SHIPPER, CONSIGNEE, NOTIFY, NUMBER_OF_ORIGINALS, PRODUCT_DESCRIPTION, CONTAINER, SEAL, PACKAGES, GROSS_WEIGHT, MEASUREMENT, VESSEL_VOYAGE, PORT_LOADING, PORT_DISCHARGE, PLACE_OF_RECEIPT, PLACE_OF_DELIVERY, SHIPPED_DATE, FREIGHT_PAYABLE, TERMS (remarks / clauses on the B/L).`,
+
+    // Maps 1:1 to the `bookings` table columns.
+    'BOOKING': `Extract every visible field from a SHIPPING BOOKING CONFIRMATION. Return a single valid JSON object. Use null when absent. Dates / cut-offs as ISO 8601 datetime when a time is given, otherwise date only.
+KEYS: DOC_NUMBER (Booking Number), CUSTOMER, CARGO_AGENT, VESSEL_VOYAGE, POL (Port of Loading), POD (Port of Discharge), EQUIPMENT (e.g. "1x40HC"), ETD, ETA, CARGO_CUT_OFF, VGM_CUT_OFF, DRAFT_CUT_OFF, FREE_TIME, TERMINAL.`,
+
+    // Maps 1:1 to the `estimates` table columns.
+    'ESTIMATE': `Extract every visible field from an ESTIMATE / itemized quote. Return a single valid JSON object. Monetary amounts must be numbers (no currency symbols or thousands separators). Dates as ISO 8601. Use null when absent.
+KEYS: DOC_NUMBER (estimate number), DATE, SELLER_NAME, BUYER_NAME, SHIP_TO, PAY_TO, PAYMENT_TERMS, INCOTERM, SUBTOTAL (number), TAX (number), TOTAL_AMOUNT (number), CURRENCY (ISO 4217, e.g. USD / EUR), ACCEPTED_BY, ACCEPTED_DATE, ITEMS (array; each element shaped EXACTLY as ${LINE_ITEM_SHAPE}).`,
+
+    // Maps 1:1 to the `proforma_invoices` table columns.
+    'PROFORMA INVOICE': `Extract every visible field from a PROFORMA INVOICE. Return a single valid JSON object. Monetary amounts as numbers, dates ISO 8601. Use null when absent.
+KEYS: DOC_NUMBER (PI number), DATE, SELLER_NAME, BUYER_NAME, SHIP_TO, PAY_TO, PAYMENT_TERMS, INCOTERM, SUBTOTAL (number), TAX (number), TOTAL_AMOUNT (number), CURRENCY (ISO 4217), ACCEPTED_BY, ACCEPTED_DATE, ITEMS (array of ${LINE_ITEM_SHAPE}).`,
+
+    // Maps 1:1 to the `purchase_order_extracts` staging table.
+    'PURCHASE ORDER': `Extract every visible field from a PURCHASE ORDER. Return a single valid JSON object. TOTAL_AMOUNT must be numeric (no currency symbols). Dates as ISO 8601. Use null when absent.
+KEYS: DOC_NUMBER (PO number), DATE (order date), SELLER_NAME (vendor / supplier issuing the goods), TOTAL_AMOUNT (number), CURRENCY (ISO 4217), ITEMS (array of ${LINE_ITEM_SHAPE}).`,
+
+    // Maps 1:1 to the `invoices_suppliers` table columns.
+    'INVOICE': `Extract every visible field from a COMMERCIAL / SUPPLIER INVOICE. Return a single valid JSON object. Monetary amounts as numbers (no symbols / separators). Dates as ISO 8601. Use null when absent.
+KEYS: INVOICE_NUMBER, INVOICE_DATE, SELLER_NAME (shipper / seller entity), SELLER_ADDRESS, SUPPLIER_NAME (legal supplier if distinct from seller, else same), BUYER_NAME_ADDRESS (sold-to), SHIP_TO_ADDRESS, PAYMENT_TERMS, INCOTERMS, DATE_SHIPPED, PO_NUMBER (customer PO), CARRIER, TRANSPORT_ID, FREIGHT_TERMS, WEIGHT_GROSS, WEIGHT_NET, WEIGHT_TARE, TOTAL_QUANTITY, SUBTOTAL (number), TOTAL_AMOUNT (number), CURRENCY (ISO 4217), REMIT_TO_NAME, BANK_NAME, SWIFT_CODE, ROUTING_NUMBER, ACCOUNT_NUMBER, ITEMS (array of ${LINE_ITEM_SHAPE}).`,
+
+    // Maps 1:1 to the `packing_lists` table columns.
+    'PACKING LIST': `Extract every visible field from a PACKING LIST / STRAIGHT BILL OF LADING. Return a single valid JSON object. Dates as ISO 8601. Keep units inline for weights. Use null when absent.
+KEYS: PL_NUMBER, BL_NUMBER, PO_NUMBER, SO_NUMBER (sales order reference, if shown), SHIPPER, CONSIGNEE, SHIPPING_POINT, DESTINATION, DATE, SCH_SHIP_DATE (scheduled ship date), CARRIER, VESSEL_VOYAGE, CONTAINER_NUMBER, SEAL_NUMBER, PRODUCT_DESCRIPTION, UNIT_COUNT, UNIT_NUMBERS, GROSS_WEIGHT, NET_WEIGHT, FREIGHT_TERMS, NOTES, ITEMS (array of ${LINE_ITEM_SHAPE}).`,
+
+    // Maps 1:1 to the `freight_quotes` table columns.
+    'FREIGHT QUOTE': `Extract every visible field from a FREIGHT QUOTE / RATE SHEET. Return a single valid JSON object. Monetary amounts as numbers (no symbols). Transit time and free time as integer days. Booleans true / false. Use null when absent.
+KEYS: AGENT_NAME (forwarder / agent issuing the quote), CARRIER, FREIGHT_TYPE (exactly one of PORT_PORT, PORT_DOOR, DOOR_PORT, DOOR_DOOR), ORIGIN_PORT, ORIGIN_PORT_CODE (UN/LOCODE), PICKUP_LOCATION, PICKUP_ZIP, DESTINATION_PORT, DESTINATION_PORT_CODE (UN/LOCODE), DELIVERY_LOCATION, DELIVERY_ZIP, RATE (number — all-in total if IS_ALL_IN is true, otherwise base ocean rate), CHASSIS (number), OVERWEIGHT (number), CONTAINER_COUNT (integer), CURRENCY (ISO 4217), VALID_UNTIL, COMMENTS, TRANSIT_TIME (integer, days), FREE_TIME (integer, days at destination), IS_ALL_IN (boolean), PICKUP_COST (number), OCEAN_COST (number), DELIVERY_COST (number), PORT_FEES (number), DECONSOLIDATION (number), CONTAINER_RETURN (number), BL_RELEASE (number), THC (number), ISPS (number), TRS (number), SECURITY_FEE (number), OBSERVATION.`,
 };
 // ─────────────────────────────────────────────────────────────────────
 
@@ -372,6 +401,18 @@ const AiDashboard: React.FC<AiDashboardProps> = ({
         }
     }, [pendingOcrFile]);
 
+    // Accept files handed off from the v2 Dashboard dropzone — fires as
+    // a window CustomEvent so the dropzone stays stateless and the
+    // full identify→extract→confirm flow runs inside the agent.
+    useEffect(() => {
+        const onFile = (e: Event) => {
+            const file = (e as CustomEvent).detail?.file as File | undefined;
+            if (file) handleFileUpload(file);
+        };
+        window.addEventListener('xs-ocr-file', onFile);
+        return () => window.removeEventListener('xs-ocr-file', onFile);
+    }, []);
+
     // Listen for auto-scan reports from the email widget
     useEffect(() => {
         const handler = (e: Event) => {
@@ -406,14 +447,15 @@ const AiDashboard: React.FC<AiDashboardProps> = ({
         return () => window.removeEventListener('sx-doc-saved', handler);
     }, []);
 
+    // Capped at 4 so the row fits on a standard viewport without the
+    // horizontal scrollbar. The cut options ("Create a sales order",
+    // "Show pending invoices", etc.) are still reachable by typing into
+    // the input — these chips are just the most-used shortcuts.
     const suggestions = [
         'Give me a business overview',
         'Add a new customer',
         'Show my bookings',
-        'List open purchase orders',
         'Check shipment status',
-        'Create a sales order',
-        'Show pending invoices',
     ];
 
     const addMessage = useCallback((role: 'user' | 'assistant', text: string, isConfirmation?: boolean) => {
@@ -664,10 +706,14 @@ const AiDashboard: React.FC<AiDashboardProps> = ({
                     });
                     saved = true;
                 } else if (docType === 'INVOICE' && onSaveSupplierInvoice) {
+                    const sellerName = String(extractedData.SELLER_NAME || '');
+                    const invoiceDate = String(extractedData.INVOICE_DATE || '');
                     await onSaveSupplierInvoice({
                         id: `INV${Date.now()}`, companyId, createdAt: created,
-                        invoiceNumber: String(extractedData.INVOICE_NUMBER || ''), invoiceDate: String(extractedData.INVOICE_DATE || ''),
-                        shipperName: String(extractedData.SELLER_NAME || ''), shipperAddress: String(extractedData.SELLER_ADDRESS || ''),
+                        invoiceNumber: String(extractedData.INVOICE_NUMBER || ''), invoiceDate,
+                        shipperName: sellerName, shipperAddress: String(extractedData.SELLER_ADDRESS || ''),
+                        supplier: String(extractedData.SUPPLIER_NAME || sellerName),
+                        date: invoiceDate,
                         soldTo: String(extractedData.BUYER_NAME_ADDRESS || ''), shipTo: String(extractedData.SHIP_TO_ADDRESS || ''),
                         paymentTerms: String(extractedData.PAYMENT_TERMS || ''), incoterm: String(extractedData.INCOTERMS || ''),
                         dateOrder: String(extractedData.DATE_SHIPPED || ''), customerPo: String(extractedData.PO_NUMBER || ''),
@@ -686,6 +732,7 @@ const AiDashboard: React.FC<AiDashboardProps> = ({
                     await onSavePackingList({
                         id: `PL${Date.now()}`, companyId, createdAt: created,
                         plNumber: String(extractedData.PL_NUMBER || ''), blNumber: String(extractedData.BL_NUMBER || ''),
+                        soNumber: String(extractedData.SO_NUMBER || ''),
                         shipper: String(extractedData.SHIPPER || ''), consignee: String(extractedData.CONSIGNEE || ''),
                         shippingPoint: String(extractedData.SHIPPING_POINT || ''), destination: String(extractedData.DESTINATION || ''),
                         date: String(extractedData.DATE || ''), carrier: String(extractedData.CARRIER || ''),

@@ -42,3 +42,149 @@ body {
 .font-mono-tape {
   font-family: 'Roboto Mono', monospace;
 }
+
+/* ─── v2 light mode ──────────────────────────────────────────────
+ *
+ * V2 was built dark-only with ~400 hardcoded hex classes across 70+
+ * files (`bg-[#0a0a0a]`, `border-[#1f1f1f]`, `text-slate-100`, …).
+ * Rather than refactor every primitive, the `html.light` scope below
+ * remaps the common dark palette to light equivalents at the CSS
+ * layer. Components stay untouched.
+ *
+ * Mirror of the inverse trick used in v2/routes/DashboardV2.tsx
+ * (`v2-dark-scope`) that bridges v1 light classes into v2 dark.
+ * ---------------------------------------------------------------- */
+
+html.light {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+/* Backgrounds: collapse the dark surface scale to a light scale. */
+html.light .bg-\[\#0a0a0a\],
+html.light .bg-\[\#0f0f0f\],
+html.light .bg-\[\#111111\] {
+  background-color: #ffffff !important;
+}
+html.light .bg-\[\#141414\] {
+  background-color: #f1f5f9 !important;
+}
+html.light .bg-\[\#161616\],
+html.light .bg-\[\#1a1a1a\] {
+  background-color: #e2e8f0 !important;
+}
+html.light .bg-\[\#0f172a\],
+html.light .bg-\[\#1e293b\] {
+  background-color: #f8fafc !important;
+}
+
+/* Hover backgrounds. */
+html.light .hover\:bg-\[\#0a0a0a\]:hover,
+html.light .hover\:bg-\[\#0f0f0f\]:hover,
+html.light .hover\:bg-\[\#111111\]:hover {
+  background-color: #f8fafc !important;
+}
+html.light .hover\:bg-\[\#141414\]:hover {
+  background-color: #f1f5f9 !important;
+}
+html.light .hover\:bg-\[\#161616\]:hover,
+html.light .hover\:bg-\[\#1a1a1a\]:hover {
+  background-color: #e2e8f0 !important;
+}
+
+/* Borders: #1f1f1f is used 300+ times as the hairline divider. */
+html.light .border-\[\#1f1f1f\],
+html.light .border-\[\#141414\] {
+  border-color: #e2e8f0 !important;
+}
+html.light .border-\[\#2a2a2a\],
+html.light .border-\[\#333333\] {
+  border-color: #cbd5e1 !important;
+}
+html.light .hover\:border-\[\#1f1f1f\]:hover {
+  border-color: #e2e8f0 !important;
+}
+html.light .hover\:border-\[\#2a2a2a\]:hover {
+  border-color: #94a3b8 !important;
+}
+
+/* Divide colors. */
+html.light .divide-\[\#1f1f1f\] > :not([hidden]) ~ :not([hidden]),
+html.light .divide-\[\#141414\] > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+
+/* Text: v2 uses text-slate-100..600 as the dark-mode text ladder.
+ * Flip the whole ladder so it reads as the inverse on white — bright
+ * (slate-100/200 ≈ "primary") lands on near-black, quiet (slate-500/600
+ * ≈ "muted") lands on mid-slate. Default Tailwind slate-400/500 are
+ * too light on white, so we pull them two steps darker. */
+html.light .text-slate-100,
+html.light .text-slate-200 {
+  color: #0f172a !important;
+}
+html.light .text-slate-300 {
+  color: #1e293b !important;
+}
+html.light .text-slate-400 {
+  color: #334155 !important;
+}
+html.light .text-slate-500 {
+  color: #475569 !important;
+}
+html.light .text-slate-600 {
+  color: #64748b !important;
+}
+html.light .hover\:text-slate-100:hover,
+html.light .hover\:text-slate-200:hover {
+  color: #0f172a !important;
+}
+html.light .hover\:text-slate-300:hover {
+  color: #1e293b !important;
+}
+
+/* Tinted text (indigo/emerald/red) used on translucent dark gradients
+ * for the dashboard dropzone + status pills. On the inverted light
+ * backgrounds those pale tints are invisible, so pull them to the
+ * readable mid/dark end of each scale. */
+html.light .text-indigo-100,
+html.light .text-indigo-200,
+html.light .text-indigo-200\/70,
+html.light .text-indigo-200\/80 {
+  color: #3730a3 !important;
+}
+html.light .text-indigo-300 {
+  color: #4338ca !important;
+}
+html.light .text-emerald-200,
+html.light .text-emerald-200\/80,
+html.light .text-emerald-300 {
+  color: #047857 !important;
+}
+html.light .text-red-200,
+html.light .text-red-200\/80,
+html.light .text-red-300 {
+  color: #b91c1c !important;
+}
+
+/* Placeholder grey is often hex-specific. */
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Body background — `body { background: #f8fafc }` already matches
+ * light mode. In dark mode, paint it to match the v2 shell. */
+html.dark body {
+  background-color: #0a0a0a;
+}
+
+/* Custom scrollbar in dark mode. */
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}

@@ -175,7 +175,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex-1 min-h-0 flex gap-3 overflow-hidden">
 
                 {/* Left: AI Assistant Widget (full height), scoped to resolved company */}
-                <div className="flex-1 min-w-0 overflow-hidden h-full">
+                <div className="flex-1 min-w-0 min-h-0 overflow-hidden h-full">
                     <ErrorBoundary>
                         <AiDashboard
                             currentUser={currentUser}
@@ -221,16 +221,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                     </ErrorBoundary>
                 </div>
 
-                {/* Right column: optional header slot (20% of column
-                    height) stacked above the WhatsApp widget. */}
-                <div className="w-[420px] shrink-0 flex flex-col gap-2 overflow-hidden">
+                {/* Right column: optional fixed-height header slot
+                    (drop zone) stacked above the WhatsApp widget. The
+                    widget wrapper uses flex-1 min-h-0 so its internal
+                    overflow-y-auto message list actually scrolls —
+                    percentage heights here (h-1/5) collapsed in a pure
+                    flex chain and broke the scroll reservation. */}
+                <div className="w-[420px] shrink-0 h-full flex flex-col gap-2 overflow-hidden">
                     {whatsAppHeader && (
-                        <div className="shrink-0 h-1/5 min-h-[90px]">
+                        <div className="shrink-0 h-[100px]">
                             {whatsAppHeader}
                         </div>
                     )}
                     <div className="flex-1 min-h-0 overflow-hidden">
-                        <WhatsAppChatWidget currentCompanyId={resolvedCompanyId} onOcrUpload={setOcrFile} />
+                        <WhatsAppChatWidget currentCompanyId={resolvedCompanyId} />
                     </div>
                 </div>
             </div>

@@ -121,9 +121,18 @@ export async function invokeEdgeFunction(
 
     const token = getEdgeToken();
     if (!token && !allowAnon) {
+        // Distinguish "never logged in" from "session expired" so the UI
+        // can prompt the user to sign back in instead of showing a scary
+        // generic error.
+        const hadToken = (() => {
+            try { return !!sessionStorage.getItem(TOKEN_KEY); } catch { return false; }
+        })();
+        // Token slot is still populated but past exp → stale; wipe it.
+        if (hadToken) clearEdgeToken();
         throw new Error(
-            `Edge function ${fnName} requires a logged-in session. ` +
-                `Call issueEdgeToken() first.`,
+            hadToken
+                ? `Your session expired. Please sign out and sign back in, then retry.`
+                : `Edge function ${fnName} requires a logged-in session. Please sign in.`,
         );
     }
 
@@ -146,6 +155,15 @@ export async function invokeEdgeFunction(
 
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
+        // Server rejected our token — treat as expired and drop it so
+        // the next call surfaces the "please sign in" path instead of
+        // re-sending the same bad token.
+        if (resp.status === 401 && !allowAnon) {
+            clearEdgeToken();
+            throw new Error(
+                'Your session expired. Please sign out and sign back in, then retry.',
+            );
+        }
         throw new Error(data?.error || `${fnName} failed (${resp.status})`);
     }
     return data;

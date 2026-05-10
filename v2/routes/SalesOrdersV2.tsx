@@ -230,6 +230,17 @@ const SalesOrdersV2: React.FC = () => {
     rowLabel: r => r.orderNumber,
   });
 
+  const duplicateOrder = (row: SalesOrder) => {
+    const { id: _id, createdAt: _createdAt, orderNumber: _orderNumber, ...rest } = row;
+    openSalesOrderCreate({
+      ...rest,
+      orderNumber: '',
+      status: 'PENDING',
+      approvedBy: null,
+      orderDate: new Date().toISOString().slice(0, 10),
+    });
+  };
+
   // View previews the Proforma PDF; Email opens the Proforma email
   // draft. Edit still opens the bespoke drawer.
   const rowActions = (row: SalesOrder) => (
@@ -237,6 +248,7 @@ const SalesOrdersV2: React.FC = () => {
       onView={() => setProformaViewOrder(row)}
       onEdit={() => openSalesOrder(row)}
       onEmail={() => setProformaEmailOrder(row)}
+      onDuplicate={() => duplicateOrder(row)}
       onDelete={() => confirmDelete(row)}
     />
   );
@@ -260,7 +272,7 @@ const SalesOrdersV2: React.FC = () => {
         <div className="flex items-center gap-2">
           <Button
             size="sm"
-            onClick={openSalesOrderCreate}
+            onClick={() => openSalesOrderCreate()}
             className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md"
           >
             + New order

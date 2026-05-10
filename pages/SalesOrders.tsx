@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { SalesOrder, SalesOrderItem, Customer, Product, Booking, Role, Invoice, User, Company, Port, FreightQuote, SavedLocation, CargoAgent, CompanyImage, Bank } from '../types';
-import { Plus, Save, Trash2, Edit3, CheckCircle, XCircle, FileText, Link, Truck, Search, Bot, Loader2, Sparkles, AlertTriangle, ArrowRight, ClipboardList, Receipt, MapPin, Globe, Calendar, CreditCard, Ship, Package, Anchor, Mail, X, CheckCircle2, ListChecks, ArrowLeft, Building, Eye, FilePlus, ChevronDown } from 'lucide-react';
+import { Plus, Save, Trash2, Edit3, CheckCircle, XCircle, FileText, Link, Truck, Search, Bot, Loader2, Sparkles, AlertTriangle, ArrowRight, ClipboardList, Receipt, MapPin, Globe, Calendar, CreditCard, Ship, Package, Anchor, Mail, X, CheckCircle2, ListChecks, ArrowLeft, Building, Eye, FilePlus, ChevronDown, Copy } from 'lucide-react';
 import PDFPreviewModal from '../components/PDFPreviewModal';
 import { getSupabaseClient } from '../services/supabase';
 import { generateCustomerDescription } from '../services/geminiService';
@@ -309,6 +309,19 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
     const handleEditOrder = (order: SalesOrder) => {
         setFormData(order);
         setEditingId(order.id);
+        setViewMode('FORM');
+    };
+
+    const handleDuplicateOrder = (order: SalesOrder) => {
+        const { id: _id, createdAt: _createdAt, approvedBy: _approvedBy, ...rest } = order;
+        setFormData({
+            ...rest,
+            orderNumber: `SO-${Date.now().toString().slice(-6)}`,
+            orderDate: new Date().toISOString().split('T')[0],
+            status: 'PENDING',
+            items: (order.items ?? []).map(it => ({ ...it })),
+        });
+        setEditingId(null);
         setViewMode('FORM');
     };
 
@@ -1033,7 +1046,9 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
             `Best regards,%0D%0A` +
             `Sales Team`;
 
-        window.location.href = `mailto:${customer.email}?subject=${subject}&body=${body}`;
+        const ccList = [customer.email2, (customer as any).email3].filter(Boolean).join(',');
+        const ccParam = ccList ? `&cc=${encodeURIComponent(ccList)}` : '';
+        window.location.href = `mailto:${customer.email}?subject=${subject}${ccParam}&body=${body}`;
     };
 
     // --- REQUEST BOOKING (New or From Quote) ---
@@ -1395,7 +1410,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                                         <option value="FAS">FAS (Free Alongside Ship)</option>
                                         <option value="FOB">FOB (Free on Board)</option>
                                         <option value="CFR">CFR (Cost & Freight)</option>
-                                        <option value="CIF">CIF (Cost, Insurance, Freight)</option>
+                                        <option value="CIF">CIF (Cost + Insurance + Freight)</option>
                                         <option value="DDP">DDP (Delivered Duty Paid)</option>
                                     </select>
                                 </div>
@@ -1828,6 +1843,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
                                             </>
                                         )}
                                         <button onClick={() => handleEditOrder(order)} className="text-slate-400 hover:text-blue-600 p-0.5" title="Edit"><Edit3 size={12} /></button>
+                                        <button onClick={() => handleDuplicateOrder(order)} className="text-slate-400 hover:text-indigo-600 p-0.5" title="Duplicate"><Copy size={12} /></button>
                                         <button onClick={(e) => handleDeleteOrder(order.id, e)} className="text-slate-400 hover:text-red-600 p-0.5" title="Delete"><Trash2 size={12} /></button>
                                     </div>
                                 </td>

@@ -118,7 +118,7 @@ const CommissionsV2: React.FC = () => {
         onRowClick={openView}
         rowActions={rowActions}
         headerAction={
-          <Button size="sm" onClick={openSalesOrderCreate}
+          <Button size="sm" onClick={() => openSalesOrderCreate()}
             className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
             + New sales order
           </Button>

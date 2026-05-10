@@ -1,38 +1,55 @@
-// Phase 3B — v2 AI Email Assistant.
+// v2 AI Email Assistant — imports the v1 view as a base.
+//
+// v1 [pages/AiEmailAssistant.tsx](../../pages/AiEmailAssistant.tsx)
+// owns the inbox list, reader, attachment OCR, doc-type extraction and
+// Outlook/Graph auth. We mount it under the same `v2-dark-scope`
+// bridge used by DashboardV2 so v1's light classes render correctly
+// in v2 dark mode; in light mode the bridge stays inert and v1's
+// native light palette shows through.
 
-import React from 'react';
-import { ModuleLanding } from '../components/ModuleLanding';
-import { ActivityFeed } from '../components/ActivityFeed';
-import { useToast } from '../primitives/Toast';
+import React, { useEffect, useState } from 'react';
+import { useCompany } from '../providers/CompanyProvider';
+import { initializeMsal } from '../../services/smailAuth';
+
+const V1AiEmailAssistant = React.lazy(() => import('../../pages/AiEmailAssistant'));
 
 const AiEmailAssistantV2: React.FC = () => {
-  const toast = useToast();
+  const { currentCompanyId } = useCompany();
+  const [msalReady, setMsalReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    initializeMsal()
+      .then(() => { if (!cancelled) setMsalReady(true); })
+      .catch(err => {
+        console.warn('[AiEmailAssistantV2] MSAL init failed', err);
+        // Fail open — the component can still render and show its
+        // sign-in prompt, letting the user drive login manually.
+        if (!cancelled) setMsalReady(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!msalReady) {
+    return (
+      <div className="flex items-center justify-center h-[40vh] text-slate-500 text-[13px]">
+        Initializing mail authentication…
+      </div>
+    );
+  }
+
   return (
-    <ModuleLanding
-      title="AI Email Assistant"
-      badge="Beta"
-      description="Triage your inbox, draft replies in your tone, and auto-extract PO / invoice references. Connects to Outlook and Gmail via OAuth."
-      stats={[
-        { label: 'Inbox', value: '—' },
-        { label: 'Drafts',  value: '—' },
-        { label: 'Extracted POs', value: '—', tone: 'positive' },
-      ]}
-      actions={[
-        {
-          id: 'triage',
-          label: 'Triage inbox',
-          description: 'Classify unread and suggest actions.',
-          onClick: () => toast.push({ kind: 'info', title: 'Triage', description: 'Full flow ships with Phase 3C.' }),
-        },
-        {
-          id: 'draft',
-          label: 'Draft a reply',
-          description: 'Open the composer with AI suggestions.',
-          onClick: () => toast.push({ kind: 'info', title: 'Compose', description: 'Full flow ships with Phase 3C.' }),
-        },
-      ]}
-      recent={<ActivityFeed module="AI_EMAIL" title="Recent emails handled" />}
-    />
+    <div className="v2-dark-scope h-full -m-6">
+      <React.Suspense
+        fallback={
+          <div className="flex items-center justify-center h-[40vh] text-slate-500 text-[13px]">
+            Loading AI Email Assistant…
+          </div>
+        }
+      >
+        <V1AiEmailAssistant currentCompanyId={currentCompanyId === 'ALL' ? undefined : currentCompanyId} />
+      </React.Suspense>
+    </div>
   );
 };
 

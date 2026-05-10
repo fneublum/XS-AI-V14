@@ -6,27 +6,41 @@
 // and switching to v1; v1 picks the key up and auto-opens the existing
 // Documents Modal (preview / download / email Invoice, PL, SLI, BOL).
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
 import { RowActions } from '../components/RowActions';
 import { useRowDelete } from '../components/useRowDelete';
-import { EmailComposeDrawer, EmailDraft } from '../components/EmailComposeDrawer';
 import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { useInvoices, Invoice } from '../queries/useInvoices';
+import { useBookings } from '../queries/useBookings';
+import { usePaymentTerms } from '../queries/usePaymentTerms';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useEditor } from '../providers/EditorProvider';
 import { useCompany } from '../providers/CompanyProvider';
 import { useToast } from '../primitives/Toast';
 import { Button, Input, FormField, Label } from '../primitives';
 import { DeliveryDocsModal } from '../components/DeliveryDocsModal';
+import { InvoicePreviewDialog } from '../components/InvoicePreviewDialog';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
 import { formatMoney as fmtMoney } from '../lib/formatMoney';
 
-const columns: DataTableColumn<Invoice>[] = [
+// Extract the POD code from either a UN/LOCODE (`BRPEC`) or a labeled
+// form like `Manaus (BRMAO)` — the field is stored both ways across
+// historical rows.
+const podShort = (pod: string | null): string => {
+  if (!pod) return '—';
+  const m = pod.match(/\(([A-Z]{5})\)/);
+  return m ? m[1] : pod;
+};
+
+const buildColumns = (
+  termsCodeByDescription: Map<string, string>,
+  etdByBookingNumber: Map<string, string | null>,
+): DataTableColumn<Invoice>[] => [
   { id: 'inv', header: 'Invoice', mono: true, sortable: true, filterable: true,
     value: r => r.invoiceNumber, cell: r => r.invoiceNumber },
   { id: 'sold', header: 'Sold to', sortable: true, filterable: true,
@@ -42,8 +56,28 @@ const columns: DataTableColumn<Invoice>[] = [
     value: r => r.incoterm ?? '',
     cell: r => <span className="font-mono text-[11.5px] text-slate-400">{r.incoterm ?? '—'}</span> },
   { id: 'terms', header: 'Terms', sortable: true, filterable: true,
-    value: r => r.paymentTerms ?? '',
-    cell: r => <span className="text-slate-400">{r.paymentTerms ?? '—'}</span> },
+    // Lookup the reference row so the column shows the short code
+    // (NET60, CAD, …) instead of the long description that is stored
+    // on the invoice row.
+    value: r => (r.paymentTerms ? termsCodeByDescription.get(r.paymentTerms.trim()) ?? r.paymentTerms : ''),
+    cell: r => {
+      const code = r.paymentTerms ? termsCodeByDescription.get(r.paymentTerms.trim()) : null;
+      return <span className="font-mono text-[11.5px] text-slate-400" title={r.paymentTerms ?? ''}>{code ?? r.paymentTerms ?? '—'}</span>;
+    } },
+  { id: 'pod', header: 'POD', mono: true, sortable: true, filterable: true,
+    value: r => podShort(r.pod),
+    cell: r => <span className="font-mono text-[11.5px] text-slate-400" title={r.pod ?? ''}>{podShort(r.pod)}</span> },
+  { id: 'etd', header: 'ETD', align: 'right', sortable: true,
+    // Resolve via the booking row — invoices don't store ETD directly.
+    value: r => (r.bookingNumber ? etdByBookingNumber.get(r.bookingNumber) ?? '' : ''),
+    cell: r => {
+      const etd = r.bookingNumber ? etdByBookingNumber.get(r.bookingNumber) : null;
+      return (
+        <span className="text-slate-500 font-mono tabular-nums text-[11px]">
+          {etd ? fmtDate(etd) : '—'}
+        </span>
+      );
+    } },
   { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true,
     value: r => r.totalAmount,
     cell: r => fmtMoney(r.totalAmount, r.currency) },
@@ -55,24 +89,6 @@ const columns: DataTableColumn<Invoice>[] = [
       </span>
     ) },
 ];
-
-const buildEmailDraft = (r: Invoice): EmailDraft => ({
-  to: '',
-  subject: `Invoice ${r.invoiceNumber} — ${r.soldTo ?? r.billToName ?? ''}`.trim(),
-  body: [
-    `Hello${r.billToName ? ' ' + r.billToName : ''},`,
-    '',
-    `Please find the details of Invoice ${r.invoiceNumber}:`,
-    r.soNumber ? `Sales order: ${r.soNumber}` : '',
-    r.incoterm ? `Incoterm: ${r.incoterm}` : '',
-    r.paymentTerms ? `Payment terms: ${r.paymentTerms}` : '',
-    r.totalAmount ? `Total: ${fmtMoney(r.totalAmount, r.currency)}` : '',
-    r.invoiceDate ? `Issued: ${r.invoiceDate.slice(0, 10)}` : '',
-    '',
-    'Best regards',
-  ].filter(Boolean).join('\n'),
-  contextLabel: `Invoice ${r.invoiceNumber}`,
-});
 
 // The row action now opens the native v2 Delivery Docs modal instead of
 // handing off to v1. The modal itself still offers a "Open full v1 flow"
@@ -169,12 +185,40 @@ const InvoicesV2: React.FC = () => {
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const [search, setSearch] = useState('');
-  const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
-  const [deliveryDocsInv, setDeliveryDocsInv] = useState<Invoice | null>(null);
+  const [deliveryDocsInvId, setDeliveryDocsInvId] = useState<string | null>(null);
+  // When the row-level Email action is used we open the same
+  // DeliveryDocsModal with Invoice + PL pre-selected and the email
+  // preview auto-opened, so the user gets PDFs attached and the
+  // broker CC'd without extra clicks.
+  const [emailAutoMode, setEmailAutoMode] = useState(false);
+  const [previewInvId, setPreviewInvId] = useState<string | null>(null);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
   const { openInvoice, openInvoiceCreate } = useEditor();
   const invoices = useInvoices(search);
+  const bookings = useBookings();
+  const paymentTerms = usePaymentTerms();
   const total = (invoices.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
+
+  // Lookups drive the Terms code (description → code), POD, and ETD
+  // (bookingNumber → etd) columns.
+  const termsCodeByDescription = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of paymentTerms.data ?? []) {
+      if (t.description && t.code) m.set(t.description.trim(), t.code);
+    }
+    return m;
+  }, [paymentTerms.data]);
+  const etdByBookingNumber = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const b of bookings.data ?? []) {
+      if (b.bookingNumber) m.set(b.bookingNumber, b.etd);
+    }
+    return m;
+  }, [bookings.data]);
+  const columns = useMemo(
+    () => buildColumns(termsCodeByDescription, etdByBookingNumber),
+    [termsCodeByDescription, etdByBookingNumber],
+  );
   const insert = useEntityInsert<Record<string, unknown>>({
     table: 'invoices',
     listQueryKeys: ['invoices'],
@@ -187,12 +231,33 @@ const InvoicesV2: React.FC = () => {
     rowLabel: r => r.invoiceNumber,
   });
 
+  // Re-derive from the live query so edits flow through to the
+  // delivery-docs / preview modals without re-opening them.
+  const deliveryDocsInv = useMemo(
+    () => invoices.data?.find(i => i.id === deliveryDocsInvId) ?? null,
+    [invoices.data, deliveryDocsInvId],
+  );
+  const previewInv = useMemo(
+    () => invoices.data?.find(i => i.id === previewInvId) ?? null,
+    [invoices.data, previewInvId],
+  );
+
+  const duplicateInvoice = (row: Invoice) => {
+    const { id: _id, createdAt: _createdAt, invoiceNumber: _inv, ...rest } = row;
+    openInvoiceCreate({
+      ...rest,
+      invoiceNumber: '',
+      invoiceDate: new Date().toISOString().slice(0, 10),
+    });
+  };
+
   const rowActions = (row: Invoice) => (
     <RowActions
-      onView={() => openInvoice(row)}
+      onView={() => setPreviewInvId(row.id)}
       onEdit={() => openInvoice(row)}
-      onEmail={() => setEmailDraft(buildEmailDraft(row))}
-      onDeliveryDocs={() => setDeliveryDocsInv(row)}
+      onEmail={() => { setEmailAutoMode(true); setDeliveryDocsInvId(row.id); }}
+      onDeliveryDocs={() => { setEmailAutoMode(false); setDeliveryDocsInvId(row.id); }}
+      onDuplicate={() => duplicateInvoice(row)}
       onDelete={() => confirmDelete(row)}
     />
   );
@@ -208,7 +273,7 @@ const InvoicesV2: React.FC = () => {
         }
         headerAction={
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={openInvoiceCreate}
+            <Button size="sm" onClick={() => openInvoiceCreate()}
               className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
               + New invoice
             </Button>
@@ -231,17 +296,20 @@ const InvoicesV2: React.FC = () => {
         onRowClick={r => openInvoice(r)}
         rowActions={rowActions}
         emptyAction={{ label: '+ New invoice', onClick: openInvoiceCreate }}
-        skeletonCols={[100, 200, 80, 80, 80, 60]}
+        skeletonCols={[100, 200, 80, 80, 80, 60, 60, 70, 80, 70]}
+        zebra
       />
       {deleteDialog}
-      <EmailComposeDrawer
-        open={!!emailDraft}
-        onOpenChange={(o) => !o && setEmailDraft(null)}
-        draft={emailDraft}
-      />
       <DeliveryDocsModal
         invoice={deliveryDocsInv}
-        onOpenChange={(o) => !o && setDeliveryDocsInv(null)}
+        onOpenChange={(o) => { if (!o) { setDeliveryDocsInvId(null); setEmailAutoMode(false); } }}
+        initialSelection={emailAutoMode ? { invoice: true, pl: true } : undefined}
+        autoEmail={emailAutoMode}
+      />
+      <InvoicePreviewDialog
+        invoice={previewInv}
+        onOpenChange={(o) => !o && setPreviewInvId(null)}
+        onOpenDeliveryDocs={(inv) => setDeliveryDocsInvId(inv.id)}
       />
       {aiUploadOpen && (
         <AiUploadModal<InvDraft>

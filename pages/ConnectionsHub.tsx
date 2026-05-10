@@ -122,7 +122,7 @@ const getInitials = (name: string): string => {
 const POLL_INTERVAL = 8000;
 
 // ─── WhatsApp Panel Component ───────────────────────────────────────
-const WhatsAppPanel: React.FC<{ currentUser?: any; currentCompanyId?: string }> = ({ currentUser, currentCompanyId }) => {
+export const WhatsAppPanel: React.FC<{ currentUser?: any; currentCompanyId?: string }> = ({ currentUser, currentCompanyId }) => {
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
     const [messages, setMessages] = useState<WaMessage[]>([]);
@@ -302,6 +302,23 @@ const WhatsAppPanel: React.FC<{ currentUser?: any; currentCompanyId?: string }> 
             metadata: { source: 'xs-crm-whatsapp' },
             createdAt: now
         };
+        // Gate outbound: WhatsApp only permits free-form `text` messages
+        // inside the 24h session window opened by an inbound. Outside
+        // it we'd need a pre-approved template — the previous
+        // `hall_notification_template` path was removed after Meta
+        // rejected the template. Surface a clear error instead of
+        // silently failing.
+        if (!hasActiveSession()) {
+            setInput(text);
+            setIsSending(false);
+            alert(
+                `Cannot send: no active 24h WhatsApp session with this contact.\n\n` +
+                `WhatsApp requires the contact to message you first to open the session. ` +
+                `To send cold outbound you'd need an approved template in Meta Business Manager.`,
+            );
+            return;
+        }
+
         setMessages(prev => [...prev, tempMsg]);
 
         try {
@@ -310,40 +327,14 @@ const WhatsAppPanel: React.FC<{ currentUser?: any; currentCompanyId?: string }> 
                 ? selectedConv.phoneNumber
                 : `+${selectedConv.phoneNumber}`;
 
-            // Use Supabase edge function proxy to call Meta Cloud API
-            const sessionActive = hasActiveSession();
-            const payload: any = {
-                to: toNumber,
-            };
-
-            if (sessionActive) {
-                payload.text = text;
-            } else {
-                // No active session — use approved template to initiate conversation
-                payload.templateName = TEMPLATE_NAME;
-            }
-
             let waData: any;
             try {
                 waData = await invokeEdgeFunction('whatsapp-send', {
                     method: 'POST',
-                    body: payload,
+                    body: { to: toNumber, text },
                 });
             } catch (err: any) {
                 throw new Error(err?.message || `Meta WhatsApp API error`);
-            }
-
-            // If we had to send a template, follow up with the actual free-form message text
-            if (!sessionActive) {
-                await new Promise(r => setTimeout(r, 1500));
-                try {
-                    await invokeEdgeFunction('whatsapp-send', {
-                        method: 'POST',
-                        body: { to: toNumber, text: text },
-                    });
-                } catch (err) {
-                    console.warn('[ConnectionsHub] Follow-up text after template failed:', err);
-                }
             }
 
             const messageSid = waData?.data?.messages?.[0]?.id || crypto.randomUUID();
@@ -357,7 +348,7 @@ const WhatsAppPanel: React.FC<{ currentUser?: any; currentCompanyId?: string }> 
                 messageType: 'text',
                 status: 'sent',
                 twilioSid: messageSid,
-                metadata: { source: 'xs-crm-whatsapp', templateUsed: !sessionActive },
+                metadata: { source: 'xs-crm-whatsapp' },
                 createdAt: now
             });
 

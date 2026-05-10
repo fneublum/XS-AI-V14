@@ -43,11 +43,18 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2 MB
 
 // Allowed models. Edit to add new Gemini variants.
 const ALLOWED_MODELS = new Set([
+    // Gemini 3 (current)
     'gemini-3-pro-preview',
     'gemini-3-pro',
+    // Gemini 2.5 (current, may require paid tier on some projects)
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-latest',
+    // Gemini 2.0 (deprecated by Google for new users, kept for old code)
     'gemini-2.0-flash',
     'gemini-2.0-flash-exp',
     'gemini-2.0-flash-lite',
+    // Gemini 1.5 (deprecated)
     'gemini-1.5-flash',
     'gemini-1.5-pro',
 ]);
@@ -153,8 +160,16 @@ Deno.serve(async (req: Request) => {
         console.error(
             `[gemini-proxy] upstream ${upstream.status}: ${upstreamText.slice(0, 500)}`,
         );
+        // Forward Google's error message so the client can surface
+        // "API key invalid", "quota exceeded", etc. rather than a
+        // generic "Gemini API error".
+        let upstreamMessage = upstreamText.slice(0, 300);
+        try {
+            const parsed = JSON.parse(upstreamText);
+            upstreamMessage = parsed?.error?.message ?? upstreamMessage;
+        } catch { /* keep raw */ }
         return json(
-            { error: 'Gemini API error', status: upstream.status },
+            { error: 'Gemini API error', status: upstream.status, detail: upstreamMessage },
             502,
             corsHeaders,
         );

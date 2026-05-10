@@ -684,6 +684,11 @@ export async function deleteMemory(memoryId: string): Promise<boolean> {
     }
 }
 
+// Alias kept for App.tsx's login flow which calls clearSession(userId) to
+// reset the dashboard chat between logins. Semantically equivalent to
+// clearMemories today — the chat session lives in the same table.
+export const clearSession = (userId: string): Promise<boolean> => clearMemories(userId);
+
 export async function clearMemories(userId: string): Promise<boolean> {
     try {
         const supabase = getSupabaseClient();

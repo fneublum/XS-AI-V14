@@ -26,6 +26,7 @@ import {
 } from '../services/pdf/proformaPdf';
 import { findCompany } from '../services/pdf/types';
 import { sendEmail } from '../../services/emailService';
+import { resolveRecipientsSync, joinRecipients } from '../services/recipients';
 
 interface Props {
   order: SalesOrder | null;
@@ -201,8 +202,11 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange, autoAc
             contentBytes: docToBase64(doc),
             contentType: 'application/pdf',
           }];
-          const customer = customers.data?.find(c => c.id === order.customerId)
-                        || customers.data?.find(c => c.name === order.customerName);
+          const recipients = resolveRecipientsSync({
+            actors: [{ customerId: order.customerId, customerName: order.customerName }],
+            customers: customers.data ?? [],
+          });
+          const joined = joinRecipients(recipients);
           const companyName = company?.name || 'EC4 Enterprises';
           const subject = `Proforma Invoice #${order.orderNumber} - ${order.customerName}`;
           const body = [
@@ -217,8 +221,9 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange, autoAc
             'Best regards,', companyName,
           ].filter(Boolean).join('\n');
           setEmailDraft({
-            to: customer?.email ?? '',
-            cc: '', subject, htmlBody: body, attachments,
+            to: joined.to,
+            cc: joined.cc,
+            subject, htmlBody: body, attachments,
           });
           setEmailPreviewOpen(true);
         } catch (err) {
@@ -279,9 +284,11 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange, autoAc
         contentType: 'application/pdf',
       }];
 
-      const customer = customers.data?.find(c => c.id === order.customerId)
-                    || customers.data?.find(c => c.name === order.customerName);
-      const toAddress = customer?.email ?? '';
+      const recipients = resolveRecipientsSync({
+        actors: [{ customerId: order.customerId, customerName: order.customerName }],
+        customers: customers.data ?? [],
+      });
+      const joined = joinRecipients(recipients);
       const companyName = company?.name || 'EC4 Enterprises';
 
       const subject = `Proforma Invoice #${order.orderNumber} - ${order.customerName}`;
@@ -303,7 +310,9 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange, autoAc
       ].filter(Boolean).join('\n');
 
       setEmailDraft({
-        to: toAddress, cc: '', subject, htmlBody: body, attachments,
+        to: joined.to,
+        cc: joined.cc,
+        subject, htmlBody: body, attachments,
       });
       setEmailPreviewOpen(true);
     } catch (err) {

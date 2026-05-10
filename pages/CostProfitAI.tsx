@@ -3571,7 +3571,7 @@ Best regards`
                                                     <option value="FOB">FOB — Free on Board</option>
                                                     <option value="CPT">CPT — Carriage Paid To</option>
                                                     <option value="CFR">CFR — Cost and Freight</option>
-                                                    <option value="CIF">CIF — Cost, Insurance & Freight</option>
+                                                    <option value="CIF">CIF — Cost + Insurance + Freight</option>
                                                     <option value="CIP">CIP — Carriage & Insurance Paid</option>
                                                     <option value="DAP">DAP — Delivered at Place</option>
                                                     <option value="DPU">DPU — Delivered at Place Unloaded</option>

@@ -26,7 +26,7 @@ const emptySlot = <T,>(): Slot<T> => ({ entity: null, mode: 'edit' });
 interface EditorContextValue {
   salesOrder: Slot<SalesOrder>;
   openSalesOrder: (o: SalesOrder) => void;
-  openSalesOrderCreate: () => void;
+  openSalesOrderCreate: (seed?: Partial<SalesOrder>) => void;
   closeSalesOrder: () => void;
 
   customer: Slot<Customer>;
@@ -41,12 +41,12 @@ interface EditorContextValue {
 
   invoice: Slot<Invoice>;
   openInvoice: (i: Invoice) => void;
-  openInvoiceCreate: () => void;
+  openInvoiceCreate: (seed?: Partial<Invoice>) => void;
   closeInvoice: () => void;
 
   purchaseOrder: Slot<PurchaseOrder>;
   openPurchaseOrder: (p: PurchaseOrder) => void;
-  openPurchaseOrderCreate: () => void;
+  openPurchaseOrderCreate: (seed?: Partial<PurchaseOrder>) => void;
   closePurchaseOrder: () => void;
 
   commission: Slot<CommissionRow>;
@@ -85,6 +85,8 @@ export const EMPTY_CUSTOMER: Customer = {
   taxId: null,
   contactPerson: null,
   email: null,
+  email2: null,
+  email3: null,
   phone: null,
   location: null,
   city: null,
@@ -98,6 +100,8 @@ export const EMPTY_CUSTOMER: Customer = {
   lastOrderDate: null,
   sharedWith: [],
   pod: null,
+  brokerName: null,
+  brokerEmail: null,
 };
 
 export const EMPTY_SUPPLIER: Supplier = {
@@ -243,7 +247,7 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const value = useMemo<EditorContextValue>(() => ({
     salesOrder,
     openSalesOrder:       (o) => setSO({ entity: o, mode: 'edit' }),
-    openSalesOrderCreate: ()  => setSO({ entity: EMPTY_SALES_ORDER, mode: 'create' }),
+    openSalesOrderCreate: (seed)  => setSO({ entity: { ...EMPTY_SALES_ORDER, ...(seed ?? {}) }, mode: 'create' }),
     closeSalesOrder:      ()  => setSO(emptySlot),
 
     customer,
@@ -258,12 +262,12 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     invoice,
     openInvoice:       (i) => setInvoice({ entity: i, mode: 'edit' }),
-    openInvoiceCreate: ()  => setInvoice({ entity: EMPTY_INVOICE, mode: 'create' }),
+    openInvoiceCreate: (seed)  => setInvoice({ entity: { ...EMPTY_INVOICE, ...(seed ?? {}) }, mode: 'create' }),
     closeInvoice:      ()  => setInvoice(emptySlot),
 
     purchaseOrder,
     openPurchaseOrder:       (p) => setPO({ entity: p, mode: 'edit' }),
-    openPurchaseOrderCreate: ()  => setPO({ entity: EMPTY_PURCHASE_ORDER, mode: 'create' }),
+    openPurchaseOrderCreate: (seed)  => setPO({ entity: { ...EMPTY_PURCHASE_ORDER, ...(seed ?? {}) }, mode: 'create' }),
     closePurchaseOrder:      ()  => setPO(emptySlot),
 
     commission,

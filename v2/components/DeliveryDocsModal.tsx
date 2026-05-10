@@ -12,7 +12,7 @@
 // actually land in the recipient's inbox (Outlook via MSAL or Gmail
 // via Google Identity — whichever is connected in Settings).
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
   X as XIcon, FileText, Package, ClipboardList, Ship,
@@ -27,6 +27,7 @@ import { useSuppliers } from '../queries/useSuppliers';
 import { useProducts } from '../queries/useProducts';
 import { usePackingLists } from '../queries/usePackingLists';
 import { useBookings } from '../queries/useBookings';
+import { usePorts } from '../queries/usePorts';
 import { useCompanyImages } from '../queries/useCompanyImages';
 import { Invoice } from '../queries/useInvoices';
 import { generateInvoicePdf } from '../services/pdf/invoicePdf';
@@ -35,11 +36,17 @@ import { generateSliPdf } from '../services/pdf/sliPdf';
 import { applyAdjustments } from '../services/pdf/priceAdjust';
 import { findCompany, PdfInvoice, InvoicePdfCtx } from '../services/pdf/types';
 import { sendEmail } from '../../services/emailService';
+import { resolveRecipients, joinRecipients } from '../services/recipients';
 import { Send } from 'lucide-react';
 
 interface Props {
   invoice: Invoice | null;
   onOpenChange: (open: boolean) => void;
+  /** Pre-select which documents should ship. Defaults to invoice only. */
+  initialSelection?: { invoice?: boolean; pl?: boolean; sli?: boolean; bol?: boolean };
+  /** When true, auto-open the email preview on mount so the invoice
+   *  drawer's Email action lands directly in the compose step. */
+  autoEmail?: boolean;
 }
 
 const toPdfInvoice = (inv: Invoice): PdfInvoice => ({
@@ -99,7 +106,7 @@ const handoffToV1 = (invoiceId: string) => {
   window.location.href = '/?v2=0';
 };
 
-export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) => {
+export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, initialSelection, autoEmail }) => {
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const companies = useCompanies();
@@ -108,9 +115,15 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
   const products = useProducts();
   const packingLists = usePackingLists();
   const bookings = useBookings();
+  const ports = usePorts();
   const logos = useCompanyImages('LOGO');
 
-  const [selection, setSelection] = useState({ invoice: true, pl: false, sli: false, bol: false });
+  const [selection, setSelection] = useState({
+    invoice: initialSelection?.invoice ?? true,
+    pl: initialSelection?.pl ?? false,
+    sli: initialSelection?.sli ?? false,
+    bol: initialSelection?.bol ?? false,
+  });
   const [brMode, setBrMode] = useState(false);
   const [halfMode, setHalfMode] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -127,9 +140,33 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
   });
   const [emailPreviewOpen, setEmailPreviewOpen] = useState(false);
 
+  // Load the EC4 stamp once so jsPDF can embed it in the signed docs.
+  const [stampUrl, setStampUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('/ec4_stamp.png');
+        if (!resp.ok) return;
+        const blob = await resp.blob();
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (!cancelled) setStampUrl(reader.result as string);
+        };
+        reader.readAsDataURL(blob);
+      } catch { /* no stamp */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     if (!invoice) return;
-    setSelection({ invoice: true, pl: false, sli: false, bol: false });
+    setSelection({
+      invoice: initialSelection?.invoice ?? true,
+      pl: initialSelection?.pl ?? false,
+      sli: initialSelection?.sli ?? false,
+      bol: initialSelection?.bol ?? false,
+    });
     setBrMode(false);
     setHalfMode(false);
   }, [invoice?.id]);
@@ -154,18 +191,63 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
     }
   }, [invoice, previewUrl]);
 
+  // When the parent opens the modal with `autoEmail`, jump straight to
+  // the email preview instead of waiting for the user to click "Email
+  // selected". Fires once per invoice open, after customers have loaded
+  // so the recipient / broker CC come through populated.
+  const emailSelectedRef = useRef<() => Promise<void>>();
+  const autoFiredRef = useRef(false);
+  useEffect(() => {
+    if (!invoice) { autoFiredRef.current = false; return; }
+    if (!autoEmail) return;
+    if (autoFiredRef.current) return;
+    if (!customers.data) return;
+    autoFiredRef.current = true;
+    const t = setTimeout(() => { emailSelectedRef.current?.(); }, 0);
+    return () => clearTimeout(t);
+  }, [autoEmail, invoice?.id, customers.data]);
+
   if (!invoice) return null;
 
-  const buildCtx = (): InvoicePdfCtx => ({
+  // Lazy stamp fetch — if the mount effect hasn't populated `stampUrl`
+  // by the time the user clicks Preview / Download (e.g. a fast click
+  // on a slow connection), fetch it synchronously so the stamp never
+  // silently drops.
+  const ensureStamp = async (): Promise<string | null> => {
+    if (stampUrl) return stampUrl;
+    try {
+      const resp = await fetch('/ec4_stamp.png', { cache: 'force-cache' });
+      if (!resp.ok) {
+        // eslint-disable-next-line no-console
+        console.warn('[DeliveryDocsModal] stamp fetch non-200:', resp.status);
+        return null;
+      }
+      const blob = await resp.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('stamp read failed'));
+        reader.readAsDataURL(blob);
+      });
+      setStampUrl(dataUrl);
+      return dataUrl;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[DeliveryDocsModal] stamp fetch error:', e);
+      return null;
+    }
+  };
+
+  const buildCtx = (overrideStamp?: string | null): InvoicePdfCtx => ({
     company,
     customers: customers.data ?? [],
     suppliers: suppliers.data ?? [],
     products: products.data ?? [],
     packingLists: packingLists.data ?? [],
     bookings: bookings.data ?? [],
-    ports: [],
+    ports: (ports.data ?? []).map(p => ({ id: p.id, code: p.code, name: p.name, country: p.country ?? undefined })),
     logoUrl,
-    stampUrl: null,
+    stampUrl: overrideStamp ?? stampUrl,
     brMode,
   });
 
@@ -173,15 +255,16 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
     applyAdjustments(toPdfInvoice(invoice), { brMode, halfMode });
 
   // ─── Preview / Download handlers ─────────────────────────────
-  const docFactory = (kind: 'invoice' | 'pl' | 'sli') => {
+  const docFactory = async (kind: 'invoice' | 'pl' | 'sli') => {
     const inv = adjustedInvoice();
-    const ctx = buildCtx();
+    const stamp = await ensureStamp();
+    const ctx = buildCtx(stamp);
     if (kind === 'invoice') return generateInvoicePdf(inv, ctx, false);
     if (kind === 'pl')      return generatePackingListPdf(inv, ctx, false);
     return generateSliPdf(inv, ctx, false);
   };
 
-  const runAction = (
+  const runAction = async (
     kind: 'invoice' | 'pl' | 'sli',
     action: 'preview' | 'download',
     filename: string,
@@ -189,7 +272,7 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
     const key = `${kind}-${action}`;
     setBusy(key);
     try {
-      const doc = docFactory(kind);
+      const doc = await docFactory(kind);
       if (action === 'preview') {
         // Inline iframe preview — avoids browser PDF auto-download.
         if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -213,7 +296,7 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
   // Mirror v1 PLInvoiceEngine: build a draft, open a review UI with
   // editable To / CC / Subject / Body + attachment list. Nothing is
   // sent until the user hits Send in the preview.
-  const emailSelected = () => {
+  const emailSelected = async () => {
     const selectedCount = Object.values(selection).filter(Boolean).length;
     if (selectedCount === 0) {
       toast.push({ kind: 'warning', title: 'Select at least one document' });
@@ -221,7 +304,8 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
     }
     try {
       const inv = adjustedInvoice();
-      const ctx = buildCtx();
+      const stamp = await ensureStamp();
+      const ctx = buildCtx(stamp);
       const attachments: Attachment[] = [];
 
       if (selection.invoice) {
@@ -261,18 +345,34 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
         });
       }
 
-      const customer = customers.data?.find(c =>
-        c.name === invoice.billToName || c.name === invoice.soldTo,
+      // Invoice drawer labels these as "Consignee (Sold to)" and
+      // "Notify (Bill to)". The unified resolver matches each name to
+      // a customer row and merges TO/CC with cargo-agent CC auto-lookup.
+      const recipients = await resolveRecipients({
+        actors: [
+          { customerName: invoice.billToName ?? null, role: 'primary' },
+          { customerName: invoice.soldTo    ?? null, role: 'secondary' },
+          { customerName: invoice.consignee ?? null, role: 'secondary' },
+        ],
+        bookingNumber: invoice.bookingNumber || invoice.transportRef || null,
+        includeBroker: true,
+        customers: customers.data ?? [],
+      });
+      const joined = joinRecipients(recipients);
+      const toAddress = joined.to;
+      const ccAddress = joined.cc;
+      const primaryCustomer = (customers.data ?? []).find(c =>
+        recipients.audit.matchedCustomerIds.includes(c.id),
       );
-      const toAddress = customer?.email ?? '';
       const companyName = company?.name || 'X-Solution';
 
+      const bookingTag = invoice.bookingNumber ? `Booking #${invoice.bookingNumber} - ` : '';
       const subject = brMode
-        ? `BR Documents - Invoice #${inv.invoiceNumber}`
-        : `Shipping Documents - Invoice #${invoice.invoiceNumber}`;
+        ? `BR Documents - ${bookingTag}Invoice #${inv.invoiceNumber}`
+        : `Shipping Documents - ${bookingTag}Invoice #${invoice.invoiceNumber}`;
 
       const body = [
-        brMode ? 'Dear Partner,' : `Dear ${customer?.name || 'Customer'},`,
+        brMode ? 'Dear Partner,' : `Dear ${primaryCustomer?.name || 'Customer'},`,
         '',
         'Please find attached the documents for your order:',
         '',
@@ -289,7 +389,7 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
 
       setEmailDraft({
         to: toAddress,
-        cc: '',
+        cc: ccAddress,
         subject,
         htmlBody: body,
         attachments,
@@ -303,6 +403,9 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange }) =>
       });
     }
   };
+  // Keep the ref in sync so the `autoEmail` effect (declared above the
+  // early-return to respect rules-of-hooks) can invoke this function.
+  emailSelectedRef.current = emailSelected;
 
   // Send the drafted email via the shared email service.
   const sendEmailFromPreview = async () => {

@@ -1,8 +1,8 @@
 // Phase 3B — Receivables query.
 //
-// Reads commission_sales_orders where paymentStatus is not 'PAID' — the
-// commission pipeline is where the invoice/payment lifecycle lives in
-// this schema (the plain `invoices` table has no paymentStatus column).
+// Reads the `invoices` table (same source as v1 FinanceReceivables).
+// Receivables = customer invoices owed to us; the commission pipeline
+// previously wired here was the wrong source.
 
 import { useCompany } from '../providers/CompanyProvider';
 import { getSupabaseClient } from '../../services/supabase';
@@ -10,25 +10,26 @@ import { useSupabaseQuery } from './useSupabaseQuery';
 
 export interface Receivable {
   id: string;
-  orderNumber: string;
-  invoiceNumber: string | null;
+  invoiceNumber: string;
   customerName: string;
-  orderTotal: number;
-  paymentStatus: string;
-  invoiceStatus: string | null;
-  deliveryDate: string | null;
+  invoiceDate: string | null;
+  paymentTerms: string | null;
+  totalAmount: number;
+  currency: string;
+  qbStatus: string | null;
   createdAt: string;
 }
 
 interface Raw {
   id: string;
-  orderNumber: string | null;
   invoiceNumber: string | null;
-  customerName: string | null;
-  orderTotal: number | string | null;
-  paymentStatus: string | null;
-  invoiceStatus: string | null;
-  deliveryDate: string | null;
+  soldTo: string | null;
+  billToName: string | null;
+  invoiceDate: string | null;
+  paymentTerms: string | null;
+  totalAmount: number | string | null;
+  currency: string | null;
+  qb_status: string | null;
   createdAt: string | null;
 }
 
@@ -45,28 +46,27 @@ export function useReceivables(search?: string) {
     async () => {
       const supabase = getSupabaseClient();
       let q = scopeByCompany(
-        supabase.from('commission_sales_orders')
-          .select('id, orderNumber, invoiceNumber, customerName, orderTotal, paymentStatus, invoiceStatus, deliveryDate, createdAt')
-          .neq('paymentStatus', 'PAID')
-          .order('createdAt', { ascending: false, nullsFirst: false })
+        supabase.from('invoices')
+          .select('id, invoiceNumber, soldTo, billToName, invoiceDate, paymentTerms, totalAmount, currency, qb_status, createdAt')
+          .order('invoiceDate', { ascending: false, nullsFirst: false })
           .limit(200),
         currentCompanyId,
       );
       if (needle) {
-        q = q.or(`orderNumber.ilike.*${needle}*,invoiceNumber.ilike.*${needle}*,customerName.ilike.*${needle}*`) as typeof q;
+        q = q.or(`invoiceNumber.ilike.*${needle}*,soldTo.ilike.*${needle}*,billToName.ilike.*${needle}*`) as typeof q;
       }
       const { data, error } = await q;
       if (error) throw new Error(error.message);
 
       return ((data as Raw[] | null) ?? []).map(r => ({
         id: r.id,
-        orderNumber: r.orderNumber ?? r.id,
-        invoiceNumber: r.invoiceNumber,
-        customerName: r.customerName ?? '—',
-        orderTotal: Number(r.orderTotal) || 0,
-        paymentStatus: r.paymentStatus ?? 'PENDING',
-        invoiceStatus: r.invoiceStatus,
-        deliveryDate: r.deliveryDate,
+        invoiceNumber: r.invoiceNumber ?? r.id,
+        customerName: r.soldTo ?? r.billToName ?? '—',
+        invoiceDate: r.invoiceDate,
+        paymentTerms: r.paymentTerms,
+        totalAmount: Number(r.totalAmount) || 0,
+        currency: r.currency ?? 'USD',
+        qbStatus: r.qb_status ?? null,
         createdAt: r.createdAt ?? '',
       }));
     },

@@ -11,7 +11,72 @@ import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/us
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import { SupabaseSelectField } from './SupabaseSelectField';
+import { AiAutofillButton } from './AiAutofillButton';
+import type { ExtractSpec } from '../queries/useGeminiExtractTyped';
 import type { EditorMode } from '../providers/EditorProvider';
+
+interface CustomerDraft {
+  name?: string;
+  nickname?: string;
+  taxId?: string;
+  contactPerson?: string;
+  email?: string;
+  email2?: string;
+  email3?: string;
+  phone?: string;
+  location?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
+}
+
+const customerExtractSpec: ExtractSpec<CustomerDraft> = {
+  prompt: [
+    'Extract customer/company contact details from the attached document or text.',
+    'Look for company names, tax IDs, contact persons, emails, phone numbers,',
+    'and postal addresses — business cards, vendor forms, signature blocks,',
+    'header letterheads, and CRM exports are all fair game.',
+    '',
+    'Return strict JSON with these optional string fields (omit if unknown):',
+    '{',
+    '  "name": "legal company name",',
+    '  "nickname": "short name or DBA",',
+    '  "taxId": "tax ID / EIN / CNPJ / VAT number",',
+    '  "contactPerson": "primary contact full name",',
+    '  "email": "primary email",',
+    '  "email2": "secondary email",',
+    '  "email3": "tertiary email",',
+    '  "phone": "primary phone with country code if shown",',
+    '  "location": "street address line",',
+    '  "city": "city",',
+    '  "state": "state / province / region",',
+    '  "zip": "postal code",',
+    '  "country": "country"',
+    '}',
+  ].join('\n'),
+  normalize: (parsed) => {
+    const pick = (k: string): string | undefined => {
+      const v = parsed[k];
+      return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+    };
+    return {
+      name: pick('name'),
+      nickname: pick('nickname'),
+      taxId: pick('taxId') ?? pick('tax_id') ?? pick('ein') ?? pick('vat'),
+      contactPerson: pick('contactPerson') ?? pick('contact_person') ?? pick('contact'),
+      email: pick('email'),
+      email2: pick('email2') ?? pick('secondaryEmail'),
+      email3: pick('email3') ?? pick('tertiaryEmail'),
+      phone: pick('phone') ?? pick('telephone'),
+      location: pick('location') ?? pick('street') ?? pick('address'),
+      city: pick('city'),
+      state: pick('state') ?? pick('region') ?? pick('province'),
+      zip: pick('zip') ?? pick('postalCode') ?? pick('postal_code'),
+      country: pick('country'),
+    };
+  },
+};
 
 interface Props {
   customer: Customer | null;
@@ -49,6 +114,8 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
   const [taxId, setTaxId]                   = useState('');
   const [contactPerson, setContactPerson]   = useState('');
   const [email, setEmail]                   = useState('');
+  const [email2, setEmail2]                 = useState('');
+  const [email3, setEmail3]                 = useState('');
   const [phone, setPhone]                   = useState('');
   const [location, setLocation]             = useState('');
   const [city, setCity]                     = useState('');
@@ -81,6 +148,8 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
     setTaxId(customer.taxId ?? '');
     setContactPerson(customer.contactPerson ?? '');
     setEmail(customer.email ?? '');
+    setEmail2((customer as any).email2 ?? '');
+    setEmail3((customer as any).email3 ?? '');
     setPhone(customer.phone ?? '');
     setLocation(customer.location ?? '');
     setCity(customer.city ?? '');
@@ -107,6 +176,28 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
   const toggleShare = (id: string) =>
     setSharedWith(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
+  // Non-destructive merge: only overwrite a field if the user hasn't typed
+  // anything into it yet. Lets users ⌘V a business card after half-filling
+  // the form without clobbering what they already had.
+  const applyAutofill = (d: CustomerDraft) => {
+    const setIfEmpty = (
+      cur: string, next: string | undefined, set: (s: string) => void,
+    ) => { if (next && !cur.trim()) set(next); };
+    setIfEmpty(name, d.name, setName);
+    setIfEmpty(nickname, d.nickname, setNickname);
+    setIfEmpty(taxId, d.taxId, setTaxId);
+    setIfEmpty(contactPerson, d.contactPerson, setContactPerson);
+    setIfEmpty(email, d.email, setEmail);
+    setIfEmpty(email2, d.email2, setEmail2);
+    setIfEmpty(email3, d.email3, setEmail3);
+    setIfEmpty(phone, d.phone, setPhone);
+    setIfEmpty(location, d.location, setLocation);
+    setIfEmpty(city, d.city, setCity);
+    setIfEmpty(stateVal, d.state, setStateVal);
+    setIfEmpty(zip, d.zip, setZip);
+    setIfEmpty(country, d.country, setCountry);
+  };
+
   const buildPayload = () => ({
     companyId: companyId || currentCompanyId,
     name: name.trim(),
@@ -114,6 +205,8 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
     taxId: taxId || null,
     contactPerson: contactPerson || null,
     email: email || null,
+    email2: email2 || null,
+    email3: email3 || null,
     phone: phone || null,
     location: location || null,
     city: city || null,
@@ -216,6 +309,14 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
         }
       >
         <div className="space-y-4">
+          <div className="flex items-center justify-end">
+            <AiAutofillButton<CustomerDraft>
+              extractSpec={customerExtractSpec}
+              onExtracted={applyAutofill}
+              label="AI Autofill"
+            />
+          </div>
+
           {isSystem && availableCompanies.length > 0 && (
             <div className={sectionClass}>
               <Label className={labelClass}>Assign to company</Label>
@@ -304,6 +405,16 @@ export const CustomerDrawer: React.FC<Props> = ({ customer, mode, onOpenChange }
               <FormField>
                 <Label className={labelClass}>Phone</Label>
                 <Input value={phone} onChange={e => setPhone(e.target.value)} className={inputClass + ' font-mono tabular-nums'} placeholder="+1 555…" />
+              </FormField>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <FormField>
+                <Label className={labelClass}>Email 2</Label>
+                <Input type="email" value={email2} onChange={e => setEmail2(e.target.value)} className={inputClass} placeholder="secondary@company.com" />
+              </FormField>
+              <FormField>
+                <Label className={labelClass}>Email 3</Label>
+                <Input type="email" value={email3} onChange={e => setEmail3(e.target.value)} className={inputClass} placeholder="tertiary@company.com" />
               </FormField>
             </div>
           </div>

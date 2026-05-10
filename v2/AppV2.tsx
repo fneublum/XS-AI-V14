@@ -10,6 +10,15 @@ import { QueryProvider } from './providers/QueryProvider';
 import { ToastProvider, useToast } from './primitives/Toast';
 import { EditorProvider, useEditor } from './providers/EditorProvider';
 import { AppShell } from './layout/AppShell';
+import {
+  LayoutDashboard, Plug, Sparkles,
+  ShoppingCart, FileSignature, Package, Receipt, BellRing,
+  Briefcase, ClipboardCheck,
+  Calculator, CalendarCheck, Ship,
+  Wallet, ArrowDownLeft, ArrowUpRight, Briefcase as BriefcaseIcon,
+  Database, Settings as SettingsIcon,
+  Building2, Compass, Handshake, Truck, Banknote, Wrench,
+} from 'lucide-react';
 import { CompanySwitcher } from './layout/CompanySwitcher';
 import { CommandPalette, PaletteCommand, PaletteDataProvider } from './layout/CommandPalette';
 import { SalesOrderDrawer }    from './components/SalesOrderDrawer';
@@ -22,15 +31,18 @@ import { ProductDrawer }    from './components/ProductDrawer';
 import { ShortcutsHelp, ShortcutGroup } from './layout/ShortcutsHelp';
 import { DataMenuModal } from './layout/DataMenuModal';
 import { SettingsMenuModal } from './layout/SettingsMenuModal';
-import { FinanceMenuModal } from './layout/FinanceMenuModal';
 import { getSupabaseClient } from '../services/supabase';
 import { SalesOrder } from './queries/useSalesOrders';
+import { useBackgroundJobs } from './hooks/useBackgroundJobs';
+import { setInboxLogUser } from './services/inboxLog';
+import { Dock } from './layout/Dock';
 
 const DashboardV2       = lazy(() => import('./routes/DashboardV2'));
 const CustomersV2       = lazy(() => import('./routes/CustomersV2'));
 const SuppliersV2       = lazy(() => import('./routes/SuppliersV2'));
 const SalesOrdersV2     = lazy(() => import('./routes/SalesOrdersV2'));
-const PurchaseOrdersV2  = lazy(() => import('./routes/PurchaseOrdersV2'));
+const PurchaseOrdersV2     = lazy(() => import('./routes/PurchaseOrdersV2'));
+const PurchaseCostWizardV2 = lazy(() => import('./routes/PurchaseCostWizardV2'));
 const OpportunitiesV2   = lazy(() => import('./routes/OpportunitiesV2'));
 const ProductsV2        = lazy(() => import('./routes/ProductsV2'));
 const InventoryV2       = lazy(() => import('./routes/InventoryV2'));
@@ -56,13 +68,17 @@ const AiLogisticsManagerV2  = lazy(() => import('./routes/AiLogisticsManagerV2')
 const EmailAgentV2          = lazy(() => import('./routes/EmailAgentV2'));
 const SettingsV2            = lazy(() => import('./routes/SettingsV2'));
 const ConnectionsV2         = lazy(() => import('./routes/ConnectionsV2'));
+const ConnectionsHubV2      = lazy(() => import('./routes/ConnectionsHubV2'));
+const ConnectionsTabsV2     = lazy(() => import('./routes/ConnectionsTabsV2'));
+const AiInboxV2             = lazy(() => import('./routes/AiInboxV2'));
 const PLV2                  = lazy(() => import('./routes/PLV2'));
 const LogisticsDocsV2       = lazy(() => import('./routes/LogisticsDocsV2'));
-const SopiciCommissionsV2   = lazy(() => import('./routes/SopiciCommissionsV2'));
+const AgentSalesOrdersV2    = lazy(() => import('./routes/AgentSalesOrdersV2'));
 const PLInvoiceEngineV2     = lazy(() => import('./routes/PLInvoiceEngineV2'));
 const CostProfitAIV2        = lazy(() => import('./routes/CostProfitAIV2'));
 const LoginV2               = lazy(() => import('./routes/LoginV2'));
 const PaymentTermsV2        = lazy(() => import('./routes/PaymentTermsV2'));
+const AgentPortalV2         = lazy(() => import('./routes/AgentPortalV2'));
 
 // Sidebar layout — matches the 2026-04-18 spec. Workspace holds the
 // overview + AI surfaces, Trading / Agent Sales / Logistics / Finance
@@ -73,69 +89,112 @@ const PaymentTermsV2        = lazy(() => import('./routes/PaymentTermsV2'));
 const buildSections = (
   openDataMenu: () => void,
   openSettingsMenu: () => void,
-  openFinanceMenu: () => void,
-): import('./layout/Sidebar').SidebarSection[] => [
+  userRole?: string,
+): import('./layout/Sidebar').SidebarSection[] => {
+  // Cargo Agent users get a scoped sidebar — only their portal.
+  if (userRole === 'Cargo Agent') {
+    return [{
+      id: 'portal',
+      label: 'Portal',
+      items: [
+        { id: 'agent-portal-quotes',   label: 'Freight Quotes' },
+        { id: 'agent-portal-bookings', label: 'Bookings' },
+      ],
+    }];
+  }
+  return [
   {
     id: 'workspace',
     label: 'Workspace',
+    accent: 'indigo',
+    icon: Building2,
     items: [
-      { id: 'dashboard',    label: 'Dashboard',          hint: 'D' },
-      { id: 'ai-email',     label: 'AI Email Assistant' },
-      { id: 'ai-upload',    label: 'AI Upload' },
+      { id: 'dashboard',        label: 'Dashboard',     icon: LayoutDashboard },
+      // `connections-tabs` wraps Email / WhatsApp / Briefing. The Email
+      // tab is now the v2-native AI Inbox (autonomous processor) so
+      // the old separate "AI Inbox" menu item was removed — one place
+      // for all email activity. Account management
+      // (connect / disconnect / scope) lives under Settings →
+      // Connections. The legacy v1 bridge is still reachable at
+      // `connections-hub` for deep links.
+      { id: 'connections-tabs', label: 'Connections',    icon: Plug },
+      { id: 'ai-sales',         label: 'AI Sales Agent', icon: Sparkles },
     ],
   },
   {
     id: 'trading',
     label: 'Trading',
+    accent: 'sky',
+    icon: Compass,
     items: [
-      { id: 'purchase-orders', label: 'Purchase & cost' },
-      { id: 'sales-orders',    label: 'Sales Orders (Proformas)', hint: 'O' },
-      { id: 'pl-invoice',      label: 'Packing list & Invoice' },
-      { id: 'invoices',        label: 'Invoice & docs' },
-      { id: 'trading-followup', label: 'Trading Follow Up' },
+      { id: 'purchase-orders',  label: 'Purchase & cost',          icon: ShoppingCart },
+      { id: 'purchase-orders-list', label: 'Purchase Orders',      icon: Receipt },
+      { id: 'sales-orders',     label: 'Sales Orders (Proformas)', icon: FileSignature },
+      { id: 'pl-invoice',       label: 'Packing list & Invoice',   icon: Package },
+      { id: 'invoices',         label: 'Invoice & docs',           icon: Receipt },
+      { id: 'trading-followup', label: 'Trading Follow Up',        icon: BellRing },
     ],
   },
   {
     id: 'agent-sales',
     label: 'Agent Sales',
+    accent: 'violet',
+    icon: Handshake,
     items: [
-      { id: 'sopici',          label: 'Agent Sales Orders' },
-      { id: 'commissions',     label: 'Commission Invoices' },
-      { id: 'agent-followup',  label: 'Agent Follow Up' },
+      { id: 'sopici',           label: 'Agent Sales Orders', icon: Briefcase },
+      { id: 'agent-followup',   label: 'Agent Follow Up',    icon: ClipboardCheck },
     ],
   },
   {
     id: 'logistics',
     label: 'Logistics',
+    accent: 'amber',
+    icon: Truck,
     items: [
-      { id: 'freight-quotes', label: 'Freight Quotes', hint: 'Q' },
-      { id: 'bookings',       label: 'Bookings',       hint: 'B' },
-      { id: 'bol',            label: 'Bill of Ladings' },
+      { id: 'freight-quotes',   label: 'Freight Quotes',  icon: Calculator },
+      { id: 'bookings',         label: 'Bookings',        icon: CalendarCheck },
+      { id: 'bol',              label: 'Bill of Ladings', icon: Ship },
     ],
   },
   {
-    // Finance / Data / Settings are click-through menus — `onClick`
-    // wins over `onSelect(id)` in Sidebar.tsx so they don't route.
-    // Payables / Receivables / Customer Balances live inside the
-    // Finance modal.
-    id: 'admin',
+    id: 'finance',
+    label: 'Finance',
+    accent: 'emerald',
+    icon: Banknote,
     items: [
-      { id: '__finance',  label: 'Finance',  onClick: openFinanceMenu },
-      { id: '__data',     label: 'Data',     onClick: openDataMenu },
-      { id: '__settings', label: 'Settings', onClick: openSettingsMenu },
+      { id: 'payables',          label: 'Payables',          icon: ArrowUpRight },
+      { id: 'receivables',       label: 'Receivables',       icon: ArrowDownLeft },
+      { id: 'customer-balances', label: 'Customer Balances', icon: Wallet },
     ],
   },
-];
+  {
+    // Data / Settings are click-through menus — `onClick` wins over
+    // `onSelect(id)` in Sidebar.tsx so they don't route.
+    id: 'system',
+    label: 'System',
+    accent: 'slate',
+    icon: Wrench,
+    items: [
+      { id: '__data',     label: 'Data',     icon: Database,    onClick: openDataMenu },
+      { id: '__settings', label: 'Settings', icon: SettingsIcon, onClick: openSettingsMenu },
+    ],
+  },
+  ];
+};
 
 const routeTitles: Record<string, string> = {
   'dashboard':       'Dashboard',
   // Workspace
   'ai-email':        'AI Email Assistant',
   'ai-upload':       'AI Upload',
-  'ai-sales':        'AI Sales',
+  'ai-sales':        'AI Sales Agent',
+  'ai-inbox':        'AI Inbox',
+  'connections-tabs': 'Connections',
+  'connections-hub': 'Connections',
   'ai-logistics':    'AI Logistics',
   // Trading
   'purchase-orders': 'Purchase & cost',
+  'purchase-orders-list': 'Purchase Orders',
   'sales-orders':    'Sales Orders (Proformas)',
   'pl-invoice':      'Packing list & Invoice',
   'invoices':        'Invoice & docs',
@@ -173,17 +232,13 @@ const routeTitles: Record<string, string> = {
   'cost-profit':     'Cost / Profit AI',
   'ai-dashboard':    'AI Dashboard',
   'email-agent':     'Email Agent',
+  'agent-portal-quotes':   'Freight Quotes',
+  'agent-portal-bookings': 'Bookings',
 };
 
-const routeHotkeys: Record<string, string> = {
-  d: 'dashboard',
-  c: 'customers',
-  o: 'sales-orders',
-  r: 'products',      // R for "pRoducts" (P is already Purchase Orders)
-  i: 'inventory',
-  q: 'freight-quotes',
-  b: 'bookings',
-};
+// Single-letter hotkeys removed per user preference — navigation goes
+// via sidebar click, the command palette (⌘K), or the floating Dock.
+const routeHotkeys: Record<string, string> = {};
 
 // Section each route belongs to, for breadcrumbs.
 const routeSection: Record<string, string> = {
@@ -192,11 +247,15 @@ const routeSection: Record<string, string> = {
   'ai-email':        'Workspace',
   'ai-upload':       'Workspace',
   'ai-sales':        'Workspace',
+  'ai-inbox':        'Workspace',
+  'connections-tabs': 'Workspace',
+  'connections-hub': 'Workspace',
   'ai-logistics':    'Workspace',
   'ai-dashboard':    'Workspace',
   'email-agent':     'Workspace',
   // Trading
   'purchase-orders': 'Trading',
+  'purchase-orders-list': 'Trading',
   'sales-orders':    'Trading',
   'pl-invoice':      'Trading',
   'invoices':        'Trading',
@@ -230,6 +289,9 @@ const routeSection: Record<string, string> = {
   'companies':       'Settings',
   'connections':     'Settings',
   'settings':        'Settings',
+  // Agent portal (Cargo Agent users only)
+  'agent-portal-quotes':   'Portal',
+  'agent-portal-bookings': 'Portal',
 };
 
 const Fallback: React.FC = () => (
@@ -243,18 +305,6 @@ function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q 
 }
 
 const shortcutGroups: ShortcutGroup[] = [
-  {
-    title: 'Navigation',
-    items: [
-      { keys: ['D'], label: 'Dashboard' },
-      { keys: ['C'], label: 'Customers' },
-      { keys: ['O'], label: 'Sales Orders' },
-      { keys: ['R'], label: 'Products (catalog)' },
-      { keys: ['I'], label: 'Inventory' },
-      { keys: ['Q'], label: 'Freight Quotes' },
-      { keys: ['B'], label: 'Bookings' },
-    ],
-  },
   {
     title: 'Global',
     items: [
@@ -283,7 +333,6 @@ const AppV2Inner: React.FC = () => {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
-  const [financeMenuOpen, setFinanceMenuOpen] = useState(false);
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const { user, loading: authLoading } = useAuth();
@@ -297,6 +346,26 @@ const AppV2Inner: React.FC = () => {
     commission, closeCommission,
     product, closeProduct,
   } = useEditor();
+
+  // Autonomous background loop — scans inbox + flags stuck bookings.
+  useBackgroundJobs();
+
+  // Scope the inbox log to the current user so a shared browser
+  // doesn't cross-contaminate histories.
+  useEffect(() => { setInboxLogUser(user?.id); }, [user?.id]);
+
+  // Cargo Agent users land on their portal and can't navigate elsewhere —
+  // the sidebar is empty for them, but an old sessionStorage value could
+  // still route them into a staff-only view. Pin to one of the two portal
+  // routes; default to Freight Quotes.
+  useEffect(() => {
+    if (user?.role !== 'Cargo Agent') return;
+    const portalRoutes = ['agent-portal-quotes', 'agent-portal-bookings'];
+    if (!portalRoutes.includes(activeId)) {
+      setActiveId('agent-portal-quotes');
+      try { sessionStorage.setItem('xs_v2_active_route', 'agent-portal-quotes'); } catch { /* noop */ }
+    }
+  }, [user?.role, activeId]);
 
   const navigate = useCallback((id: string) => {
     if (!routeTitles[id]) return;
@@ -319,6 +388,18 @@ const AppV2Inner: React.FC = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, [navigate]);
+
+  // Global navigate bus — any deep child can request a route change
+  // without prop-drilling via `window.dispatchEvent(new CustomEvent(
+  // 'xs-v2-navigate', { detail: { id: 'bookings' } }))`.
+  useEffect(() => {
+    const onNavigate = (e: Event) => {
+      const id = (e as CustomEvent).detail?.id as string | undefined;
+      if (id) navigate(id);
+    };
+    window.addEventListener('xs-v2-navigate', onNavigate);
+    return () => window.removeEventListener('xs-v2-navigate', onNavigate);
   }, [navigate]);
 
   const breadcrumbs = useMemo(() => {
@@ -344,7 +425,19 @@ const AppV2Inner: React.FC = () => {
       ];
     }
     const section = routeSection[activeId];
-    const crumbs = [{ id: 'ws', label: 'ACME' }];
+    // Leading crumb is the current company's name (resolves `ALL` to the
+    // user's first allowed company, else the first loaded company). This
+    // replaced the hard-coded "ACME" placeholder leftover from the v2
+    // scaffold so the breadcrumb reflects real workspace context.
+    const list = companies.data ?? [];
+    let resolvedId = currentCompanyId;
+    if (resolvedId === 'ALL') {
+      resolvedId = user?.allowedCompanies?.[0] ?? list[0]?.id ?? 'ALL';
+    }
+    const wsLabel =
+      currentCompanyId === 'ALL' ? 'All companies' :
+      (list.find(c => c.id === resolvedId)?.name ?? resolvedId);
+    const crumbs = [{ id: 'ws', label: wsLabel }];
     if (section && section !== 'Overview') crumbs.push({ id: 'section', label: section });
     crumbs.push({ id: activeId, label: routeTitles[activeId] ?? activeId, current: true } as typeof crumbs[0] & { current: boolean });
     return crumbs;
@@ -501,29 +594,24 @@ const AppV2Inner: React.FC = () => {
         sections={buildSections(
           () => setDataMenuOpen(true),
           () => setSettingsMenuOpen(true),
-          () => setFinanceMenuOpen(true),
+          user?.role,
         )}
         activeId={activeId}
         onNavigate={navigate}
-        workspace={{ name: 'XS-ERP', subtitle: 'v12' }}
+        workspace={{ name: 'XS-ERP' }}
         sidebarFooter={<CompanySwitcher />}
         breadcrumbs={breadcrumbs}
         onSearch={() => setPaletteOpen(true)}
-        primaryAction={{
-          label: '+ New order',
-          onClick: () => toast.push({
-            kind: 'success',
-            title: 'New order',
-            description: 'Wiring lands with the Sales Orders editor port.',
-          }),
-        }}
+        onOpenSettings={() => navigate('settings')}
+        onOpenConnections={() => navigate('connections')}
       >
         <Suspense fallback={<Fallback />}>
           {activeId === 'dashboard'       && <DashboardV2 />}
           {activeId === 'customers'       && <CustomersV2 />}
           {activeId === 'suppliers'       && <SuppliersV2 />}
           {activeId === 'sales-orders'    && <SalesOrdersV2 />}
-          {activeId === 'purchase-orders' && <PurchaseOrdersV2 />}
+          {activeId === 'purchase-orders' && <PurchaseCostWizardV2 />}
+          {activeId === 'purchase-orders-list' && <PurchaseOrdersV2 />}
           {activeId === 'opportunities'   && <OpportunitiesV2 />}
           {activeId === 'products'        && <ProductsV2 />}
           {activeId === 'inventory'       && <InventoryV2 />}
@@ -549,14 +637,24 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'email-agent'     && <EmailAgentV2 />}
           {activeId === 'settings'        && <SettingsV2 />}
           {activeId === 'connections'     && <ConnectionsV2 />}
-          {activeId === 'sopici'          && <SopiciCommissionsV2 />}
+          {activeId === 'connections-hub'  && <ConnectionsHubV2 />}
+          {activeId === 'connections-tabs' && <ConnectionsTabsV2 />}
+          {activeId === 'ai-inbox'         && <AiInboxV2 />}
+          {activeId === 'sopici'          && <AgentSalesOrdersV2 />}
           {activeId === 'pl-invoice'      && <PLInvoiceEngineV2 />}
           {activeId === 'cost-profit'     && <CostProfitAIV2 />}
           {activeId === 'ai-sales'        && <AiSalesV2 />}
           {activeId === 'trading-followup' && <TradingFollowUpV2 />}
           {activeId === 'agent-followup'  && <AgentFollowUpV2 navigate={navigate} />}
+          {activeId === 'agent-portal-quotes'   && <AgentPortalV2 view="quotes" />}
+          {activeId === 'agent-portal-bookings' && <AgentPortalV2 view="bookings" />}
         </Suspense>
       </AppShell>
+
+      {/* Cargo Agent users live in a focused portal (Freight Quotes +
+       *  Bookings only), so the floating Dock's full-app shortcuts are
+       *  irrelevant — hide it for them to keep the portal uncluttered. */}
+      {user?.role !== 'Cargo Agent' && <Dock activeId={activeId} userId={user?.id} />}
 
       <CommandPalette
         open={paletteOpen}
@@ -577,13 +675,7 @@ const AppV2Inner: React.FC = () => {
         navigate={navigate}
       />
 
-      <FinanceMenuModal
-        open={financeMenuOpen}
-        onOpenChange={setFinanceMenuOpen}
-        navigate={navigate}
-      />
-
-      <ShortcutsHelp
+<ShortcutsHelp
         open={shortcutsOpen}
         onOpenChange={setShortcutsOpen}
         groups={shortcutGroups}

@@ -37,6 +37,13 @@ export interface FieldSource {
    * port pick populate both `origin_port_code` and `origin_port`.
    */
   writeAlso?: Array<{ sourceColumn: string; targetKey: string }>;
+  /**
+   * Optional column-equality filters applied to the supabase query.
+   * Use cases: `{ isSystemProduct: true }` to hide auto-OCR products
+   * from a curated dropdown; `{ status: 'ACTIVE' }` to limit to
+   * active rows only. Multiple keys are AND'd.
+   */
+  equalsFilter?: Record<string, string | number | boolean>;
 }
 
 interface Props {
@@ -45,6 +52,40 @@ interface Props {
   onPick: (value: string, extra: Record<string, string>) => void;
   placeholder?: string;
   mono?: boolean;
+  /**
+   * When true, act as a combobox: the user can either pick a row or
+   * type a free-form string (no matching row required). Used for
+   * fields like `pickup_location` where addresses live outside any
+   * canonical lookup table but a port list is still a useful shortcut.
+   */
+  allowFreeText?: boolean;
+  /**
+   * When true and `allowFreeText` is set, the closed input shows the
+   * resolved label (`labelColumn`) instead of the raw stored code —
+   * so a saved code like `TT50_50` displays as the human description
+   * "50% Advance + 50% Cash Against Documents" once the user moves
+   * focus away. Free-form values that don't match any row still
+   * render as themselves.
+   */
+  showResolvedLabel?: boolean;
+  /**
+   * Fired after the user picks an existing row from the dropdown
+   * (NOT on free-text Enter / blur). Receives the full source row so
+   * callers can do follow-up writes — e.g. flipping a flag like
+   * `isSystemProduct=true` to auto-promote a curated product on first
+   * use.
+   */
+  onAfterPick?: (row: Record<string, unknown>) => void;
+  /**
+   * When the saved value doesn't match any row in the (filtered)
+   * options — typically because an OCR-derived string isn't in the
+   * curated catalog — render the closed input as empty rather than
+   * showing the raw value. The underlying value is left untouched in
+   * memory; the user must pick a real row to commit a new one.
+   * Useful for "Pick system product…" where stale OCR text shouldn't
+   * masquerade as a system match.
+   */
+  noMatchRendersEmpty?: boolean;
 }
 
 interface Row {
@@ -52,11 +93,15 @@ interface Row {
 }
 
 export const SupabaseSelectField: React.FC<Props> = ({
-  source, value, onPick, placeholder, mono,
+  source, value, onPick, placeholder, mono, allowFreeText = false, showResolvedLabel = false,
+  onAfterPick, noMatchRendersEmpty = false,
 }) => {
   const { currentCompanyId } = useCompany();
+  const filterKey = source.equalsFilter
+    ? Object.entries(source.equalsFilter).map(([k, v]) => `${k}=${String(v)}`).join('&')
+    : '';
   const { data, isLoading, error } = useSupabaseQuery<Row[]>(
-    ['ref', source.table, source.valueColumn, source.labelColumn ?? '', String(source.scopeByCompany ?? false), currentCompanyId],
+    ['ref', source.table, source.valueColumn, source.labelColumn ?? '', String(source.scopeByCompany ?? false), currentCompanyId, filterKey],
     async () => {
       const sb = getSupabaseClient();
       const cols = new Set<string>();
@@ -75,6 +120,11 @@ export const SupabaseSelectField: React.FC<Props> = ({
         const col = source.companyIdColumn ?? 'companyId';
         q = q.or(`${col}.eq.${currentCompanyId},${col}.eq.ALL`) as typeof q;
       }
+      if (source.equalsFilter) {
+        for (const [col, val] of Object.entries(source.equalsFilter)) {
+          q = q.eq(col, val) as typeof q;
+        }
+      }
       const { data, error } = await q;
       if (error) throw new Error(error.message);
       return (data as unknown as Row[] | null) ?? [];
@@ -83,7 +133,9 @@ export const SupabaseSelectField: React.FC<Props> = ({
 
   const options = useMemo(() => {
     const rows = data ?? [];
-    // Deduplicate by valueColumn.
+    // Deduplicate by valueColumn + sort by label (trim-aware so stray
+    // leading whitespace in the stored value doesn't throw off
+    // ascending order).
     const seen = new Set<string>();
     const out: Row[] = [];
     for (const row of rows) {
@@ -92,8 +144,14 @@ export const SupabaseSelectField: React.FC<Props> = ({
       seen.add(v);
       out.push(row);
     }
+    const sortKey = source.orderBy ?? source.labelColumn ?? source.valueColumn;
+    out.sort((a, b) => {
+      const av = String(a[sortKey] ?? '').trim().toLowerCase();
+      const bv = String(b[sortKey] ?? '').trim().toLowerCase();
+      return av.localeCompare(bv);
+    });
     return out;
-  }, [data, source.valueColumn]);
+  }, [data, source.valueColumn, source.orderBy, source.labelColumn]);
 
   const labelCol = source.labelColumn ?? source.valueColumn;
 
@@ -138,6 +196,7 @@ export const SupabaseSelectField: React.FC<Props> = ({
       }
     }
     onPick(v, extras);
+    onAfterPick?.(row);
     setFilter('');
     setOpen(false);
   };
@@ -145,11 +204,11 @@ export const SupabaseSelectField: React.FC<Props> = ({
   const selectedLabel = useMemo(() => {
     if (!value) return '';
     const row = options.find(o => String(o[source.valueColumn]) === value);
-    if (!row) return value;
+    if (!row) return noMatchRendersEmpty ? '' : value;
     const l = String(row[labelCol] ?? value);
     const s = source.secondaryColumn ? String(row[source.secondaryColumn] ?? '') : '';
     return s ? `${l} · ${s}` : l;
-  }, [value, options, source.valueColumn, labelCol, source.secondaryColumn]);
+  }, [value, options, source.valueColumn, labelCol, source.secondaryColumn, noMatchRendersEmpty]);
 
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
@@ -180,8 +239,10 @@ export const SupabaseSelectField: React.FC<Props> = ({
   const hint =
     error ? `Load failed: ${error.message}` :
     isLoading ? `Loading ${source.table}…` :
-    options.length === 0 ? `No ${source.table} yet` :
-    `${filtered.length} of ${options.length} · Enter to pick · Esc to close`;
+    options.length === 0 ? (allowFreeText ? 'Type freely' : `No ${source.table} yet`) :
+    allowFreeText
+      ? `${filtered.length} of ${options.length} · Enter to pick · typing is allowed`
+      : `${filtered.length} of ${options.length} · Enter to pick · Esc to close`;
 
   const inputBase =
     'h-8 w-full text-[12.5px] bg-[#111111] border border-[#1f1f1f] rounded-md pl-7 pr-7 ' +
@@ -194,9 +255,37 @@ export const SupabaseSelectField: React.FC<Props> = ({
         <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
         <input
           type="text"
-          value={open ? filter : selectedLabel}
-          onFocus={() => setOpen(true)}
-          onChange={e => { setFilter(e.target.value); setOpen(true); }}
+          // In free-text mode the input always shows the live value so
+          // typing commits straight through. Strict mode keeps the
+          // filter-vs-label split (label when closed, filter when open).
+          value={allowFreeText
+            ? (open
+                ? filter
+                : (noMatchRendersEmpty
+                    ? selectedLabel  // already '' when no match
+                    : ((showResolvedLabel ? selectedLabel : null) || value || '')))
+            : (open ? filter : selectedLabel)}
+          onFocus={() => {
+            setOpen(true);
+            if (allowFreeText) {
+              // When `noMatchRendersEmpty` and the saved value isn't
+              // in the (filtered) options, opening with the value as
+              // the search filter would render "No match" — exactly
+              // the case where we want the user to see the full list.
+              // Detect that and seed an empty filter instead.
+              const matched = !!options.find(o => String(o[source.valueColumn]) === value);
+              setFilter(noMatchRendersEmpty && !matched ? '' : (value || ''));
+            }
+          }}
+          onChange={e => {
+            const next = e.target.value;
+            setFilter(next);
+            setOpen(true);
+            // Commit every keystroke as the field value so the drawer
+            // save picks up whatever the user typed even if they never
+            // pick a row.
+            if (allowFreeText) onPick(next, {});
+          }}
           onKeyDown={onKey}
           placeholder={placeholder ?? (value ? '' : `Select ${source.table}…`)}
           className={inputBase}
@@ -222,8 +311,11 @@ export const SupabaseSelectField: React.FC<Props> = ({
           ref={listRef}
           role="listbox"
           className={cn(
-            'mt-1.5 rounded-md border border-[#1f1f1f] bg-[#0a0a0a]',
-            'shadow-[0_8px_24px_rgba(0,0,0,0.5)] max-h-56 overflow-y-auto',
+            // Float above the layout so narrow grid cells don't clip or
+            // truncate the option text.
+            'absolute left-0 top-full mt-1.5 z-30 min-w-full w-max max-w-[420px]',
+            'rounded-md border border-[#1f1f1f] bg-[#0a0a0a]',
+            'shadow-[0_8px_24px_rgba(0,0,0,0.5)] max-h-64 overflow-y-auto',
             'divide-y divide-[#141414]',
           )}
         >
