@@ -265,6 +265,38 @@ const DocumentAuditV2: React.FC = () => {
         </span>
       ),
     },
+    // Column order requested: status / date / shipper / consignee /
+    // invoice # / BL # / Issues / Warns / Audited / Actions.
+    // (Deal + Carrier dropped from the list view; both still visible in
+    // the audit detail modal.)
+    {
+      id: 'bl_date', header: 'Date', sortable: true, mono: true,
+      value: r => r.bl_date ?? '',
+      cell: r => r.bl_date
+        ? <span className="font-mono tabular-nums text-slate-300 text-[11.5px]">{fmtDate(r.bl_date)}</span>
+        : <span className="text-slate-700">—</span>,
+    },
+    {
+      id: 'shipper', header: 'Shipper', sortable: true, filterable: true,
+      value: r => r.shipper ?? '',
+      cell: r => r.shipper
+        ? <span className="text-slate-300 text-[11.5px]" title={r.shipper}>{r.shipper}</span>
+        : <span className="text-slate-700">—</span>,
+    },
+    {
+      id: 'consignee', header: 'Consignee', sortable: true, filterable: true,
+      value: r => r.consignee ?? '',
+      cell: r => r.consignee
+        ? <span className="text-slate-300 text-[11.5px]" title={r.consignee}>{r.consignee}</span>
+        : <span className="text-slate-700">—</span>,
+    },
+    {
+      id: 'invoice_number', header: 'Invoice #', sortable: true, filterable: true, mono: true,
+      value: r => r.invoice_number ?? '',
+      cell: r => r.invoice_number
+        ? <span className="font-mono text-slate-300 text-[11.5px]">{r.invoice_number}</span>
+        : <span className="text-slate-700">—</span>,
+    },
     {
       id: 'bl_number', header: 'BL #', sortable: true, filterable: true, mono: true,
       value: r => r.bl_number,
@@ -279,14 +311,6 @@ const DocumentAuditV2: React.FC = () => {
       ),
     },
     {
-      id: 'deal_name', header: 'Deal', sortable: true, filterable: true,
-      value: r => r.deal_name ?? '',
-      cell: r => <span className="text-slate-300">{r.deal_name ?? '—'}</span>,
-    },
-    // Company column removed — the global company switcher already
-    // scopes the audit list to the current company, so a per-row Company
-    // badge was redundant (and stole horizontal space from Carrier/Deal).
-    {
       id: 'hold_risk_count', header: 'Issues', sortable: true, mono: true, align: 'right',
       value: r => r.hold_risk_count,
       cell: r => r.hold_risk_count > 0
@@ -299,13 +323,6 @@ const DocumentAuditV2: React.FC = () => {
       cell: r => r.warn_count > 0
         ? <Badge variant="warning">{r.warn_count}</Badge>
         : <span className="text-slate-600">—</span>,
-    },
-    {
-      id: 'correction_carrier', header: 'Carrier', sortable: true, filterable: true,
-      value: r => r.correction_carrier ?? '',
-      cell: r => r.correction_carrier
-        ? <span className="text-slate-400 text-[11.5px]">{r.correction_carrier}</span>
-        : <span className="text-slate-700">—</span>,
     },
     {
       id: 'audited_at', header: 'Audited', sortable: true, mono: true, align: 'right',

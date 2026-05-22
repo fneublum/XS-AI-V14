@@ -66,6 +66,13 @@ export interface BlAudit {
   notes: string | null;
   report_log_path: string | null;
   applied_corrections: AppliedCorrection[];
+  // Denormalized document headers (populated by Hermes Agent on each
+  // audit run; partially backfilled from issues_json for existing rows
+  // — see 20260522210000_bl_audits_denormalize_doc_headers.sql).
+  shipper: string | null;
+  consignee: string | null;
+  invoice_number: string | null;
+  bl_date: string | null; // ISO date 'YYYY-MM-DD'
 }
 
 export interface UseBlAuditsOptions {
@@ -119,6 +126,10 @@ export function useBlAudits(opts: UseBlAuditsOptions = {}) {
         resolved_at: r.resolved_at ?? null,
         notes: r.notes ?? null,
         report_log_path: r.report_log_path ?? null,
+        shipper:        ((r as Record<string, unknown>).shipper as string | null) ?? null,
+        consignee:      ((r as Record<string, unknown>).consignee as string | null) ?? null,
+        invoice_number: ((r as Record<string, unknown>).invoice_number as string | null) ?? null,
+        bl_date:        ((r as Record<string, unknown>).bl_date as string | null) ?? null,
       }));
     },
   });
