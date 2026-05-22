@@ -150,3 +150,19 @@ export function useBlAuditPatch() {
     },
   });
 }
+
+/** Hard-delete a bl_audits row. Use only for phantom rows with no source
+ *  CI/PL — the audit trail should otherwise be preserved. */
+export function useBlAuditDelete() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { bl_number: string }>({
+    mutationFn: async ({ bl_number }) => {
+      const sb = getSupabaseClient();
+      const { error } = await sb.from('bl_audits').delete().eq('bl_number', bl_number);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['blAudits'] });
+    },
+  });
+}

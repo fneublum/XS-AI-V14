@@ -7,7 +7,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   ShieldAlert, ShieldCheck, ShieldQuestion, Link2, CheckCircle2, AlertTriangle,
-  Eye, Pencil, X as XIcon, Send, RefreshCw, Clock, Loader2,
+  Eye, Pencil, X as XIcon, Send, RefreshCw, Clock, Loader2, Trash2,
 } from 'lucide-react';
 import {
   Card, CardHeader, CardTitle, CardBody, Badge, Button, Input, Skeleton, EmptyState,
@@ -15,7 +15,7 @@ import {
 import { Modal } from '../primitives/Modal';
 import { useToast } from '../primitives/Toast';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
-import { useBlAudits, useBlAuditPatch, type AppliedCorrection, type BlAudit, type BlAuditStatus, type BlAuditIssue } from '../queries/useBlAudits';
+import { useBlAudits, useBlAuditPatch, useBlAuditDelete, type AppliedCorrection, type BlAudit, type BlAuditStatus, type BlAuditIssue } from '../queries/useBlAudits';
 import { useCompany } from '../providers/CompanyProvider';
 import { useCompanies } from '../queries/useCompanies';
 import { formatDate as fmtDate } from '../lib/formatDate';
@@ -198,6 +198,8 @@ const DocumentAuditV2: React.FC = () => {
     search,
   });
   const patch = useBlAuditPatch();
+  const del = useBlAuditDelete();
+  const [confirmDelete, setConfirmDelete] = useState<BlAudit | null>(null);
 
   // Sort: status priority then most-recently audited first.
   const rows = useMemo(() => {
@@ -345,7 +347,7 @@ const DocumentAuditV2: React.FC = () => {
       ),
     },
     {
-      id: 'actions', header: '', sortable: false, align: 'right',
+      id: 'actions', header: 'Actions', sortable: false, align: 'right',
       value: () => '',
       cell: r => (
         <div className="flex items-center justify-end gap-0.5">
@@ -373,6 +375,11 @@ const DocumentAuditV2: React.FC = () => {
           {r.correction_authorized && !r.correction_email_sent_at && (
             <Badge variant="info" title="Hermes will dispatch within ~60s">authorized</Badge>
           )}
+          <button
+            type="button" title="Delete audit row (use only for phantom rows)" aria-label="Delete"
+            onClick={(e) => { e.stopPropagation(); setConfirmDelete(r); }}
+            className="p-1 rounded-sm text-slate-500 hover:text-rose-400 hover:bg-rose-500/10"
+          ><Trash2 size={14} /></button>
         </div>
       ),
     },
@@ -481,6 +488,60 @@ const DocumentAuditV2: React.FC = () => {
         onApplyCorrection={onApplyCorrection}
         busy={patch.isPending}
       />
+
+      {/* Delete-confirmation dialog — destructive, requires explicit click */}
+      <Modal
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        title="Delete audit row"
+        className="max-w-md"
+      >
+        <div className="space-y-3">
+          <p className="text-[13px] text-slate-300">
+            Permanently delete the audit row for{' '}
+            <span className="font-mono text-slate-100">{confirmDelete?.bl_number}</span>?
+          </p>
+          <p className="text-[12px] text-slate-500">
+            This removes the row from <code className="text-slate-400">bl_audits</code>.
+            Use only for phantom rows with no source CI/PL. Otherwise the row will
+            be re-created the next time Hermes audits this BL.
+          </p>
+          <div className="flex justify-end gap-2 pt-2 border-t border-[#1f1f1f]">
+            <Button
+              variant="secondary" size="sm"
+              onClick={() => setConfirmDelete(null)}
+              className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={del.isPending}
+              loading={del.isPending}
+              onClick={() => {
+                if (!confirmDelete) return;
+                const bl = confirmDelete.bl_number;
+                del.mutate(
+                  { bl_number: bl },
+                  {
+                    onSuccess: () => {
+                      toast.push({ kind: 'success', title: `Deleted audit row for ${bl}` });
+                      setConfirmDelete(null);
+                    },
+                    onError: (err) => {
+                      toast.push({ kind: 'error', title: 'Delete failed', description: err.message });
+                    },
+                  },
+                );
+              }}
+              className="bg-rose-500/15 border border-rose-500/40 text-rose-300 hover:bg-rose-500/25"
+            >
+              <Trash2 size={12} className="mr-1.5" />
+              Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };
