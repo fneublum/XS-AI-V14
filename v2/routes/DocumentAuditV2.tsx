@@ -147,6 +147,17 @@ function fieldLabel(key: string | null | undefined): string {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// Keep the Shipper / Consignee columns narrow on the list view by
+// showing only the first two whitespace-separated tokens of the company
+// name (e.g. "EC4 ENTERPRISES LLC" → "EC4 ENTERPRISES"). The full name
+// is still surfaced via the cell's title tooltip and the audit detail
+// modal. Empty / single-token names pass through unchanged.
+function firstTwoWords(s: string | null | undefined): string {
+  if (!s) return '';
+  const tokens = String(s).trim().split(/\s+/);
+  return tokens.slice(0, 2).join(' ');
+}
+
 function relativeAgo(iso: string | null): string {
   if (!iso) return '—';
   const ms = Date.now() - new Date(iso).getTime();
@@ -280,14 +291,14 @@ const DocumentAuditV2: React.FC = () => {
       id: 'shipper', header: 'Shipper', sortable: true, filterable: true,
       value: r => r.shipper ?? '',
       cell: r => r.shipper
-        ? <span className="text-slate-300 text-[11.5px]" title={r.shipper}>{r.shipper}</span>
+        ? <span className="text-slate-300 text-[11.5px]" title={r.shipper}>{firstTwoWords(r.shipper)}</span>
         : <span className="text-slate-700">—</span>,
     },
     {
       id: 'consignee', header: 'Consignee', sortable: true, filterable: true,
       value: r => r.consignee ?? '',
       cell: r => r.consignee
-        ? <span className="text-slate-300 text-[11.5px]" title={r.consignee}>{r.consignee}</span>
+        ? <span className="text-slate-300 text-[11.5px]" title={r.consignee}>{firstTwoWords(r.consignee)}</span>
         : <span className="text-slate-700">—</span>,
     },
     {
