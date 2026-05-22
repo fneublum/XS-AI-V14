@@ -1,7 +1,7 @@
 // Phase 3B — v2 Packing Lists.
 
 import React, { useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Check, X } from 'lucide-react';
 import { Badge, Button } from '../primitives';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
@@ -14,6 +14,7 @@ import { useToast } from '../primitives/Toast';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { EmailComposeDrawer, EmailDraft } from '../components/EmailComposeDrawer';
 import { usePackingLists, PackingList } from '../queries/usePackingLists';
+import { useAiDraftAction } from '../queries/useAiDraftActions';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
 import {
@@ -32,7 +33,20 @@ const statusTone = (status: string): BadgeTone => {
 
 const columns: DataTableColumn<PackingList>[] = [
   { id: 'pl', header: 'PL #', mono: true, sortable: true, filterable: true,
-    value: r => r.plNumber, cell: r => r.plNumber },
+    value: r => r.plNumber,
+    cell: r => (
+      <span className="inline-flex items-center gap-1.5">
+        {r.ai_status === 'ai_draft' && (
+          <span
+            title="AI-extracted draft — review before approving"
+            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[9px] font-semibold uppercase tracking-wider"
+          >
+            <Sparkles size={9} />AI
+          </span>
+        )}
+        {r.plNumber}
+      </span>
+    ) },
   { id: 'bl', header: 'B/L #', mono: true, sortable: true, filterable: true,
     value: r => r.blNumber ?? '',
     cell: r => <span className="text-slate-500">{r.blNumber ?? '—'}</span> },
@@ -68,6 +82,9 @@ const PackingListsV2: React.FC = () => {
   const [batchUploadOpen, setBatchUploadOpen] = useState(false);
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   const pls = usePackingLists(search);
+  const aiDecide = useAiDraftAction({
+    onSuccess: () => toast.push({ kind: 'success', title: 'Draft decision saved' }),
+  });
   const insert = useEntityInsert<Record<string, unknown>>({
     table: 'packing_lists',
     listQueryKeys: ['packingLists', 'logisticsDocs'],
@@ -130,7 +147,6 @@ const PackingListsV2: React.FC = () => {
         error={pls.error}
         onRetry={pls.refetch}
         onRowClick={openView}
-        rowActions={rowActions}
         headerAction={
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={openCreate}
@@ -151,6 +167,38 @@ const PackingListsV2: React.FC = () => {
         }
         emptyAction={search ? undefined : { label: '+ New packing list', onClick: openCreate }}
         skeletonCols={[100, 100, 100, 160, 120, 60]}
+        rowClassName={r =>
+          r.ai_status === 'ai_draft'
+            ? '!bg-amber-500/5 border-l-2 border-l-amber-400'
+            : r.ai_status === 'rejected'
+            ? 'opacity-50'
+            : ''
+        }
+        rowActions={(r) => (
+          <div className="flex items-center justify-end gap-1">
+            {r.ai_status === 'ai_draft' && (
+              <>
+                <Button
+                  size="sm"
+                  onClick={(e) => { e.stopPropagation(); aiDecide.mutate({ table: 'packing_lists', rowId: r.id, decision: 'approve' }); }}
+                  className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25 h-6 px-2 text-[11px] font-medium rounded-sm inline-flex items-center gap-1"
+                  title="Approve AI-extracted draft"
+                >
+                  <Check size={11} />Approve
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={(e) => { e.stopPropagation(); aiDecide.mutate({ table: 'packing_lists', rowId: r.id, decision: 'reject' }); }}
+                  className="bg-red-500/15 border border-red-500/40 text-red-300 hover:bg-red-500/25 h-6 px-2 text-[11px] font-medium rounded-sm inline-flex items-center gap-1"
+                  title="Reject AI-extracted draft"
+                >
+                  <X size={11} />Reject
+                </Button>
+              </>
+            )}
+            {rowActions(r)}
+          </div>
+        )}
       />
       <QuickCreateDrawer
         open={createOpen}

@@ -4,6 +4,8 @@ import { useCompany } from '../providers/CompanyProvider';
 import { getSupabaseClient } from '../../services/supabase';
 import { useSupabaseQuery } from './useSupabaseQuery';
 
+export type AiStatus = 'ai_draft' | 'approved' | 'rejected';
+
 export interface PackingList {
   id: string;
   plNumber: string;
@@ -17,6 +19,12 @@ export interface PackingList {
   date: string | null;
   status: string;
   createdAt: string;
+  // Optional so existing object-construction sites don't need to know about
+  // AI-draft markers. Default is 'approved' (treat untagged rows as live data).
+  ai_status?: AiStatus;
+  ai_source_pdf_path?: string | null;
+  ai_extracted_at?: string | null;
+  ai_extracted_by?: string | null;
 }
 
 interface Raw {
@@ -32,6 +40,10 @@ interface Raw {
   date: string | null;
   status: string | null;
   createdAt: string | null;
+  ai_status: string | null;
+  ai_source_pdf_path: string | null;
+  ai_extracted_at: string | null;
+  ai_extracted_by: string | null;
 }
 
 function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
@@ -48,7 +60,7 @@ export function usePackingLists(search?: string) {
       const supabase = getSupabaseClient();
       let q = scopeByCompany(
         supabase.from('packing_lists')
-          .select('id, plNumber, blNumber, soNumber, shipper, consignee, carrier, containerNumber, scheduledShipDate, date, status, createdAt')
+          .select('id, plNumber, blNumber, soNumber, shipper, consignee, carrier, containerNumber, scheduledShipDate, date, status, createdAt, ai_status, ai_source_pdf_path, ai_extracted_at, ai_extracted_by')
           .order('createdAt', { ascending: false, nullsFirst: false })
           .limit(200),
         currentCompanyId,
@@ -72,6 +84,10 @@ export function usePackingLists(search?: string) {
         date: r.date,
         status: r.status ?? 'DRAFT',
         createdAt: r.createdAt ?? '',
+        ai_status: (r.ai_status === 'ai_draft' || r.ai_status === 'rejected') ? r.ai_status : 'approved',
+        ai_source_pdf_path: r.ai_source_pdf_path,
+        ai_extracted_at: r.ai_extracted_at,
+        ai_extracted_by: r.ai_extracted_by,
       }));
     },
   );

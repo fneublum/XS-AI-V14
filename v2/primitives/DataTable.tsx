@@ -61,6 +61,10 @@ interface DataTableProps<T> {
    *  a hair so more rows fit above the fold. Default keeps the standard
    *  padding other routes expect. */
   density?: 'default' | 'compact';
+  /** Optional per-row className. Used e.g. to mark AI-draft rows with a
+   *  yellow left border + tinted background so they stand out from
+   *  user-approved rows. */
+  rowClassName?: (row: T) => string;
 }
 
 const alignClass: Record<NonNullable<DataTableColumn<unknown>['align']>, string> = {
@@ -207,7 +211,7 @@ function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClos
 
 export function DataTable<T>({
   columns, rows, getRowId, onRowClick, emptyMessage = 'No rows', rowActions, defaultSort, zebra = true,
-  density = 'default',
+  density = 'default', rowClassName,
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<SortState>(defaultSort ?? null);
   const [filters, setFilters] = useState<Record<string, Set<string>>>({});
@@ -392,6 +396,7 @@ export function DataTable<T>({
                   onRowClick && 'cursor-pointer',
                   zebra && i % 2 === 1 && 'bg-sky-400/10',
                   'hover:bg-[#111111]',
+                  rowClassName?.(row),
                 )}
               >
                 {columns.map(col => (

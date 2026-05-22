@@ -15,6 +15,7 @@ import { useRowDelete } from '../components/useRowDelete';
 import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { useInvoices, Invoice } from '../queries/useInvoices';
+import { useAiDraftAction } from '../queries/useAiDraftActions';
 import { useBookings } from '../queries/useBookings';
 import { useCompanies } from '../queries/useCompanies';
 import { useCustomers } from '../queries/useCustomers';
@@ -54,7 +55,20 @@ const buildColumns = (
   etdByBookingNumber: Map<string, string | null>,
 ): DataTableColumn<Invoice>[] => [
   { id: 'inv', header: 'Invoice', mono: true, sortable: true, filterable: true,
-    value: r => r.invoiceNumber, cell: r => r.invoiceNumber },
+    value: r => r.invoiceNumber,
+    cell: r => (
+      <span className="inline-flex items-center gap-1.5">
+        {r.ai_status === 'ai_draft' && (
+          <span
+            title="AI-extracted draft — review before approving"
+            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[9px] font-semibold uppercase tracking-wider"
+          >
+            <Sparkles size={9} />AI
+          </span>
+        )}
+        {r.invoiceNumber}
+      </span>
+    ) },
   { id: 'sold', header: 'Sold to', sortable: true, filterable: true,
     value: r => r.soldTo ?? r.billToName ?? '',
     cell: r => {
@@ -357,18 +371,44 @@ const InvoicesV2: React.FC = () => {
     });
   };
 
+  const aiDecide = useAiDraftAction({
+    onSuccess: () => toast.push({ kind: 'success', title: 'Draft decision saved' }),
+  });
+
   const rowActions = (row: Invoice) => (
-    <RowActions
-      onView={() => setPreviewInvId(row.id)}
-      onEdit={() => openInvoice(row)}
-      onEmail={() => { setEmailAutoMode(true); setDeliveryDocsInvId(row.id); }}
-      onDeliveryDocs={() => { setEmailAutoMode(false); setDeliveryDocsInvId(row.id); }}
-      onSave={() => handleSaveToDropbox(row)}
-      saving={savingId === row.id}
-      saveLabel={`Save to Dropbox · ${dropboxFolderName(row)}`}
-      onDuplicate={() => duplicateInvoice(row)}
-      onDelete={() => confirmDelete(row)}
-    />
+    <div className="flex items-center justify-end gap-1">
+      {row.ai_status === 'ai_draft' && (
+        <>
+          <Button
+            size="sm"
+            onClick={(e) => { e.stopPropagation(); aiDecide.mutate({ table: 'invoices', rowId: row.id, decision: 'approve' }); }}
+            className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25 h-6 px-2 text-[11px] font-medium rounded-sm inline-flex items-center gap-1"
+            title="Approve AI-extracted draft"
+          >
+            ✓ Approve
+          </Button>
+          <Button
+            size="sm"
+            onClick={(e) => { e.stopPropagation(); aiDecide.mutate({ table: 'invoices', rowId: row.id, decision: 'reject' }); }}
+            className="bg-red-500/15 border border-red-500/40 text-red-300 hover:bg-red-500/25 h-6 px-2 text-[11px] font-medium rounded-sm inline-flex items-center gap-1"
+            title="Reject AI-extracted draft"
+          >
+            ✕ Reject
+          </Button>
+        </>
+      )}
+      <RowActions
+        onView={() => setPreviewInvId(row.id)}
+        onEdit={() => openInvoice(row)}
+        onEmail={() => { setEmailAutoMode(true); setDeliveryDocsInvId(row.id); }}
+        onDeliveryDocs={() => { setEmailAutoMode(false); setDeliveryDocsInvId(row.id); }}
+        onSave={() => handleSaveToDropbox(row)}
+        saving={savingId === row.id}
+        saveLabel={`Save to Dropbox · ${dropboxFolderName(row)}`}
+        onDuplicate={() => duplicateInvoice(row)}
+        onDelete={() => confirmDelete(row)}
+      />
+    </div>
   );
 
   return (
@@ -404,6 +444,13 @@ const InvoicesV2: React.FC = () => {
         onRetry={invoices.refetch}
         onRowClick={r => openInvoice(r)}
         rowActions={rowActions}
+        rowClassName={r =>
+          r.ai_status === 'ai_draft'
+            ? '!bg-amber-500/5 border-l-2 border-l-amber-400'
+            : r.ai_status === 'rejected'
+            ? 'opacity-50'
+            : ''
+        }
         emptyAction={{ label: '+ New invoice', onClick: openInvoiceCreate }}
         skeletonCols={[100, 200, 80, 80, 80, 60, 60, 70, 80, 70]}
         zebra

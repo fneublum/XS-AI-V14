@@ -57,6 +57,12 @@ export interface Invoice {
    *  uploads the BOL. Surfaced in Logistics Follow Up. */
   bl: string | null;
   createdAt: string;
+  // AI ingestion markers — optional so existing code that constructs Invoice
+  // objects (EditorProvider, drawers) doesn't need to know about them.
+  ai_status?: 'ai_draft' | 'approved' | 'rejected';
+  ai_source_pdf_path?: string | null;
+  ai_extracted_at?: string | null;
+  ai_extracted_by?: string | null;
 }
 
 interface Raw {
@@ -108,6 +114,10 @@ interface Raw {
   bolurl?: string | null;
   bl: string | null;
   createdAt: string | null;
+  ai_status: string | null;
+  ai_source_pdf_path: string | null;
+  ai_extracted_at: string | null;
+  ai_extracted_by: string | null;
 }
 
 function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
@@ -223,6 +233,10 @@ export function useInvoices(search?: string) {
         bolUrl: r.bolUrl ?? r.bolurl ?? null,
         bl: r.bl,
         createdAt: r.createdAt ?? '',
+        ai_status: (r.ai_status === 'ai_draft' || r.ai_status === 'rejected') ? r.ai_status : 'approved',
+        ai_source_pdf_path: r.ai_source_pdf_path,
+        ai_extracted_at: r.ai_extracted_at,
+        ai_extracted_by: r.ai_extracted_by,
       }));
     },
   );
