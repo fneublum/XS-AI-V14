@@ -22,6 +22,7 @@ import { formatDate as fmtDate } from '../lib/formatDate';
 
 const STATUS_LABEL: Record<BlAuditStatus, string> = {
   green: 'Green',
+  yellow: 'Yellow',
   red: 'Red',
   pending: 'Pending',
   broken_linkage: 'Broken linkage',
@@ -30,20 +31,22 @@ const STATUS_LABEL: Record<BlAuditStatus, string> = {
 
 const STATUS_TONE: Record<BlAuditStatus, 'success' | 'danger' | 'info' | 'warning' | 'neutral'> = {
   green: 'success',
+  yellow: 'warning',
   red: 'danger',
   pending: 'info',
   broken_linkage: 'warning',
   resolved: 'success',
 };
 
-// Sort priority for status — red first (act now), then broken / pending,
-// then resolved / green at the bottom.
+// Sort priority for status — red first (act now), yellow next (warnings),
+// then broken / pending, then resolved / green at the bottom.
 const STATUS_RANK: Record<BlAuditStatus, number> = {
-  red: 0, broken_linkage: 1, pending: 2, resolved: 3, green: 4,
+  red: 0, yellow: 1, broken_linkage: 2, pending: 3, resolved: 4, green: 5,
 };
 
 const StatusIcon: React.FC<{ s: BlAuditStatus; size?: number }> = ({ s, size = 13 }) => {
   if (s === 'red') return <ShieldAlert size={size} className="text-rose-400" />;
+  if (s === 'yellow') return <AlertTriangle size={size} className="text-amber-400" />;
   if (s === 'green') return <ShieldCheck size={size} className="text-emerald-400" />;
   if (s === 'resolved') return <CheckCircle2 size={size} className="text-emerald-400" />;
   if (s === 'pending') return <Loader2 size={size} className="text-indigo-300 animate-spin" />;
@@ -62,6 +65,86 @@ function sinceIsoFor(f: SinceFilter): string | null {
   const cutoff = new Date(now.getTime() - days * 86_400_000);
   if (f === 'today') cutoff.setHours(0, 0, 0, 0);
   return cutoff.toISOString();
+}
+
+// Hermes writes raw snake_case keys into issues_json[].field (e.g.
+// "hs_code", "ci_bl_date_gap"). The rest of the ERP — Sales Orders /
+// Invoices / Packing List drawers — uses human field labels. This map
+// keeps the Document Audit issues table reading the same way as
+// every other view, so users don't have to translate "hscode" → "HS Code"
+// in their head.
+const FIELD_LABELS: Record<string, string> = {
+  hs_code:          'HS Code',
+  hscode:           'HS Code',
+  ncm:              'NCM Code',
+  incoterm:         'Incoterm',
+  payment_terms:    'Payment terms',
+  paymentterms:     'Payment terms',
+  net_weight:       'Net weight',
+  gross_weight:     'Gross weight',
+  netweight:        'Net weight',
+  grossweight:      'Gross weight',
+  net_lbs:          'Net weight (lbs)',
+  gross_lbs:        'Gross weight (lbs)',
+  net_kg:           'Net weight (kg)',
+  gross_kg:         'Gross weight (kg)',
+  quantity:         'Quantity',
+  unit_price:       'Unit price',
+  total:            'Total',
+  total_amount:     'Total amount',
+  currency:         'Currency',
+  container_number: 'Container #',
+  container:        'Container #',
+  seal_number:      'Seal #',
+  seal:             'Seal #',
+  pol:              'POL (origin)',
+  pod:              'POD (destination)',
+  origin:           'Origin',
+  destination:      'Destination',
+  shipper:          'Shipper',
+  consignee:        'Consignee',
+  notify:           'Notify party',
+  notify_party:     'Notify party',
+  supplier:         'Supplier',
+  customer:         'Customer',
+  vessel:           'Vessel / Voyage',
+  vessel_voyage:    'Vessel / Voyage',
+  voyage:           'Vessel / Voyage',
+  booking_number:   'Booking #',
+  bookingnumber:    'Booking #',
+  bl_number:        'B/L #',
+  blnumber:         'B/L #',
+  invoice_number:   'Invoice #',
+  invoicenumber:    'Invoice #',
+  pl_number:        'PL #',
+  plnumber:         'PL #',
+  so_number:        'SO #',
+  sonumber:         'SO #',
+  date:             'Date',
+  invoice_date:     'Invoice date',
+  bl_date:          'B/L date',
+  etd:              'ETD',
+  eta:              'ETA',
+  ci_bl_date_gap:   'CI ↔ BL date gap',
+  ci_pl_date_gap:   'CI ↔ PL date gap',
+  pl_bl_date_gap:   'PL ↔ BL date gap',
+  linkage:          'Document linkage',
+  marks_numbers:    'Marks & numbers',
+  package_count:    'Package count',
+  goods_description:'Goods description',
+};
+function fieldLabel(key: string | null | undefined): string {
+  const raw = String(key ?? '').trim();
+  if (!raw) return '—';
+  const direct = FIELD_LABELS[raw.toLowerCase()];
+  if (direct) return direct;
+  // Fallback: snake_case / camelCase → Title Case with spaces.
+  return raw
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, c => c.toUpperCase());
 }
 
 function relativeAgo(iso: string | null): string {
@@ -117,7 +200,7 @@ const DocumentAuditV2: React.FC = () => {
   }, [audits.data]);
 
   const totals = useMemo(() => {
-    const t = { red: 0, pending: 0, broken_linkage: 0, green: 0, resolved: 0 };
+    const t = { red: 0, yellow: 0, pending: 0, broken_linkage: 0, green: 0, resolved: 0 };
     for (const r of audits.data ?? []) {
       if (r.status in t) (t as Record<string, number>)[r.status]++;
     }
@@ -304,6 +387,7 @@ const DocumentAuditV2: React.FC = () => {
             <span className="text-[11px] text-slate-500 uppercase tracking-wider mr-1">Status</span>
             <Pill active={statusFilter === 'ALL'} onClick={() => setStatusFilter('ALL')} label="All" count={audits.data?.length ?? null} />
             <Pill active={statusFilter === 'red'} onClick={() => setStatusFilter('red')} label={<><ShieldAlert size={11} className="inline -mt-0.5 mr-1 text-rose-400" /> Red</>} count={totals.red} tone="danger" />
+            <Pill active={statusFilter === 'yellow'} onClick={() => setStatusFilter('yellow')} label={<><AlertTriangle size={11} className="inline -mt-0.5 mr-1 text-amber-400" /> Yellow</>} count={totals.yellow} tone="warning" />
             <Pill active={statusFilter === 'pending'} onClick={() => setStatusFilter('pending')} label="Pending" count={totals.pending} tone="info" />
             <Pill active={statusFilter === 'broken_linkage'} onClick={() => setStatusFilter('broken_linkage')} label="Broken linkage" count={totals.broken_linkage} tone="warning" />
             <Pill active={statusFilter === 'green'} onClick={() => setStatusFilter('green')} label="Green" count={totals.green} tone="success" />
@@ -666,7 +750,7 @@ const IssueRow: React.FC<{
   return (
     <tr>
       <td className="px-2 py-1.5"><Badge variant={sev}>{iss.severity === 'red' ? 'RED' : 'WARN'}</Badge></td>
-      <td className="px-2 py-1.5 text-slate-100 font-mono">{iss.field}</td>
+      <td className="px-2 py-1.5 text-slate-100" title={iss.field}>{fieldLabel(iss.field)}</td>
       <td className="px-2 py-1.5">{cell(iss.ci, 'CI')}</td>
       <td className="px-2 py-1.5">{cell(iss.pl, 'PL')}</td>
       <td className="px-2 py-1.5">{cell(iss.bl)}</td>

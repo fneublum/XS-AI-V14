@@ -14,6 +14,7 @@ import { getSupabaseClient } from '../../services/supabase';
 
 export type BlAuditStatus =
   | 'green'
+  | 'yellow'
   | 'red'
   | 'pending'
   | 'broken_linkage'
