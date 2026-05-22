@@ -30,6 +30,21 @@ export interface BlAuditIssue {
   note: string;
 }
 
+/**
+ * Per-field correction the user explicitly approved in the audit modal.
+ * Currently appended to bl_audits.applied_corrections (JSONB array) for
+ * audit trail. In a follow-up Hermes will read this list and apply each
+ * correction to the underlying CI / PL row in XS-AI.
+ */
+export interface AppliedCorrection {
+  field: string;                   // e.g. "net_weight"
+  doc: 'CI' | 'PL';                // which document gets corrected
+  old_value: string | null;        // what was missing/wrong (likely null)
+  new_value: string;               // approved value
+  approved_at: string;             // ISO timestamp
+  approved_by?: string | null;     // user email when known
+}
+
 export interface BlAudit {
   bl_number: string;
   deal_name: string | null;
@@ -49,6 +64,7 @@ export interface BlAudit {
   resolved_at: string | null;
   notes: string | null;
   report_log_path: string | null;
+  applied_corrections: AppliedCorrection[];
 }
 
 export interface UseBlAuditsOptions {
@@ -89,6 +105,9 @@ export function useBlAudits(opts: UseBlAuditsOptions = {}) {
         hold_risk_count: Number(r.hold_risk_count ?? 0),
         warn_count: Number(r.warn_count ?? 0),
         issues_json: Array.isArray(r.issues_json) ? (r.issues_json as BlAuditIssue[]) : [],
+        applied_corrections: Array.isArray((r as Record<string, unknown>).applied_corrections)
+          ? ((r as Record<string, unknown>).applied_corrections as AppliedCorrection[])
+          : [],
         correction_email_draft_id: r.correction_email_draft_id ?? null,
         correction_email_sent_at: r.correction_email_sent_at ?? null,
         correction_carrier: r.correction_carrier ?? null,

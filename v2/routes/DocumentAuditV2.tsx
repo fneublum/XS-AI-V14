@@ -10,11 +10,14 @@ import {
   Eye, Pencil, X as XIcon, Send, RefreshCw, Clock, Loader2,
 } from 'lucide-react';
 import {
-  Card, CardHeader, CardTitle, CardBody, Badge, Button, Input, Skeleton, EmptyState, Drawer,
+  Card, CardHeader, CardTitle, CardBody, Badge, Button, Input, Skeleton, EmptyState,
 } from '../primitives';
+import { Modal } from '../primitives/Modal';
 import { useToast } from '../primitives/Toast';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
-import { useBlAudits, useBlAuditPatch, type BlAudit, type BlAuditStatus, type BlAuditIssue } from '../queries/useBlAudits';
+import { useBlAudits, useBlAuditPatch, type AppliedCorrection, type BlAudit, type BlAuditStatus, type BlAuditIssue } from '../queries/useBlAudits';
+import { useCompany } from '../providers/CompanyProvider';
+import { useCompanies } from '../queries/useCompanies';
 import { formatDate as fmtDate } from '../lib/formatDate';
 
 const STATUS_LABEL: Record<BlAuditStatus, string> = {
@@ -78,10 +81,21 @@ function relativeAgo(iso: string | null): string {
 const DocumentAuditV2: React.FC = () => {
   const toast = useToast();
   const [statusFilter, setStatusFilter] = useState<BlAuditStatus | 'ALL'>('ALL');
-  const [companyFilter, setCompanyFilter] = useState<string | 'ALL'>('ALL');
   const [since, setSince] = useState<SinceFilter>('all');
   const [search, setSearch] = useState('');
   const [openBl, setOpenBl] = useState<string | null>(null);
+
+  // Derive the company filter from the global company switcher (top sidebar).
+  // currentCompanyId is either 'ALL' or a company row id like 'COMP1764818591026'.
+  // bl_audits.company stores the company short-code (EC4/XSOLUTION/UP8) which
+  // matches the `nickname` column on the companies row.
+  const { currentCompanyId } = useCompany();
+  const { data: companiesList } = useCompanies();
+  const companyFilter: string | 'ALL' = useMemo(() => {
+    if (currentCompanyId === 'ALL') return 'ALL';
+    const co = (companiesList ?? []).find(c => c.id === currentCompanyId);
+    return co?.nickname || co?.name || 'ALL';
+  }, [currentCompanyId, companiesList]);
 
   const audits = useBlAudits({
     status: statusFilter,
@@ -108,12 +122,6 @@ const DocumentAuditV2: React.FC = () => {
       if (r.status in t) (t as Record<string, number>)[r.status]++;
     }
     return t;
-  }, [audits.data]);
-
-  const companies = useMemo(() => {
-    const s = new Set<string>();
-    for (const r of audits.data ?? []) if (r.company) s.add(r.company);
-    return [...s].sort();
   }, [audits.data]);
 
   const openRow = audits.data?.find(r => r.bl_number === openBl) ?? null;
@@ -144,6 +152,25 @@ const DocumentAuditV2: React.FC = () => {
       onSuccess: () => toast.push({ kind: 'success', title: 'Draft saved' }),
       onError: (err) => toast.push({ kind: 'error', title: 'Save failed', description: err.message }),
     });
+
+  /**
+   * Approve an ERP-suggested CI/PL correction. Appends to
+   * bl_audits.applied_corrections (JSONB array) as audit trail. A
+   * follow-up Hermes worker will read this list and patch the
+   * underlying CI / PL record in XS-AI.
+   */
+  const onApplyCorrection = (row: BlAudit, correction: AppliedCorrection) => {
+    const prev = row.applied_corrections ?? [];
+    const next = [...prev.filter(c => !(c.field === correction.field && c.doc === correction.doc)), correction];
+    patch.mutate({ bl_number: row.bl_number, patch: { applied_corrections: next } as Partial<BlAudit> }, {
+      onSuccess: () => toast.push({
+        kind: 'success',
+        title: `Applied to ${correction.doc}`,
+        description: `${correction.field} = ${correction.new_value}`,
+      }),
+      onError: (err) => toast.push({ kind: 'error', title: 'Apply failed', description: err.message }),
+    });
+  };
 
   const columns: DataTableColumn<BlAudit>[] = [
     {
@@ -285,14 +312,6 @@ const DocumentAuditV2: React.FC = () => {
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] text-slate-500 uppercase tracking-wider mr-1">Company</span>
-              <Pill active={companyFilter === 'ALL'} onClick={() => setCompanyFilter('ALL')} label="All" count={null} />
-              {companies.map(c => (
-                <Pill key={c} active={companyFilter === c} onClick={() => setCompanyFilter(c)} label={c} count={null} />
-              ))}
-            </div>
-
-            <div className="flex items-center gap-1.5">
               <span className="text-[11px] text-slate-500 uppercase tracking-wider mr-1">Audited</span>
               {(['today', '7d', '30d', 'all'] as const).map(opt => (
                 <Pill key={opt} active={since === opt} onClick={() => setSince(opt)} label={SINCE_LABEL[opt]} count={null} />
@@ -345,12 +364,13 @@ const DocumentAuditV2: React.FC = () => {
         </Card>
       )}
 
-      <BlAuditDrawer
+      <BlAuditModal
         row={openRow}
-        onOpenChange={(o) => !o && setOpenBl(null)}
+        onClose={() => setOpenBl(null)}
         onAuthorize={onAuthorize}
         onDismiss={onDismiss}
         onSaveBody={saveEditedBody}
+        onApplyCorrection={onApplyCorrection}
         busy={patch.isPending}
       />
     </div>
@@ -388,7 +408,7 @@ const Pill: React.FC<{
   </button>
 );
 
-// ── Detail drawer ──────────────────────────────────────────────────
+// ── Detail modal ───────────────────────────────────────────────────
 
 const DEFAULT_BODY = `Hi,
 
@@ -396,14 +416,30 @@ Please find our findings on the draft BL below. Two fields need correcting befor
 
 Thanks.`;
 
-const BlAuditDrawer: React.FC<{
+/**
+ * If CI or PL has a missing field that's filled on the other doc, suggest
+ * cross-filling. Returns null when no auto-suggestion is possible (e.g. a
+ * BL-side mismatch — that requires emailing the carrier instead).
+ */
+function suggestionFor(iss: BlAuditIssue): { doc: 'CI' | 'PL'; value: string } | null {
+  if (!iss.ci && iss.pl) return { doc: 'CI', value: iss.pl };
+  if (!iss.pl && iss.ci) return { doc: 'PL', value: iss.ci };
+  return null;
+}
+
+function isApplied(applied: AppliedCorrection[], field: string, doc: 'CI' | 'PL'): boolean {
+  return applied.some(a => a.field === field && a.doc === doc);
+}
+
+const BlAuditModal: React.FC<{
   row: BlAudit | null;
-  onOpenChange: (open: boolean) => void;
+  onClose: () => void;
   onAuthorize: (row: BlAudit, opts?: { editBody?: string }) => void;
   onDismiss: (row: BlAudit) => void;
   onSaveBody: (row: BlAudit, body: string) => void;
+  onApplyCorrection: (row: BlAudit, correction: AppliedCorrection) => void;
   busy: boolean;
-}> = ({ row, onOpenChange, onAuthorize, onDismiss, onSaveBody, busy }) => {
+}> = ({ row, onClose, onAuthorize, onDismiss, onSaveBody, onApplyCorrection, busy }) => {
   const [body, setBody] = useState('');
   const [dirty, setDirty] = useState(false);
 
@@ -417,74 +453,46 @@ const BlAuditDrawer: React.FC<{
   if (!row) return null;
   const canAct = row.status === 'red' && !row.correction_authorized && !row.correction_dismissed;
   const carrier = row.correction_carrier ?? 'carrier';
+  const applied = row.applied_corrections ?? [];
 
   return (
-    <Drawer
+    <Modal
       open={!!row}
-      onOpenChange={onOpenChange}
-      title={`${row.bl_number}${row.deal_name ? ' · ' + row.deal_name : ''}`}
-      description={`Audited ${relativeAgo(row.audited_at)} by Hermes · ${carrier} · ${row.company ?? 'unknown company'}`}
-      footer={
-        <>
-          <Button
-            size="sm" variant="secondary"
-            onClick={() => onOpenChange(false)}
-            className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
-          >
-            Close
-          </Button>
-          {canAct && (
-            <>
-              <Button
-                size="sm" variant="secondary"
-                onClick={() => onDismiss(row)}
-                disabled={busy}
-                className="bg-transparent border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
-              >
-                <XIcon size={13} className="mr-1.5" /> Dismiss
-              </Button>
-              {dirty && (
-                <Button
-                  size="sm" variant="secondary"
-                  onClick={() => { onSaveBody(row, body); setDirty(false); }}
-                  disabled={busy}
-                  className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
-                >
-                  <Pencil size={13} className="mr-1.5" /> Save edited body
-                </Button>
-              )}
-              <Button
-                size="sm"
-                onClick={() => onAuthorize(row, dirty ? { editBody: body } : undefined)}
-                disabled={busy}
-                loading={busy}
-                className="ml-auto bg-emerald-600 hover:bg-emerald-500 text-white"
-              >
-                <Send size={13} className="mr-1.5" />
-                {dirty ? 'Save & authorize' : 'Authorize correction'}
-              </Button>
-            </>
-          )}
-        </>
-      }
+      onClose={onClose}
+      className="!w-[min(96vw,1100px)] !max-h-[92vh] !bg-[#0a0a0a] !text-slate-200 !border !border-[#1f1f1f] !p-0"
     >
-      <div className="space-y-5">
-        {/* Header strip */}
+      {/* Modal header */}
+      <div className="px-5 pt-5 pb-3 border-b border-[#1f1f1f] flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="text-[15px] font-semibold text-slate-100 flex items-center gap-2">
+            <StatusIcon s={row.status} size={16} />
+            <span className="font-mono">{row.bl_number}</span>
+            {row.deal_name && <span className="text-slate-500">·</span>}
+            {row.deal_name && <span className="text-slate-300 truncate">{row.deal_name}</span>}
+          </div>
+          <div className="mt-1 text-[11.5px] text-slate-500">
+            Audited {relativeAgo(row.audited_at)} by Hermes · {carrier} · {row.company ?? 'unknown company'}
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-slate-500 hover:text-slate-200 transition-colors rounded p-1"
+          aria-label="Close"
+        >
+          <XIcon size={16} />
+        </button>
+      </div>
+
+      {/* Modal body */}
+      <div className="px-5 py-4 space-y-5 overflow-auto" style={{ maxHeight: 'calc(92vh - 180px)' }}>
+        {/* Status strip */}
         <div className="flex items-center gap-2 flex-wrap p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f]">
-          <StatusIcon s={row.status} size={16} />
           <Badge variant={STATUS_TONE[row.status]}>{STATUS_LABEL[row.status]}</Badge>
-          {row.hold_risk_count > 0 && (
-            <Badge variant="danger">{row.hold_risk_count} hold-risk</Badge>
-          )}
-          {row.warn_count > 0 && (
-            <Badge variant="warning">{row.warn_count} warnings</Badge>
-          )}
-          {row.correction_authorized && (
-            <Badge variant="info" title="Hermes will dispatch when it next polls.">authorized</Badge>
-          )}
-          {row.correction_dismissed && (
-            <Badge variant="neutral">dismissed</Badge>
-          )}
+          {row.hold_risk_count > 0 && <Badge variant="danger">{row.hold_risk_count} hold-risk</Badge>}
+          {row.warn_count > 0 && <Badge variant="warning">{row.warn_count} warnings</Badge>}
+          {row.correction_authorized && <Badge variant="info" title="Hermes will dispatch when it next polls.">authorized</Badge>}
+          {row.correction_dismissed && <Badge variant="neutral">dismissed</Badge>}
+          {applied.length > 0 && <Badge variant="success">{applied.length} correction{applied.length !== 1 ? 's' : ''} applied</Badge>}
           {row.correction_email_sent_at && (
             <span className="text-[11.5px] text-slate-500 flex items-center gap-1">
               <Clock size={11} /> sent {relativeAgo(row.correction_email_sent_at)}
@@ -508,17 +516,34 @@ const BlAuditDrawer: React.FC<{
               <table className="w-full text-[11.5px]">
                 <thead className="bg-[#0a0a0a] text-slate-500">
                   <tr>
-                    <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider w-[80px]">Severity</th>
+                    <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider w-[70px]">Severity</th>
                     <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider w-[120px]">Field</th>
-                    <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider w-[140px]">CI</th>
-                    <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider w-[140px]">PL</th>
-                    <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider w-[140px]">BL</th>
+                    <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider w-[100px]">CI</th>
+                    <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider w-[100px]">PL</th>
+                    <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider w-[100px]">BL</th>
                     <th className="text-left px-2 py-1.5 font-medium uppercase tracking-wider">Note</th>
+                    <th className="text-right px-2 py-1.5 font-medium uppercase tracking-wider w-[180px]">Suggested correction</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1a1a1a] bg-[#0f0f0f]">
                   {row.issues_json.map((iss, i) => (
-                    <IssueRow key={i} iss={iss} />
+                    <IssueRow
+                      key={i}
+                      iss={iss}
+                      suggestion={suggestionFor(iss)}
+                      applied={isApplied(applied, iss.field, suggestionFor(iss)?.doc ?? 'CI')}
+                      onApprove={() => {
+                        const sug = suggestionFor(iss);
+                        if (!sug) return;
+                        onApplyCorrection(row, {
+                          field: iss.field, doc: sug.doc,
+                          old_value: sug.doc === 'CI' ? iss.ci : iss.pl,
+                          new_value: sug.value,
+                          approved_at: new Date().toISOString(),
+                        });
+                      }}
+                      busy={busy}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -526,9 +551,9 @@ const BlAuditDrawer: React.FC<{
           )}
         </Section>
 
-        {/* Correction email editor */}
+        {/* Inline email draft — only when there are BL-side issues that need carrier action */}
         {row.status === 'red' && (
-          <Section title="Correction email draft">
+          <Section title="Email to BL issuer">
             <div className="space-y-2">
               <div className="text-[11.5px] text-slate-500">
                 To: <span className="text-slate-300">{carrier}</span> · Subject: <span className="text-slate-300 font-mono">{row.bl_number} — Draft BL corrections needed</span>
@@ -536,7 +561,7 @@ const BlAuditDrawer: React.FC<{
               <textarea
                 value={body}
                 onChange={e => { setBody(e.target.value); setDirty(true); }}
-                rows={10}
+                rows={9}
                 className="w-full rounded-md border border-[#1f1f1f] bg-[#0a0a0a] px-3 py-2 text-[12.5px] text-slate-200 leading-relaxed font-mono whitespace-pre-wrap resize-y focus:outline-none focus:border-indigo-500"
                 disabled={!canAct}
               />
@@ -551,7 +576,7 @@ const BlAuditDrawer: React.FC<{
           </Section>
         )}
 
-        {/* Footer info */}
+        {/* Audit-trail footer info */}
         <div className="pt-2 border-t border-[#1f1f1f] text-[11px] text-slate-500 flex items-center gap-3 flex-wrap">
           <Badge variant="neutral">bl_audits</Badge>
           {row.report_log_path && (
@@ -562,7 +587,50 @@ const BlAuditDrawer: React.FC<{
           )}
         </div>
       </div>
-    </Drawer>
+
+      {/* Modal footer — action bar */}
+      <div className="px-5 py-3 border-t border-[#1f1f1f] bg-[#0d0d0d] flex items-center gap-2 flex-wrap">
+        <Button
+          size="sm" variant="secondary"
+          onClick={onClose}
+          className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
+        >
+          Close
+        </Button>
+        {canAct && (
+          <>
+            <Button
+              size="sm" variant="secondary"
+              onClick={() => onDismiss(row)}
+              disabled={busy}
+              className="bg-transparent border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+            >
+              <XIcon size={13} className="mr-1.5" /> Dismiss
+            </Button>
+            {dirty && (
+              <Button
+                size="sm" variant="secondary"
+                onClick={() => { onSaveBody(row, body); setDirty(false); }}
+                disabled={busy}
+                className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
+              >
+                <Pencil size={13} className="mr-1.5" /> Save edited body
+              </Button>
+            )}
+            <Button
+              size="sm"
+              onClick={() => onAuthorize(row, dirty ? { editBody: body } : undefined)}
+              disabled={busy}
+              loading={busy}
+              className="ml-auto bg-emerald-600 hover:bg-emerald-500 text-white"
+            >
+              <Send size={13} className="mr-1.5" />
+              Email correction to issuer
+            </Button>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 };
 
@@ -573,23 +641,70 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
   </div>
 );
 
-const IssueRow: React.FC<{ iss: BlAuditIssue }> = ({ iss }) => {
+const IssueRow: React.FC<{
+  iss: BlAuditIssue;
+  suggestion: { doc: 'CI' | 'PL'; value: string } | null;
+  applied: boolean;
+  onApprove: () => void;
+  busy: boolean;
+}> = ({ iss, suggestion, applied, onApprove, busy }) => {
   const sev = iss.severity === 'red' ? 'danger' : 'warning';
-  const cell = (v: string | null) => v ? <span className="font-mono tabular-nums text-slate-200">{v}</span> : <span className="text-slate-600 italic">missing</span>;
+  const cell = (v: string | null, highlight?: 'CI' | 'PL') => {
+    if (v) return <span className="font-mono tabular-nums text-slate-200">{v}</span>;
+    // Missing AND we have a suggestion for this column → render the suggested value in green
+    if (suggestion && suggestion.doc === highlight) {
+      return (
+        <span className="font-mono tabular-nums text-emerald-400" title="ERP-suggested correction (not yet applied)">
+          {suggestion.value}
+          <span className="text-emerald-500/70 ml-1">↩</span>
+        </span>
+      );
+    }
+    return <span className="text-slate-600 italic">missing</span>;
+  };
+
   return (
     <tr>
-      <td className="px-2 py-1.5">
-        <Badge variant={sev}>{iss.severity === 'red' ? 'RED' : 'WARN'}</Badge>
-      </td>
+      <td className="px-2 py-1.5"><Badge variant={sev}>{iss.severity === 'red' ? 'RED' : 'WARN'}</Badge></td>
       <td className="px-2 py-1.5 text-slate-100 font-mono">{iss.field}</td>
-      <td className="px-2 py-1.5">{cell(iss.ci)}</td>
-      <td className="px-2 py-1.5">{cell(iss.pl)}</td>
+      <td className="px-2 py-1.5">{cell(iss.ci, 'CI')}</td>
+      <td className="px-2 py-1.5">{cell(iss.pl, 'PL')}</td>
       <td className="px-2 py-1.5">{cell(iss.bl)}</td>
       <td className="px-2 py-1.5 text-slate-300">
         <div className="flex items-start gap-1.5">
           {iss.severity === 'red' && <AlertTriangle size={11} className="text-rose-400 shrink-0 mt-0.5" />}
           <span>{iss.note}</span>
         </div>
+      </td>
+      <td className="px-2 py-1.5 text-right">
+        {applied ? (
+          <Badge variant="success" title="Saved to bl_audits.applied_corrections">
+            <CheckCircle2 size={10} className="mr-1 inline" />Applied to {suggestion?.doc}
+          </Badge>
+        ) : suggestion ? (
+          <div className="flex items-center gap-1 justify-end">
+            <Button
+              size="sm" variant="secondary"
+              onClick={onApprove}
+              disabled={busy}
+              className="bg-emerald-600/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/25 px-2 py-0.5 text-[11px]"
+              title={`Approve: set ${iss.field} = ${suggestion.value} on ${suggestion.doc}`}
+            >
+              ✓ Approve
+            </Button>
+            <Button
+              size="sm" variant="secondary"
+              onClick={() => { /* reject = no-op for now; suggestion just stays unapplied */ }}
+              disabled={busy}
+              className="bg-transparent border border-[#1f1f1f] text-slate-500 hover:bg-[#161616] px-2 py-0.5 text-[11px]"
+              title="Reject — leave field as-is"
+            >
+              ✗
+            </Button>
+          </div>
+        ) : (
+          <span className="text-[10.5px] text-slate-600 italic">email carrier</span>
+        )}
       </td>
     </tr>
   );
