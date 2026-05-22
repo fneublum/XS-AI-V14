@@ -11,7 +11,8 @@ create table if not exists companies (
   "zip" text,
   "country" text,
   "ein" text,
-  "phone" text
+  "phone" text,
+  "email" text
 );
 
 create table if not exists users (
@@ -79,7 +80,8 @@ create table if not exists suppliers (
   "country" text,
   "categories" text[],
   "rating" numeric,
-  "paymentTerms" text
+  "paymentTerms" text,
+  "sharedWith" text[]
 );
 
 create table if not exists opportunities (

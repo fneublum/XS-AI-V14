@@ -60,12 +60,15 @@ interface Raw {
   brokerEmail: string | null;
 }
 
-function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
-  // The `customers` table does not have a `sharedWith` column in this
-  // environment — previous multi-tenant sharing filter was removed to
-  // stop a 400 on every Customers load.
+// Company-scoped fetch that also honours `sharedWith` so a customer
+// owned by Company A but shared with Company B shows up in B's list.
+// The stale comment that used to live here said the column didn't
+// exist — it does, restored by 20260423190000_customers_sharedwith.sql,
+// so the cross-company UI in CustomerDrawer now actually drives list
+// visibility.
+function scopeByCompany<Q extends { or: Function }>(q: Q, companyId: string): Q {
   if (companyId === 'ALL') return q;
-  return q.eq('"companyId"', companyId) as Q;
+  return q.or(`"companyId".eq.${companyId},"sharedWith".cs.{${companyId}}`) as Q;
 }
 
 export function useCustomers(search?: string) {

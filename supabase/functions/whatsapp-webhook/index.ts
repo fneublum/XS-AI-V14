@@ -11,8 +11,8 @@ const corsHeaders = {
 // Function to verify Meta signature
 async function verifySignature(payloadText: string, signatureHeader: string | null, secret: string | undefined): Promise<boolean> {
     if (!signatureHeader || !secret) {
-        console.warn("Missing signature header or app secret. Bypassing validation (NOT RECOMMENDED IN PRODUCTION).");
-        return true;
+        console.error("Missing signature header or app secret — rejecting request.");
+        return false;
     }
 
     try {
@@ -82,7 +82,8 @@ serve(async (req: Request) => {
 
         const isValid = await verifySignature(payloadText, signature, appSecret);
         if (!isValid) {
-            console.warn("⚠️ Signature validation failed — processing anyway. Check META_APP_SECRET.");
+            console.error("Signature validation failed — rejecting request.");
+            return new Response("Forbidden", { status: 403, headers: corsHeaders });
         }
 
         let payload: any;

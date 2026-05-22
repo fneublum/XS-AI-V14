@@ -41,7 +41,7 @@ function stageOf(row: CommissionRow): Stage {
   return 'DRAFT';
 }
 
-const fmtMoney = (n: number): string => `$${Math.round(n).toLocaleString('en-US')}`;
+const fmtMoney = (n: number): string => `$${(Number.isFinite(n) ? n : 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtPct = (n: number | null): string => {
   if (n === null) return '—';
   const scaled = n > 1 ? n : n * 100;

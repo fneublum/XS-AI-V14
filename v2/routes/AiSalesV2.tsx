@@ -8,7 +8,7 @@
 // drafting).
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bot, CheckCircle2, Mail, MessageCircle, Send, XCircle, FileText, Users, UserPlus, UserCheck, RefreshCw } from 'lucide-react';
+import { Bot, CheckCircle2, Mail, MessageCircle, Send, XCircle, FileText, Users, UserPlus, UserCheck, RefreshCw, Sparkles } from 'lucide-react';
 import {
   Card, CardHeader, CardTitle, CardBody,
   Button, Badge, Input, EmptyState, Skeleton, ConfirmDialog,
@@ -34,6 +34,7 @@ import {
   type ProposalTarget,
 } from '../../services/aiSalesAgentService';
 import { generateProposalPdf } from '../services/pdf/proposalPdf';
+import { SalesSuggestionsPanel } from '../components/SalesSuggestionsPanel';
 import type {
   AiSalesProposal,
   Prospect,
@@ -87,6 +88,21 @@ const AiSalesV2: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [confirmAuto, setConfirmAuto] = useState(false);
   const [autoAckSeen, setAutoAckSeen] = useState(false);
+
+  // Wizard step: 1 = Pick recipient, 2 = Add context, 3 = Done.
+  // Persisted only in component state — a refresh resets to step 1.
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [pickerOpen, setPickerOpen] = useState(false); // manual recipient disclosure
+  const [lastQueuedId, setLastQueuedId] = useState<string | null>(null);
+
+  const resetWizard = useCallback(() => {
+    setSelectedKey(null);
+    setIntent('');
+    setAudience('customer');
+    setPickerOpen(false);
+    setLastQueuedId(null);
+    setWizardStep(1);
+  }, []);
 
   // Target data.
   const customers = useCustomers();
@@ -208,7 +224,8 @@ const AiSalesV2: React.FC = () => {
         title: mode === 'auto' ? 'Drafted — sending now' : 'Draft ready for review',
       });
       await loadProposals();
-      setIntent('');
+      setLastQueuedId(proposal.id ?? null);
+      setWizardStep(3);
       if (mode === 'auto') await handleSend(proposal);
     } catch (err: any) {
       toast.push({ kind: 'error', title: 'Draft failed', description: err?.message });
@@ -320,176 +337,255 @@ const AiSalesV2: React.FC = () => {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(380px,480px)] gap-5">
-        {/* ── Composer ───────────────────────────────────────── */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Draft a new proposal</CardTitle>
-          </CardHeader>
-          <CardBody className="space-y-4">
-            {/* Audience tabs */}
-            <div className="flex items-center gap-1 p-1 rounded-md bg-[#0f0f0f] border border-[#1f1f1f] w-fit">
-              {(['sales_rep', 'customer', 'prospect'] as const).map(a => (
-                <button
-                  key={a}
-                  onClick={() => setAudience(a)}
-                  className={`h-7 px-3 text-[12px] rounded-[4px] font-medium transition-colors ${
-                    audience === a
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-[#161616]'
-                  }`}
-                >
-                  {a === 'sales_rep' && <Users size={12} className="inline mr-1.5 -mt-0.5" />}
-                  {a === 'customer' && <UserCheck size={12} className="inline mr-1.5 -mt-0.5" />}
-                  {a === 'prospect' && <UserPlus size={12} className="inline mr-1.5 -mt-0.5" />}
-                  {audienceLabel[a]}
-                </button>
-              ))}
-            </div>
+      {/* ── Wizard ────────────────────────────────────────────── */}
+      <Card className="mb-5">
+        <CardHeader>
+          <div className="flex items-center justify-between w-full gap-3">
+            <CardTitle>
+              {wizardStep === 1 && 'Step 1 · Pick a recipient'}
+              {wizardStep === 2 && 'Step 2 · Add context'}
+              {wizardStep === 3 && 'Step 3 · Done'}
+            </CardTitle>
+            <StepIndicator current={wizardStep} />
+          </div>
+        </CardHeader>
+        <CardBody className="space-y-4">
+          {/* Step 1 — Pick recipient ──────────────────────────── */}
+          {wizardStep === 1 && (
+            <div className="space-y-4">
+              <SalesSuggestionsPanel
+                onDraft={({ customerId, customerName, intent: prefilled }) => {
+                  setAudience('customer');
+                  if (customerId) {
+                    setSelectedKey(`cust-${customerId}`);
+                  } else {
+                    const byName = (customers.data ?? []).find(c =>
+                      c.name?.trim().toLowerCase() === customerName.trim().toLowerCase());
+                    if (byName) setSelectedKey(`cust-${byName.id}`);
+                  }
+                  setIntent(prefilled);
+                  setWizardStep(2);
+                }}
+              />
 
-            {/* Target picker */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-[12px] font-medium text-slate-300">
-                  Recipient {audience === 'prospect' && <span className="text-slate-500">(WhatsApp only)</span>}
-                </label>
-                {audience === 'prospect' && (
-                  <Button
-                    variant="link"
-                    onClick={() => setNewProspectOpen(v => !v)}
-                    className="text-[11.5px] text-indigo-400 hover:text-indigo-300"
-                  >
-                    + Add prospect
-                  </Button>
+              {/* Manual picker disclosure */}
+              <div className="border-t border-[#1a1a1a] pt-3">
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen(v => !v)}
+                  className="text-[12px] text-slate-400 hover:text-slate-200 inline-flex items-center gap-1"
+                >
+                  {pickerOpen ? '▾' : '▸'} Or pick someone not in the suggestions
+                </button>
+                {pickerOpen && (
+                  <div className="mt-3 space-y-3 p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f]">
+                    <div className="flex items-center gap-1 p-1 rounded-md bg-[#0a0a0a] border border-[#1f1f1f] w-fit">
+                      {(['sales_rep', 'customer', 'prospect'] as const).map(a => (
+                        <button
+                          key={a}
+                          onClick={() => { setAudience(a); setSelectedKey(null); }}
+                          className={`h-7 px-3 text-[12px] rounded-[4px] font-medium transition-colors ${
+                            audience === a
+                              ? 'bg-indigo-600 text-white'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-[#161616]'
+                          }`}
+                        >
+                          {a === 'sales_rep' && <Users size={12} className="inline mr-1.5 -mt-0.5" />}
+                          {a === 'customer' && <UserCheck size={12} className="inline mr-1.5 -mt-0.5" />}
+                          {a === 'prospect' && <UserPlus size={12} className="inline mr-1.5 -mt-0.5" />}
+                          {audienceLabel[a]}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <select
+                        value={selectedKey ?? ''}
+                        onChange={e => setSelectedKey(e.target.value || null)}
+                        className="h-9 flex-1 rounded-md border border-[#1f1f1f] bg-[#0a0a0a] px-3 text-[13px] text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                      >
+                        <option value="">— Choose a {audienceLabel[audience].slice(0, -1).toLowerCase()} —</option>
+                        {targetOptions.map(o => (
+                          <option key={o.key} value={o.key}>
+                            {o.label}{o.sublabel ? ` — ${o.sublabel}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        size="sm"
+                        disabled={!selectedKey}
+                        onClick={() => setWizardStep(2)}
+                        className="h-9 px-3 text-[12.5px] bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40"
+                      >
+                        Continue →
+                      </Button>
+                    </div>
+                    {audience === 'prospect' && (
+                      <div className="text-[11.5px] text-slate-500">
+                        Prospects can be reached by WhatsApp only.
+                        <Button variant="link" onClick={() => setNewProspectOpen(v => !v)}
+                          className="ml-2 text-[11.5px] text-indigo-400 hover:text-indigo-300">
+                          + Add prospect
+                        </Button>
+                      </div>
+                    )}
+                    {newProspectOpen && audience === 'prospect' && (
+                      <div className="p-3 rounded-md border border-[#1f1f1f] bg-[#0a0a0a] space-y-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <Input placeholder="Contact name *" value={newProspect.name}
+                            onChange={e => setNewProspect(p => ({ ...p, name: e.target.value }))} />
+                          <Input placeholder="Company" value={newProspect.companyName}
+                            onChange={e => setNewProspect(p => ({ ...p, companyName: e.target.value }))} />
+                          <Input placeholder="Phone *" value={newProspect.phone}
+                            onChange={e => setNewProspect(p => ({ ...p, phone: e.target.value }))} />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="sm" onClick={() => setNewProspectOpen(false)}
+                            className="h-7 px-3 text-[12px] text-slate-400 hover:text-slate-200">
+                            Cancel
+                          </Button>
+                          <Button size="sm" onClick={handleCreateProspect}
+                            className="h-7 px-3 text-[12px] bg-indigo-600 hover:bg-indigo-500">
+                            Add
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
-
-              {newProspectOpen && audience === 'prospect' && (
-                <div className="mb-3 p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f] space-y-2">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <Input
-                      placeholder="Contact name *"
-                      value={newProspect.name}
-                      onChange={e => setNewProspect(p => ({ ...p, name: e.target.value }))}
-                    />
-                    <Input
-                      placeholder="Company"
-                      value={newProspect.companyName}
-                      onChange={e => setNewProspect(p => ({ ...p, companyName: e.target.value }))}
-                    />
-                    <Input
-                      placeholder="Phone *"
-                      value={newProspect.phone}
-                      onChange={e => setNewProspect(p => ({ ...p, phone: e.target.value }))}
-                    />
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setNewProspectOpen(false)}
-                      className="h-7 px-3 text-[12px] text-slate-400 hover:text-slate-200">
-                      Cancel
-                    </Button>
-                    <Button size="sm" onClick={handleCreateProspect}
-                      className="h-7 px-3 text-[12px] bg-indigo-600 hover:bg-indigo-500">
-                      Add
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {(customers.isLoading && audience === 'customer') ||
-               (users.isLoading && audience === 'sales_rep') ||
-               (prospectLoading && audience === 'prospect') ? (
-                <Skeleton className="h-10 w-full" />
-              ) : targetOptions.length === 0 ? (
-                <div className="text-[12px] text-slate-500 py-3 px-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f]">
-                  {audience === 'prospect'
-                    ? 'No prospects yet — click "+ Add prospect" to create one.'
-                    : `No ${audienceLabel[audience].toLowerCase()} loaded.`}
-                </div>
-              ) : (
-                <select
-                  value={selectedKey ?? ''}
-                  onChange={e => setSelectedKey(e.target.value || null)}
-                  className="h-10 w-full rounded-md border border-[#1f1f1f] bg-[#0f0f0f] px-3 text-sm text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-                >
-                  <option value="">— Choose a {audienceLabel[audience].slice(0, -1).toLowerCase()} —</option>
-                  {targetOptions.map(o => (
-                    <option key={o.key} value={o.key}>
-                      {o.label}{o.sublabel ? ` — ${o.sublabel}` : ''}
-                    </option>
-                  ))}
-                </select>
-              )}
             </div>
+          )}
 
-            {/* Channel */}
-            <div>
-              <label className="text-[12px] font-medium text-slate-300 block mb-2">Channel</label>
-              <div className="flex items-center gap-2">
-                <ChannelPill
-                  icon={<Mail size={12} />}
-                  label="Email"
-                  active={(channel === 'email' || channel === 'both') && audience !== 'prospect'}
-                  disabled={audience === 'prospect'}
-                  onClick={() => setChannel(c => c === 'email' ? 'both' : c === 'both' ? 'whatsapp' : 'email')}
-                />
-                <ChannelPill
-                  icon={<MessageCircle size={12} />}
-                  label="WhatsApp"
-                  active={channel === 'whatsapp' || channel === 'both' || audience === 'prospect'}
-                  onClick={() => {
-                    if (audience === 'prospect') return;
-                    setChannel(c => c === 'whatsapp' ? 'both' : c === 'both' ? 'email' : 'whatsapp');
-                  }}
+          {/* Step 2 — Add context ─────────────────────────────── */}
+          {wizardStep === 2 && (
+            <div className="space-y-4">
+              {/* Recipient summary */}
+              <div className="p-3 rounded-md border border-[#1f1f1f] bg-[#0f0f0f]">
+                <div className="text-[10.5px] uppercase tracking-wider text-slate-500 mb-1">Recipient</div>
+                <div className="text-[13.5px] text-slate-100 font-medium">
+                  {selectedTarget?.recipientName ?? '—'}
+                </div>
+                <div className="text-[11.5px] text-slate-500 mt-0.5">
+                  {[selectedTarget?.recipientEmail, selectedTarget?.recipientPhone].filter(Boolean).join(' · ') || 'No contact on file'}
+                </div>
+              </div>
+
+              {/* Channel */}
+              <div>
+                <label className="text-[12px] font-medium text-slate-300 block mb-2">Channel</label>
+                <div className="flex items-center gap-2">
+                  <ChannelPill
+                    icon={<Mail size={12} />}
+                    label="Email"
+                    active={(channel === 'email' || channel === 'both') && audience !== 'prospect'}
+                    disabled={audience === 'prospect'}
+                    onClick={() => setChannel(c => c === 'email' ? 'both' : c === 'both' ? 'whatsapp' : 'email')}
+                  />
+                  <ChannelPill
+                    icon={<MessageCircle size={12} />}
+                    label="WhatsApp"
+                    active={channel === 'whatsapp' || channel === 'both' || audience === 'prospect'}
+                    onClick={() => {
+                      if (audience === 'prospect') return;
+                      setChannel(c => c === 'whatsapp' ? 'both' : c === 'both' ? 'email' : 'whatsapp');
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Intent */}
+              <div>
+                <label htmlFor="intent" className="text-[12px] font-medium text-slate-300 block mb-2">
+                  What should the proposal say?
+                  <span className="ml-2 text-[10.5px] font-normal normal-case text-slate-500">
+                    Pre-filled from purchase history when picked from a suggestion. Edit freely.
+                  </span>
+                </label>
+                <textarea
+                  id="intent"
+                  rows={8}
+                  value={intent}
+                  onChange={e => setIntent(e.target.value)}
+                  placeholder="e.g. Introduce our Q3 LDPE grades at 5% below current FOB Santos, emphasize 30-day lead time and consolidated container option."
+                  className="w-full rounded-md border border-[#1f1f1f] bg-[#0f0f0f] px-3 py-2 text-[13px] text-slate-200 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                 />
               </div>
-            </div>
 
-            {/* Intent */}
-            <div>
-              <label htmlFor="intent" className="text-[12px] font-medium text-slate-300 block mb-2">
-                Proposal intent
-              </label>
-              <textarea
-                id="intent"
-                rows={4}
-                value={intent}
-                onChange={e => setIntent(e.target.value)}
-                placeholder="e.g. Introduce our Q3 LDPE grades at 5% below current FOB Santos, emphasize 30-day lead time and consolidated container option."
-                className="w-full rounded-md border border-[#1f1f1f] bg-[#0f0f0f] px-3 py-2 text-[13px] text-slate-200 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-              />
+              {/* Footer actions */}
+              <div className="flex items-center gap-2 pt-1 border-t border-[#1a1a1a]">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setWizardStep(1)}
+                  className="h-8 px-3 text-[12.5px] bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
+                >
+                  ← Back
+                </Button>
+                <div className="flex-1" />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy || !selectedTarget || !intent.trim()}
+                  onClick={() => (autoAckSeen ? handleDraft('auto') : setConfirmAuto(true))}
+                  className="h-8 px-3 text-[12.5px] bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
+                >
+                  Auto-send
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={busy || !selectedTarget || !intent.trim()}
+                  loading={busy}
+                  onClick={() => handleDraft('review')}
+                  className="h-8 px-3 text-[12.5px] bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-500 hover:to-purple-500"
+                >
+                  <Sparkles size={13} className="mr-1.5" /> Generate draft
+                </Button>
+              </div>
             </div>
+          )}
 
-            {/* Actions */}
-            <div className="flex items-center gap-2 pt-1">
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={busy}
-                loading={busy}
-                onClick={() => handleDraft('review')}
-                className="h-8 px-3 text-[12.5px] bg-[#161616] text-slate-100 border border-[#1f1f1f] hover:bg-[#1f1f1f]"
-              >
-                <FileText size={13} className="mr-1.5" /> Draft for review
-              </Button>
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={() => (autoAckSeen ? handleDraft('auto') : setConfirmAuto(true))}
-                className="h-8 px-3 text-[12.5px] bg-indigo-600 hover:bg-indigo-500"
-              >
-                <Send size={13} className="mr-1.5" /> Auto-send now
-              </Button>
-              <div className="flex-1" />
-              <span className="text-[11px] text-slate-500">Powered by Gemini</span>
+          {/* Step 3 — Done ─────────────────────────────────────── */}
+          {wizardStep === 3 && (
+            <div className="text-center py-6 space-y-3">
+              <div className="inline-flex w-12 h-12 rounded-full bg-emerald-500/15 border border-emerald-500/30 items-center justify-center">
+                <CheckCircle2 size={22} className="text-emerald-400" />
+              </div>
+              <div className="text-[15px] text-slate-100 font-medium">Draft created</div>
+              <div className="text-[12.5px] text-slate-500 max-w-md mx-auto">
+                The proposal is ready in <span className="text-slate-300">Recent proposals</span> below.
+                Open it to review the AI-written email, approve, and send.
+              </div>
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={resetWizard}
+                  className="h-8 px-3 text-[12.5px] bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
+                >
+                  Draft another
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    document.getElementById('recent-proposals')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
+                  className="h-8 px-3 text-[12.5px] bg-indigo-600 text-white hover:bg-indigo-500"
+                >
+                  Review draft ↓
+                </Button>
+              </div>
             </div>
-          </CardBody>
-        </Card>
+          )}
+        </CardBody>
+      </Card>
+
+      {/* ── Recent proposals ──────────────────────────────────── */}
+      <div id="recent-proposals" className="mb-5">
 
         {/* ── Queue ──────────────────────────────────────────── */}
         <Card>
           <CardHeader>
-            <CardTitle>Proposal queue</CardTitle>
+            <CardTitle>Recent proposals</CardTitle>
             <Badge variant="neutral" dot>{proposals.length}</Badge>
           </CardHeader>
           <CardBody className="space-y-3 max-h-[680px] overflow-auto">
@@ -498,7 +594,7 @@ const AiSalesV2: React.FC = () => {
             ) : proposals.length === 0 ? (
               <EmptyState
                 title="No proposals yet"
-                description="Draft one from the composer to get started."
+                description="Pick a customer above and click Generate draft to start."
               />
             ) : (
               proposals.map(p => (
@@ -556,13 +652,47 @@ const ChannelPill: React.FC<{
   </button>
 );
 
+const StepIndicator: React.FC<{ current: 1 | 2 | 3 }> = ({ current }) => {
+  const steps: Array<{ n: 1 | 2 | 3; label: string }> = [
+    { n: 1, label: 'Pick' },
+    { n: 2, label: 'Context' },
+    { n: 3, label: 'Done' },
+  ];
+  return (
+    <div className="flex items-center gap-1.5 text-[11px]">
+      {steps.map((s, i) => (
+        <React.Fragment key={s.n}>
+          <div
+            className={
+              s.n === current
+                ? 'inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-indigo-600/15 text-indigo-300 border border-indigo-500/40 font-medium'
+                : s.n < current
+                ? 'inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
+                : 'inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#0f0f0f] text-slate-500 border border-[#1f1f1f]'
+            }
+          >
+            <span className="font-mono tabular-nums">{s.n}</span>
+            <span className="uppercase tracking-wider">{s.label}</span>
+          </div>
+          {i < steps.length - 1 && (
+            <span className={s.n < current ? 'text-emerald-500' : 'text-slate-700'}>→</span>
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+};
+
 const ProposalRow: React.FC<{
   proposal: AiSalesProposal;
   onApproveAndSend: () => void;
   onDismiss: () => void;
 }> = ({ proposal, onApproveAndSend, onDismiss }) => {
-  const [open, setOpen] = useState(false);
+  // Auto-expand actionable proposals so the AI-written draft is
+  // immediately visible — the most common need after step 3. Sent /
+  // dismissed rows collapse to keep the queue scannable.
   const canAct = proposal.status === 'pending_approval' || proposal.status === 'draft' || proposal.status === 'failed';
+  const [open, setOpen] = useState(canAct);
   return (
     <div className="rounded-md border border-[#1f1f1f] bg-[#0f0f0f] p-3">
       <div className="flex items-start justify-between gap-2">
@@ -586,8 +716,9 @@ const ProposalRow: React.FC<{
 
       <button
         onClick={() => setOpen(v => !v)}
-        className="mt-2 text-[11.5px] text-slate-400 hover:text-slate-200"
+        className="mt-2 inline-flex items-center gap-1 text-[11.5px] text-slate-400 hover:text-slate-200"
       >
+        <span className="inline-block w-2.5 text-center">{open ? '▾' : '▸'}</span>
         {open ? 'Hide draft' : 'Show draft'}
       </button>
 

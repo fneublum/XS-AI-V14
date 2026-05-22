@@ -6,6 +6,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { InvoicePdfCtx, PdfInvoice, findLinkedPL } from './types';
+import { wrapByChars } from './wrapText';
 
 // Friendly names for Incoterm codes — keeps parity with v1 PDF.
 const INCOTERM_NAMES: Record<string, string> = {
@@ -53,7 +54,7 @@ export function generateInvoicePdf(
   const companyAddress = company?.address || '112 Bartran Oaks Walk #600010';
   const companyCity = `${company?.city || 'ST Johns'}, ${company?.state || 'FL'} ${company?.zip || '32260'} US`;
   const companyPhone = company?.phone || '9044399343';
-  const companyEmail = 'felipe@ec4.enterprises';
+  const companyEmail = company?.email || 'felipe@ec4.enterprises';
   const companyWeb   = 'www.ec4.enterprises';
 
   // ─── HEADER ────────────────────────────────────────────────────
@@ -127,8 +128,8 @@ export function generateInvoicePdf(
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(darkGray);
-  doc.text('CONSIGNEE (bill to)', 14, y);
-  doc.text('NOTIFY (ship to)', 75, y);
+  doc.text('CONSIGNEE', 14, y);
+  doc.text('NOTIFY', 75, y);
 
   const lineHeight = 6;
   doc.setTextColor(darkGray);
@@ -163,13 +164,13 @@ export function generateInvoicePdf(
   let consigneeY = y;
 
   doc.setFont('helvetica', 'bold');
-  const consigneeLines = doc.splitTextToSize(consigneeName, 55);
+  const consigneeLines = wrapByChars(consigneeName, 30);
   doc.text(consigneeLines, 14, consigneeY);
   consigneeY += consigneeLines.length * contentLineHeight;
 
   doc.setFont('helvetica', 'normal');
   if (consigneeAddress) {
-    const addrLines = doc.splitTextToSize(consigneeAddress, 55);
+    const addrLines = wrapByChars(consigneeAddress, 30);
     doc.text(addrLines, 14, consigneeY);
     consigneeY += addrLines.length * contentLineHeight;
   }
@@ -184,13 +185,13 @@ export function generateInvoicePdf(
   // Notify (ship to) content
   let notifyY = y;
   doc.setFont('helvetica', 'bold');
-  const notifyLines = doc.splitTextToSize(notifyName, 55);
+  const notifyLines = wrapByChars(notifyName, 30);
   doc.text(notifyLines, 75, notifyY);
   notifyY += notifyLines.length * contentLineHeight;
 
   doc.setFont('helvetica', 'normal');
   if (notifyAddress) {
-    const addrLines = doc.splitTextToSize(notifyAddress, 55);
+    const addrLines = wrapByChars(notifyAddress, 30);
     doc.text(addrLines, 75, notifyY);
     notifyY += addrLines.length * contentLineHeight;
   }
@@ -299,7 +300,7 @@ export function generateInvoicePdf(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.text('TOTAL', labelX, finalY);
-  doc.text(`$${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, valueX, finalY, { align: 'right' });
+  doc.text(`$${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, valueX, finalY, { align: 'right' });
   finalY += 10;
 
   // ─── WEIGHTS ─────────────────────────────────────────────────
@@ -333,9 +334,22 @@ export function generateInvoicePdf(
   };
   const containerList = parseContainers((inv as any).containers);
   const containerVolumes = containerList.reduce((s: number, c: any) => s + (Number(c?.volumes) || 0), 0);
-  const invNetKg   = parseNum((inv as any).netWeight);
-  const invGrossKg = parseNum((inv as any).grossWeight);
-  const invVolumes = parseNum((inv as any).totalVolumes ?? (inv as any).volumes);
+  const invNetRaw   = parseNum((inv as any).netWeight);
+  const invGrossRaw = parseNum((inv as any).grossWeight);
+  const invVolumes  = parseNum((inv as any).totalVolumes ?? (inv as any).volumes);
+  // Same heuristic as v2/components/InvoiceDrawer.tsx: legacy invoices
+  // sometimes stored `netWeight` / `grossWeight` as lbs even though the
+  // column is documented in kg. Detect by comparing against the
+  // kg-sum of line items: if the saved value is >1.5x the line-item
+  // kg total, the lbs/kg ratio (~2.2x) makes it clear the raw is lbs,
+  // so convert before printing. Without this the PDF would render
+  // e.g. 42,955 lbs as "42,955.00 Kgs" (off by 2.2x).
+  const looksLikeLbs = (raw: number, itemsKg: number): boolean =>
+    raw > 0 && itemsKg > 0 && raw > itemsKg * 1.5;
+  const toKg = (raw: number, itemsKg: number): number =>
+    looksLikeLbs(raw, itemsKg) ? raw * 0.453592 : raw;
+  const invNetKg   = toKg(invNetRaw,   itemsNetKg);
+  const invGrossKg = toKg(invGrossRaw, itemsGrossKg);
   const totalNetKg   = invNetKg   > 0 ? invNetKg   : itemsNetKg;
   const totalGrossKg = invGrossKg > 0 ? invGrossKg : itemsGrossKg;
   const totalVolumes = invVolumes > 0
@@ -381,7 +395,24 @@ export function generateInvoicePdf(
     }
   }
 
-  const hasBank = !!inv.bankName;
+  // Resolve bank fields. Priority:
+  //   1. Denormalized fields on the invoice row itself (legacy + manual override).
+  //   2. The first bank in ctx.banks belonging to this invoice's company —
+  //      so newly-onboarded companies don't need every historic invoice
+  //      to be re-saved with bank fields.
+  const fallbackBank = ctx.company?.id
+    ? (ctx.banks ?? []).find(b => b.company_id === ctx.company!.id)
+    : undefined;
+  const joinAddr = (b: typeof fallbackBank) => b
+    ? [b.address_line1, b.address_line2, [b.city, b.state, b.zip_code].filter(Boolean).join(' '), b.country].filter(Boolean).join(', ')
+    : '';
+  const effBankName    = inv.bankName       || fallbackBank?.name           || '';
+  const effBankAddress = inv.bankAddress    || joinAddr(fallbackBank)        || '';
+  const effSwift       = inv.swiftCode      || fallbackBank?.swift_code      || '';
+  const effRouting     = inv.routingNumber  || fallbackBank?.routing         || '';
+  const effAccount     = inv.accountNumber  || fallbackBank?.account_number  || '';
+
+  const hasBank = !!effBankName;
   const containerStartY = finalY + 18;
 
   const drawBank = (sectionY: number) => {
@@ -398,31 +429,31 @@ export function generateInvoicePdf(
     doc.setFontSize(9);
     doc.setTextColor(darkGray);
 
-    if (inv.bankName) {
+    if (effBankName) {
       doc.setFont('helvetica', 'bold'); doc.text('Bank Name:', bankColX, bY);
-      doc.setFont('helvetica', 'normal'); doc.text(inv.bankName, bankValueX, bY);
+      doc.setFont('helvetica', 'normal'); doc.text(effBankName, bankValueX, bY);
       bY += 5;
     }
-    if (inv.bankAddress) {
+    if (effBankAddress) {
       doc.setFont('helvetica', 'bold'); doc.text('Bank Address:', bankColX, bY);
       doc.setFont('helvetica', 'normal');
-      const addrLines = doc.splitTextToSize(inv.bankAddress, 55);
+      const addrLines = doc.splitTextToSize(effBankAddress, 55);
       doc.text(addrLines, bankValueX, bY);
       bY += addrLines.length * 4 + 1;
     }
-    if (inv.swiftCode) {
+    if (effSwift) {
       doc.setFont('helvetica', 'bold'); doc.text('SWIFT Code:', bankColX, bY);
-      doc.setFont('helvetica', 'normal'); doc.text(inv.swiftCode, bankValueX, bY);
+      doc.setFont('helvetica', 'normal'); doc.text(effSwift, bankValueX, bY);
       bY += 5;
     }
-    if (inv.routingNumber) {
+    if (effRouting) {
       doc.setFont('helvetica', 'bold'); doc.text('Routing #:', bankColX, bY);
-      doc.setFont('helvetica', 'normal'); doc.text(inv.routingNumber, bankValueX, bY);
+      doc.setFont('helvetica', 'normal'); doc.text(effRouting, bankValueX, bY);
       bY += 5;
     }
-    if (inv.accountNumber) {
+    if (effAccount) {
       doc.setFont('helvetica', 'bold'); doc.text('Account #:', bankColX, bY);
-      doc.setFont('helvetica', 'normal'); doc.text(inv.accountNumber, bankValueX, bY);
+      doc.setFont('helvetica', 'normal'); doc.text(effAccount, bankValueX, bY);
       bY += 5;
     }
     return bY;

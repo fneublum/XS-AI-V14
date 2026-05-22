@@ -1,9 +1,9 @@
 // Phase 3B — Native Delivery Documents modal.
 //
 // Mirrors v1's PLInvoiceEngine Documents Modal. Invoice / Packing List
-// / SLI now generate natively via v2/services/pdf/. BOL is still
-// stored as a data-URL on the invoice row when present; otherwise
-// v1's upload UI is the fallback.
+// / SLI generate natively via v2/services/pdf/. BOL is stored as a
+// data-URL on the invoice row; native upload via the BOL row's
+// Upload button (no more v1 handoff).
 //
 // BR and 50% checkboxes in the footer adjust the PDF prices exactly
 // the way v1's "BR" mode + Patex 50% override do — see
@@ -18,6 +18,7 @@ import {
   X as XIcon, FileText, Package, ClipboardList, Ship,
   Eye, Download, Loader2, Mail, Upload, AlertCircle, CheckCircle2,
 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../primitives/Toast';
 import { Button } from '../primitives/Button';
 import { useCompany } from '../providers/CompanyProvider';
@@ -30,14 +31,76 @@ import { useBookings } from '../queries/useBookings';
 import { usePorts } from '../queries/usePorts';
 import { useCompanyImages } from '../queries/useCompanyImages';
 import { Invoice } from '../queries/useInvoices';
+import { getSupabaseClient } from '../../services/supabase';
 import { generateInvoicePdf } from '../services/pdf/invoicePdf';
 import { generatePackingListPdf } from '../services/pdf/packingListPdf';
 import { generateSliPdf } from '../services/pdf/sliPdf';
 import { applyAdjustments } from '../services/pdf/priceAdjust';
-import { findCompany, PdfInvoice, InvoicePdfCtx } from '../services/pdf/types';
+import { findCompany, PdfInvoice, InvoicePdfCtx, PdfBankRow } from '../services/pdf/types';
+import { isEc4Company } from '../services/pdf/isEc4Company';
+import { useSupabaseQuery } from '../queries/useSupabaseQuery';
 import { sendEmail } from '../../services/emailService';
 import { resolveRecipients, joinRecipients } from '../services/recipients';
 import { Send } from 'lucide-react';
+import { GoogleGenAI } from '../../services/geminiClient';
+
+// Focused prompt — we only need the BL number, no other extraction.
+const BL_OCR_PROMPT = `From this BILL OF LADING document, extract the
+BL number (also labelled "B/L No.", "Bill of Lading Number", or
+similar). Return JSON with ONE key:
+
+{ "blNumber": string | null }
+
+The number is usually a carrier prefix + digits (e.g. MAEU1234567,
+MEDU8675309, HNCGL260020). Drop spaces and punctuation. Return null
+if you can't find it. Return ONLY valid JSON, no markdown fences.`;
+
+/**
+ * Best-effort Gemini extraction for the BL number from a freshly
+ * uploaded BOL file. Returns null on any error so the upload itself
+ * never fails because of OCR — the BL number is a nice-to-have that
+ * the user can edit later.
+ */
+async function extractBlNumberFromFile(file: File): Promise<string | null> {
+  try {
+    const ai = new GoogleGenAI({ apiKey: 'proxy' });
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => reject(new Error('read failed'));
+      reader.readAsDataURL(file);
+    });
+    const base64 = dataUrl.split(',')[1] ?? '';
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: BL_OCR_PROMPT },
+          { inlineData: { mimeType: file.type || 'application/pdf', data: base64 } },
+        ],
+      }],
+      config: { responseMimeType: 'application/json', temperature: 0 },
+    });
+    const text = (result as { text?: string }).text ?? '';
+    if (!text) return null;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const stripped = text.replace(/^```(?:json)?\s*/, '').replace(/\s*```\s*$/, '');
+      parsed = JSON.parse(stripped);
+    }
+    const raw = parsed.blNumber;
+    if (typeof raw !== 'string') return null;
+    const cleaned = raw.replace(/\s+/g, '').trim();
+    return cleaned.length > 0 ? cleaned : null;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[DeliveryDocsModal] BL OCR failed:', e);
+    return null;
+  }
+}
 
 interface Props {
   invoice: Invoice | null;
@@ -100,11 +163,15 @@ const iconBtn =
   'p-1.5 rounded-sm text-slate-500 hover:text-slate-100 hover:bg-[#161616] ' +
   'transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 
-const handoffToV1 = (invoiceId: string) => {
-  try { sessionStorage.setItem('xs_pending_delivery_docs', invoiceId); }
-  catch { /* noop */ }
-  window.location.href = '/?v2=0';
-};
+// Accepted MIME types for BOL upload. PDF is the primary, images
+// supported for phone-camera scans (matches v1 behavior, which accepted
+// any file).
+const BOL_ACCEPT = 'application/pdf,image/png,image/jpeg,image/webp';
+// Hard cap (5 MB). The data URL is stored inline in the `bolUrl` text
+// column on `invoices`, so a stray multi-megabyte scan would bloat
+// every query that selects the row. v1 had no cap and we've seen 20 MB
+// uploads choke the email composer — enforce here instead.
+const BOL_MAX_BYTES = 5 * 1024 * 1024;
 
 export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, initialSelection, autoEmail }) => {
   const toast = useToast();
@@ -117,6 +184,14 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
   const bookings = useBookings();
   const ports = usePorts();
   const logos = useCompanyImages('LOGO');
+  const banks = useSupabaseQuery<PdfBankRow[]>(
+    ['banks', 'invoice-ctx'],
+    async () => {
+      const { data, error } = await getSupabaseClient().from('banks').select('*').limit(500);
+      if (error) throw new Error(error.message);
+      return (data as PdfBankRow[] | null) ?? [];
+    },
+  );
 
   const [selection, setSelection] = useState({
     invoice: initialSelection?.invoice ?? true,
@@ -139,6 +214,18 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
     to: '', cc: '', subject: '', htmlBody: '', attachments: [],
   });
   const [emailPreviewOpen, setEmailPreviewOpen] = useState(false);
+
+  // BOL native upload — replaces the legacy v1 handoff. Files are read
+  // as data URLs and persisted to invoices.bolUrl, matching v1's
+  // storage shape so existing readers (PDF email composer, drawer
+  // preview) keep working.
+  const queryClient = useQueryClient();
+  const bolFileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingBol, setUploadingBol] = useState(false);
+  // Local override for the just-uploaded URL. Lets the modal reflect the
+  // new BOL immediately while the React Query cache refetches; cleared
+  // when the modal opens against a different invoice.
+  const [pendingBolUrl, setPendingBolUrl] = useState<string | null>(null);
 
   // Load the EC4 stamp once so jsPDF can embed it in the signed docs.
   const [stampUrl, setStampUrl] = useState<string | null>(null);
@@ -169,7 +256,97 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
     });
     setBrMode(false);
     setHalfMode(false);
+    setPendingBolUrl(null);
   }, [invoice?.id]);
+
+  // Native BOL upload. Reads the picked file as a data URL, persists
+  // it to invoices.bolUrl, then invalidates the invoice list so the
+  // drawer + downstream queries pick up the change.
+  const handleBolUpload = async (file: File): Promise<void> => {
+    if (!invoice) return;
+    if (file.size > BOL_MAX_BYTES) {
+      toast.push({
+        kind: 'warning',
+        title: 'BOL too large',
+        description: `${(file.size / 1024 / 1024).toFixed(1)} MB exceeds the 5 MB limit.`,
+      });
+      return;
+    }
+    setUploadingBol(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+      const supabase = getSupabaseClient();
+      const { error } = await supabase
+        .from('invoices')
+        .update({ bolUrl: dataUrl })
+        .eq('id', invoice.id);
+      if (error) {
+        toast.push({
+          kind: 'error',
+          title: 'Failed to save BOL',
+          description: error.message,
+        });
+        return;
+      }
+      // Reflect locally so the row flips to "Uploaded" instantly, even
+      // before React Query refetches the invoice list.
+      setPendingBolUrl(dataUrl);
+      // Refetch the invoice list so the parent drawer / table sees the
+      // new bolUrl. The wildcard `['invoices']` matches every query key
+      // shape `[invoices, companyId, search]`.
+      await queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      toast.push({ kind: 'success', title: 'BOL uploaded' });
+
+      // ─── Background OCR: extract the BL number ───────────────
+      // Fire-and-forget so the upload's success toast lands first.
+      // The follow-up toast either confirms the BL number was saved
+      // or stays silent on failure (the user can edit later). Only
+      // writes when (a) the OCR succeeded AND (b) the invoice doesn't
+      // already have a BL on file — we never overwrite a value the
+      // user typed manually.
+      void (async () => {
+        const blNumber = await extractBlNumberFromFile(file);
+        if (!blNumber) return;
+        const currentBl = ((invoice as { bl?: string | null }).bl ?? '').trim();
+        if (currentBl && currentBl !== (invoice.bookingNumber ?? '').trim()) {
+          // Already has a real BL set; don't overwrite.
+          return;
+        }
+        const sb = getSupabaseClient();
+        const { error: blErr } = await sb
+          .from('invoices')
+          .update({ bl: blNumber })
+          .eq('id', invoice.id);
+        if (blErr) {
+          // eslint-disable-next-line no-console
+          console.warn('[DeliveryDocsModal] save BL failed:', blErr);
+          return;
+        }
+        await queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        toast.push({
+          kind: 'success',
+          title: 'BL number extracted',
+          description: blNumber,
+        });
+      })();
+    } catch (e: any) {
+      toast.push({
+        kind: 'error',
+        title: 'BOL upload failed',
+        description: e?.message ?? 'unknown error',
+      });
+    } finally {
+      setUploadingBol(false);
+      // Reset the input so re-uploading the same filename triggers
+      // onChange again (browsers swallow the event otherwise).
+      if (bolFileInputRef.current) bolFileInputRef.current.value = '';
+    }
+  };
 
   const company = useMemo(
     () => findCompany(companies.data ?? [], currentCompanyId),
@@ -246,8 +423,9 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
     packingLists: packingLists.data ?? [],
     bookings: bookings.data ?? [],
     ports: (ports.data ?? []).map(p => ({ id: p.id, code: p.code, name: p.name, country: p.country ?? undefined })),
+    banks: banks.data ?? [],
     logoUrl,
-    stampUrl: overrideStamp ?? stampUrl,
+    stampUrl: isEc4Company(company) ? (overrideStamp ?? stampUrl) : null,
     brMode,
   });
 
@@ -455,7 +633,12 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
   };
 
   const selectedCount = Object.values(selection).filter(Boolean).length;
-  const bolUrl = (invoice as any).bolUrl || (invoice as any).bolurl || null;
+  // Prefer the just-uploaded URL so the row flips state without waiting
+  // for React Query to refetch.
+  const bolUrl = pendingBolUrl
+    || (invoice as any).bolUrl
+    || (invoice as any).bolurl
+    || null;
 
   return (
     <Dialog.Root open={!!invoice} onOpenChange={onOpenChange}>
@@ -576,7 +759,24 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
                 <>
                   <button
                     type="button"
-                    onClick={() => window.open(bolUrl, '_blank', 'noopener,noreferrer')}
+                    onClick={() => {
+                      // Reuse the same in-modal preview Dialog that
+                      // Invoice/PL/SLI use, instead of window.open (popup-
+                      // blocked in many Chrome configs). Data URLs work
+                      // directly in the iframe src for both PDFs and
+                      // images. The Dialog's onOpenChange cleanup calls
+                      // URL.revokeObjectURL, which is a no-op on data:
+                      // URLs so this is safe.
+                      if (previewUrl) URL.revokeObjectURL(previewUrl);
+                      const ext = bolUrl.startsWith('data:application/pdf')
+                        ? 'pdf'
+                        : bolUrl.startsWith('data:image/png') ? 'png'
+                        : bolUrl.startsWith('data:image/jpeg') ? 'jpg'
+                        : bolUrl.startsWith('data:image/webp') ? 'webp'
+                        : 'bin';
+                      setPreviewFilename(`BOL_${invoice.invoiceNumber || 'document'}.${ext}`);
+                      setPreviewUrl(bolUrl);
+                    }}
                     title="Preview"
                     className={iconBtn}
                   >
@@ -584,7 +784,13 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
                   </button>
                   <a
                     href={bolUrl}
-                    download={`BOL_${invoice.invoiceNumber || 'document'}.pdf`}
+                    download={`BOL_${invoice.invoiceNumber || 'document'}.${
+                      bolUrl.startsWith('data:application/pdf') ? 'pdf'
+                      : bolUrl.startsWith('data:image/png') ? 'png'
+                      : bolUrl.startsWith('data:image/jpeg') ? 'jpg'
+                      : bolUrl.startsWith('data:image/webp') ? 'webp'
+                      : 'bin'
+                    }`}
                     title="Download"
                     className={iconBtn}
                   >
@@ -594,13 +800,26 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
               ) : (
                 <button
                   type="button"
-                  onClick={() => handoffToV1(invoice.id)}
-                  title="Upload BOL in v1"
+                  onClick={() => bolFileInputRef.current?.click()}
+                  disabled={uploadingBol}
+                  title="Upload BOL"
                   className={iconBtn}
                 >
-                  <Upload size={13} />
+                  {uploadingBol
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <Upload size={13} />}
                 </button>
               )}
+              <input
+                ref={bolFileInputRef}
+                type="file"
+                accept={BOL_ACCEPT}
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleBolUpload(f);
+                }}
+              />
             </DocRow>
 
             {brMode && (

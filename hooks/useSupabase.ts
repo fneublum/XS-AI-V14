@@ -5,15 +5,30 @@ import { activityLogger } from '../services/activityLogService';
 export interface UseSupabaseOptions {
   select?: string;
   limit?: number;
+  /**
+   * Cap the result count from PostgREST. Aliased to `limit` when `limit`
+   * isn't set explicitly — most callers pass `pageSize` (semantic name)
+   * rather than `limit`. PostgREST's server-side default is 1000 rows,
+   * so unbounded tables must set this.
+   */
+  pageSize?: number;
   orderBy?: { column: string; ascending?: boolean };
+  /**
+   * When `false`, skip the fetch entirely and leave `data` as the empty
+   * array (or whatever was last fetched). Used by App.tsx to gate
+   * per-module lazy queries — without this, every "lazy" hook fired on
+   * every login regardless of which module the user opened.
+   */
+  enabled?: boolean;
 }
 
 export function useSupabase<T extends { id: string }>(
   tableName: string,
   options?: UseSupabaseOptions
 ) {
+  const enabled = options?.enabled !== false;
   const [data, setData] = useState<T[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSchemaError, setHasSchemaError] = useState(false);
@@ -22,6 +37,13 @@ export function useSupabase<T extends { id: string }>(
   const optionsKey = JSON.stringify(options);
 
   const fetchData = useCallback(async () => {
+    if (options?.enabled === false) {
+      // Caller has gated this query off (e.g. module not yet active).
+      // Don't hit the network; leave any previously-loaded data in place.
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setHasSchemaError(false);
     setError(null);
@@ -35,8 +57,9 @@ export function useSupabase<T extends { id: string }>(
         });
       }
 
-      if (options?.limit) {
-        query = query.limit(options.limit);
+      const cap = options?.limit ?? options?.pageSize;
+      if (cap) {
+        query = query.limit(cap);
       }
 
       const { data: dbData, error: dbError } = await query;

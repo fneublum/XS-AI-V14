@@ -152,7 +152,7 @@ export function useBookings(search?: string, agentName?: string | string[]) {
         equipment: r.equipment,
         etd: r.etd,
         eta: r.eta,
-        status: r.status ?? 'BOOKED',
+        status: r.status ?? 'AVAILABLE',
         salesOrderId: r.salesOrderId,
         agentName: r.agentName ?? null,
         freeTime: r.freeTime ?? null,

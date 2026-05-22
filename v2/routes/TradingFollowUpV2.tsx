@@ -7,7 +7,7 @@
 // those sit behind external services and belong in a follow-up.
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { Calendar, Download, FileText, Package, RefreshCw, User } from 'lucide-react';
+import { Calendar, ClipboardList, Download, FileText, Package, RefreshCw, User } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -20,6 +20,7 @@ import { useSalesOrders, SalesOrder } from '../queries/useSalesOrders';
 import { useInvoices, Invoice } from '../queries/useInvoices';
 import { useProducts, Product } from '../queries/useProducts';
 import { usePorts } from '../queries/usePorts';
+import { useBookings } from '../queries/useBookings';
 import { BASIC_PRESETS, PresetId, computeRange } from '../lib/datePresets';
 import { formatDate } from '../lib/formatDate';
 
@@ -157,6 +158,9 @@ const TradingFollowUpV2: React.FC = () => {
   const invoices = useInvoices();
   const products = useProducts();
   const ports = usePorts();
+  // Used to look up `eta` for the Shipped table's ETA column when the
+  // invoice has a matching bookingNumber.
+  const bookings = useBookings();
 
   const initialRange = useMemo(
     () => computeRange(DEFAULT_PRESET) ?? { startDate: '', endDate: '' },
@@ -191,6 +195,89 @@ const TradingFollowUpV2: React.FC = () => {
       return item.productName || '(unspecified)';
     };
   }, [products.data]);
+
+  // ETA resolver — looks up the booking by number first, otherwise
+  // estimates from the POD country and the invoice date per EC4's
+  // shipping lane defaults:
+  //   USA → Brazil  : invoice date + 30
+  //   USA → Europe  : invoice date + 40 (incl. Turkey)
+  //   USA → Asia    : invoice date + 40
+  //   Else          : blank
+  const bookingEtaByNumber = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const b of bookings.data ?? []) {
+      const key = (b.bookingNumber ?? '').trim();
+      if (!key) continue;
+      map.set(key, b.eta ?? null);
+    }
+    return map;
+  }, [bookings.data]);
+
+  // Port catalog lookup: name → country code so we can resolve PODs
+  // entered as plain text.
+  const podCountryByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of ports.data ?? []) {
+      const name = (p.name ?? '').toLowerCase();
+      const code = (p.code ?? '').toUpperCase();
+      if (name && code) m.set(name, code.slice(0, 2));
+    }
+    return m;
+  }, [ports.data]);
+
+  const inferEtaFromPodAndDate = useCallback(
+    (pod: string | null | undefined, invDate: string | null | undefined): string | null => {
+      if (!invDate) return null;
+      const base = new Date(invDate);
+      if (Number.isNaN(base.getTime())) return null;
+      // Pull the 2-letter country code: either out of an embedded
+      // UN/LOCODE like "(BRMAO)" / "BRMAO", or via the ports catalog.
+      let cc = '';
+      const v = (pod || '').trim();
+      const m = v.match(/[A-Z]{5}/);
+      if (m) cc = m[0].slice(0, 2);
+      else {
+        const cleanName = v.replace(/\s*\([A-Z]{5}\)\s*$/, '').toLowerCase();
+        cc = podCountryByName.get(cleanName) ?? '';
+      }
+      if (!cc) return null;
+
+      const BRAZIL = 'BR';
+      const EUROPE_AND_TURKEY = new Set([
+        'AL','AT','BA','BE','BG','BY','CH','CY','CZ','DE','DK','EE','ES','FI',
+        'FR','GB','GR','HR','HU','IE','IS','IT','LT','LU','LV','MD','ME','MK',
+        'MT','NL','NO','PL','PT','RO','RS','RU','SE','SI','SK','TR','UA','XK',
+      ]);
+      const ASIA = new Set([
+        'AE','AF','AM','AZ','BD','BH','BN','BT','CN','GE','HK','ID','IL','IN',
+        'IQ','IR','JO','JP','KG','KH','KP','KR','KW','KZ','LA','LB','LK','MM',
+        'MN','MO','MV','MY','NP','OM','PH','PK','PS','QA','SA','SG','SY','TH',
+        'TJ','TL','TM','TW','UZ','VN','YE',
+      ]);
+      let days: number | null = null;
+      if (cc === BRAZIL)              days = 30;
+      else if (EUROPE_AND_TURKEY.has(cc)) days = 40;
+      else if (ASIA.has(cc))          days = 40;
+      if (days === null) return null;
+      base.setDate(base.getDate() + days);
+      return base.toISOString().slice(0, 10);
+    },
+    [podCountryByName],
+  );
+
+  const etaForInvoice = useCallback(
+    (inv: Invoice): { eta: string | null; source: 'booking' | 'estimated' | 'none' } => {
+      const bn = (inv.bookingNumber ?? '').trim();
+      if (bn) {
+        const fromBooking = bookingEtaByNumber.get(bn);
+        if (fromBooking) return { eta: fromBooking, source: 'booking' };
+      }
+      const est = inferEtaFromPodAndDate(inv.pod, inv.invoiceDate);
+      if (est) return { eta: est, source: 'estimated' };
+      return { eta: null, source: 'none' };
+    },
+    [bookingEtaByNumber, inferEtaFromPodAndDate],
+  );
 
   // Render POD as "Name (CODE)" when the ports catalog has the
   // code; fall back to the raw value (which may already be a name
@@ -289,6 +376,60 @@ const TradingFollowUpV2: React.FC = () => {
     return { totalOrdered, totalShipped, pending: totalOrdered - totalShipped, qtyOrdered, qtyShipped };
   }, [customerOrders, customerInvoices]);
 
+  // ── TO SHIP — per-SO pending qty/amount ─────────────────────
+  // For each sales order in range, match invoices by `soNumber` and
+  // subtract their shipped qty + amount. Only SOs with a positive
+  // pending qty (or amount, if quantity isn't recorded) make the
+  // table — fully-shipped SOs drop out automatically. Mirrors the
+  // shipped-table row shape so the two tables read as a single
+  // ordered ↔ shipped pipeline view.
+  interface ToShipRow {
+    so: SalesOrder;
+    pendingQty: number;
+    pendingAmount: number;
+  }
+  const toShipRows = useMemo<ToShipRow[]>(() => {
+    // Sum shipped qty + amount per SO number (matched against
+    // invoice.soNumber). One SO can have several invoices when
+    // shipments are split across multiple containers / dates.
+    const shippedBySo = new Map<string, { qty: number; amount: number }>();
+    for (const inv of customerInvoices) {
+      const ref = (inv.soNumber ?? '').trim();
+      if (!ref) continue;
+      const cur = shippedBySo.get(ref) ?? { qty: 0, amount: 0 };
+      const fromItems = totalQty(invoiceItems(inv));
+      cur.qty    += fromItems || toNum(inv.grossWeight);
+      cur.amount += toNum(inv.totalAmount);
+      shippedBySo.set(ref, cur);
+    }
+    // Terminal SO statuses — the user has explicitly closed these,
+    // so they don't belong in the "To Ship" list even if the qty
+    // math hasn't fully zeroed out (e.g. partial fulfilment that
+    // the user accepted as complete).
+    const terminalStatus = new Set(['FULFILLED', 'REJECTED', 'COMPLETED', 'CLOSED', 'CANCELLED']);
+    const rows: ToShipRow[] = [];
+    for (const so of customerOrders) {
+      const status = (so.status ?? '').trim().toUpperCase();
+      if (terminalStatus.has(status)) continue;
+      const orderedQty    = totalQty(orderItems(so));
+      const orderedAmount = toNum(so.totalAmount);
+      const ref = (so.orderNumber ?? '').trim() || so.id;
+      const shipped = shippedBySo.get(ref) ?? { qty: 0, amount: 0 };
+      const pendingQty    = Math.max(0, orderedQty - shipped.qty);
+      const pendingAmount = Math.max(0, orderedAmount - shipped.amount);
+      if (pendingQty <= 0 && pendingAmount <= 0) continue;
+      rows.push({ so, pendingQty, pendingAmount });
+    }
+    rows.sort((a, b) => (a.so.orderDate ?? '').localeCompare(b.so.orderDate ?? ''));
+    return rows;
+  }, [customerOrders, customerInvoices]);
+
+  const toShipTotals = useMemo(() => {
+    const qty    = toShipRows.reduce((s, r) => s + r.pendingQty, 0);
+    const amount = toShipRows.reduce((s, r) => s + r.pendingAmount, 0);
+    return { qty, amount };
+  }, [toShipRows]);
+
   // Per-product aggregation — sum quantities and amounts across
   // orders and invoices, keyed by a normalized product name so
   // minor spelling variants merge. Mirror v1 SalesFollowUp.
@@ -366,16 +507,25 @@ const TradingFollowUpV2: React.FC = () => {
   // Build a plain rows[] from the shipped entries currently in
   // `entries` — matches the on-screen table so users get exactly
   // what they see.
-  const buildExportRows = useCallback(() => {
-    const qtyHeader = `Qty (${unitLabel(unit)})`;
-    const header = ['Date', 'Type', 'Reference', 'Details', 'Product', 'POD', 'Container', qtyHeader, 'Shipped'];
-    const shipped = entries.filter(e => e.kind === 'shipped');
-    const body = shipped.map(entry => {
+  // Build the two table sections (Shipped and To Ship) that mirror the
+  // on-screen layout. Each section has its own header / body / totals.
+  const buildExportSections = useCallback(() => {
+    // ── Shipped ─────────────────────────────────────────────────
+    const shippedHeader = [
+      'Date', 'Type', 'Reference', 'Details', 'Product', 'POD',
+      'Container', 'ETA', 'Qty (LBS)', 'Qty (KGS)', 'Shipped',
+    ];
+    const shippedRows = entries.filter(e => e.kind === 'shipped');
+    const shippedBody = shippedRows.map(entry => {
       const inv = entry.data as Invoice;
       const items = invoiceItems(inv);
       const invQty = totalQty(items) || toNum(inv.grossWeight);
       const productNames = Array.from(new Set(items.map(resolveCatalogName))).filter(Boolean).join(', ') || '—';
       const containers = invoiceContainerNumbers(inv);
+      const { eta, source } = etaForInvoice(inv);
+      const etaCell = eta
+        ? `${formatDate(eta)}${source === 'estimated' ? ' (est)' : ''}`
+        : '—';
       return [
         formatDate(inv.invoiceDate) || '',
         'Shipped',
@@ -384,17 +534,52 @@ const TradingFollowUpV2: React.FC = () => {
         productNames,
         formatPod(inv.pod),
         containers.length > 0 ? containers.join(', ') : '—',
-        formatQty(invQty, unit),
+        etaCell,
+        formatQty(invQty, 'LBS'),
+        formatQty(invQty, 'KGS'),
         formatCurrency(inv.totalAmount, inv.currency),
       ];
     });
-    const totalsRow = [
-      '', '', '', '', '', '', 'TOTAL',
-      formatQty(totals.qtyShipped, unit),
+    const shippedTotals = [
+      '', '', '', '', '', '', '', 'TOTAL',
+      formatQty(totals.qtyShipped, 'LBS'),
+      formatQty(totals.qtyShipped, 'KGS'),
       formatCurrency(totals.totalShipped),
     ];
-    return { header, body, totalsRow };
-  }, [entries, unit, resolveCatalogName, formatPod, totals.qtyShipped, totals.totalShipped]);
+
+    // ── To Ship ─────────────────────────────────────────────────
+    const toShipHeader = [
+      'Date', 'Type', 'Reference', 'Details', 'Product', 'POD',
+      'Qty Pending (LBS)', 'Qty Pending (KGS)', 'Pending $',
+    ];
+    const toShipBody = toShipRows.map(({ so, pendingQty, pendingAmount }) => {
+      const productNames = Array.from(new Set(
+        orderItems(so).map(resolveCatalogName).filter(Boolean),
+      )).join(', ') || '—';
+      return [
+        formatDate(so.orderDate) || '',
+        'To Ship',
+        so.orderNumber || so.id || '',
+        so.status || '—',
+        productNames,
+        formatPod(so.pod),
+        formatQty(pendingQty, 'LBS'),
+        formatQty(pendingQty, 'KGS'),
+        formatCurrency(pendingAmount, so.currency),
+      ];
+    });
+    const toShipTotalsRow = [
+      '', '', '', '', '', 'TOTAL',
+      formatQty(toShipTotals.qty, 'LBS'),
+      formatQty(toShipTotals.qty, 'KGS'),
+      formatCurrency(toShipTotals.amount),
+    ];
+
+    return {
+      shipped:  { header: shippedHeader, body: shippedBody, totals: shippedTotals },
+      toShip:   { header: toShipHeader,   body: toShipBody,   totals: toShipTotalsRow },
+    };
+  }, [entries, toShipRows, resolveCatalogName, formatPod, etaForInvoice, totals.qtyShipped, totals.totalShipped, toShipTotals.qty, toShipTotals.amount]);
 
   const exportFilename = useCallback((ext: 'pdf' | 'xlsx') => {
     const cname = (selectedCustomer?.name || 'customer').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -404,54 +589,97 @@ const TradingFollowUpV2: React.FC = () => {
 
   const downloadPdf = useCallback(() => {
     if (!selectedCustomer) return;
-    const { header, body, totalsRow } = buildExportRows();
+    const { shipped, toShip } = buildExportSections();
     const doc = new jsPDF({ orientation: 'landscape' });
-    doc.setFontSize(14);
-    doc.text('Trading Follow Up — Balance', 14, 14);
-    doc.setFontSize(10);
-    doc.text(selectedCustomer.name, 14, 21);
+
+    // Document title block — same content for both PDF and XLSX exports.
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Trading Follow Up', 14, 14);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(selectedCustomer.name, 14, 22);
     doc.setFontSize(9);
     doc.setTextColor(110);
     doc.text(
       `Period: ${formatDate(startDate) || 'Any'} → ${formatDate(endDate) || 'Any'}`,
-      14, 27,
+      14, 28,
     );
     doc.setTextColor(0);
+
+    // ── Shipped section ────────────────────────────────────────
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Shipped', 14, 36);
+    doc.setFont('helvetica', 'normal');
     autoTable(doc, {
-      head: [header],
-      body,
-      foot: [totalsRow],
-      startY: 32,
+      head: [shipped.header],
+      body: shipped.body.length > 0 ? shipped.body : [['—', '—', '—', '—', '—', '—', '—', '—', '—', '—']],
+      foot: shipped.body.length > 0 ? [shipped.totals] : undefined,
+      startY: 39,
       styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+      headStyles: { fillColor: [16, 122, 87], textColor: 255 },
       footStyles: { fillColor: [241, 245, 249], textColor: 0, fontStyle: 'bold' },
-      columnStyles: {
-        7: { halign: 'right' },
-        8: { halign: 'right' },
-      },
+      // Columns 0-7: text. 8-10: numeric (right-aligned).
+      columnStyles: { 8: { halign: 'right' }, 9: { halign: 'right' }, 10: { halign: 'right' } },
     });
+
+    // ── To Ship section ────────────────────────────────────────
+    const shippedEndY = (doc as any).lastAutoTable?.finalY ?? 39;
+    const toShipTitleY = shippedEndY + 10;
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('To Ship', 14, toShipTitleY);
+    doc.setFont('helvetica', 'normal');
+    autoTable(doc, {
+      head: [toShip.header],
+      body: toShip.body.length > 0
+        ? toShip.body
+        : [['—', '—', '—', '—', '—', '—', '—', '—', '—']],
+      foot: toShip.body.length > 0 ? [toShip.totals] : undefined,
+      startY: toShipTitleY + 3,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [180, 83, 9], textColor: 255 },
+      footStyles: { fillColor: [241, 245, 249], textColor: 0, fontStyle: 'bold' },
+      columnStyles: { 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' } },
+    });
+
     doc.save(exportFilename('pdf'));
-  }, [selectedCustomer, buildExportRows, startDate, endDate, exportFilename]);
+  }, [selectedCustomer, buildExportSections, startDate, endDate, exportFilename]);
 
   const downloadXlsx = useCallback(() => {
     if (!selectedCustomer) return;
-    const { header, body, totalsRow } = buildExportRows();
-    const titleRows = [
-      ['Trading Follow Up — Balance'],
+    const { shipped, toShip } = buildExportSections();
+    const periodLine = `Period: ${formatDate(startDate) || 'Any'} → ${formatDate(endDate) || 'Any'}`;
+
+    // Stitch one sheet with: title block + Shipped section + spacer +
+    // To Ship section. Cleaner than two sheets because users typically
+    // print or share a single page.
+    const aoa: (string | number)[][] = [
+      ['Trading Follow Up'],
       [selectedCustomer.name],
-      [`Period: ${formatDate(startDate) || 'Any'} → ${formatDate(endDate) || 'Any'}`],
+      [periodLine],
       [],
+      ['Shipped'],
+      shipped.header,
+      ...(shipped.body.length > 0 ? shipped.body : [['—'.padEnd(10, ' ')]]),
+      ...(shipped.body.length > 0 ? [shipped.totals] : []),
+      [],
+      ['To Ship'],
+      toShip.header,
+      ...(toShip.body.length > 0 ? toShip.body : [['—'.padEnd(10, ' ')]]),
+      ...(toShip.body.length > 0 ? [toShip.totals] : []),
     ];
-    const aoa = [...titleRows, header, ...body, totalsRow];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = [
       { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 14 },
-      { wch: 36 }, { wch: 22 }, { wch: 14 }, { wch: 14 },
+      { wch: 40 }, { wch: 22 }, { wch: 16 }, { wch: 14 },
+      { wch: 16 }, { wch: 16 }, { wch: 14 },
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Balance');
     XLSX.writeFile(wb, exportFilename('xlsx'));
-  }, [selectedCustomer, buildExportRows, startDate, endDate, exportFilename]);
+  }, [selectedCustomer, buildExportSections, startDate, endDate, exportFilename]);
 
   return (
     <div className="max-w-[1200px] space-y-4">
@@ -639,7 +867,9 @@ const TradingFollowUpV2: React.FC = () => {
                     <th className="px-3 py-2 font-medium">Product</th>
                     <th className="px-3 py-2 font-medium">POD</th>
                     <th className="px-3 py-2 font-medium">Container</th>
-                    <th className="px-3 py-2 font-medium text-right">Qty ({unitLabel(unit)})</th>
+                    <th className="px-3 py-2 font-medium">ETA</th>
+                    <th className="px-3 py-2 font-medium text-right">Qty (LBS)</th>
+                    <th className="px-3 py-2 font-medium text-right">Qty (KGS)</th>
                     <th className="px-3 py-2 font-medium text-right">Shipped</th>
                   </tr>
                 </thead>
@@ -669,7 +899,24 @@ const TradingFollowUpV2: React.FC = () => {
                         </td>
                         <td className="px-3 py-1.5 text-[11px] text-slate-400 whitespace-nowrap">{formatPod(inv.pod)}</td>
                         <td className="px-3 py-1.5 text-[11px] text-slate-300 font-mono whitespace-nowrap" title={invContainers.join(', ')}>{invContainersDisplay}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{formatQty(invQty, unit)}</td>
+                        {(() => {
+                          const { eta, source } = etaForInvoice(inv);
+                          return (
+                            <td className="px-3 py-1.5 whitespace-nowrap text-[11px] font-mono tabular-nums text-slate-400"
+                              title={
+                                source === 'booking' ? `From booking ${inv.bookingNumber}`
+                                : source === 'estimated' ? `Estimated from POD + invoice date`
+                                : 'Not enough info to compute'
+                              }>
+                              {eta ? formatDate(eta) : '—'}
+                              {source === 'estimated' && eta && (
+                                <span className="ml-1 text-[9px] text-amber-400 align-top">est</span>
+                              )}
+                            </td>
+                          );
+                        })()}
+                        <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{formatQty(invQty, 'LBS')}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{formatQty(invQty, 'KGS')}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-emerald-300">{formatCurrency(inv.totalAmount, inv.currency)}</td>
                       </tr>
                     );
@@ -677,14 +924,83 @@ const TradingFollowUpV2: React.FC = () => {
                 </tbody>
                 <tfoot className="bg-[#0f0f0f] border-t border-[#1f1f1f]">
                   <tr className="text-[11px] uppercase tracking-wider text-slate-400">
-                    <td colSpan={7} className="px-3 py-2 text-right font-medium">Total</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">{formatQty(totals.qtyShipped, unit)}</td>
+                    <td colSpan={8} className="px-3 py-2 text-right font-medium">Total</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">{formatQty(totals.qtyShipped, 'LBS')}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">{formatQty(totals.qtyShipped, 'KGS')}</td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-300">{formatCurrency(totals.totalShipped)}</td>
                   </tr>
                 </tfoot>
               </table>
             </div>
           )}
+        </Card>
+      )}
+
+      {/* TO SHIP — sales orders with pending qty/amount after netting
+          out any matching invoices. Mirrors the shipped table shape so
+          the two read as ordered ↔ shipped on the same screen. */}
+      {generated && selectedCustomer && toShipRows.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div>
+              <CardTitle>To Ship</CardTitle>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                Sales orders with quantities not yet invoiced. Period: {formatDate(startDate) || 'Any'} → {formatDate(endDate) || 'Any'}.
+              </div>
+            </div>
+          </CardHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px]">
+              <thead className="bg-[#0f0f0f] border-b border-[#1f1f1f]">
+                <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+                  <th className="px-3 py-2 font-medium">Date</th>
+                  <th className="px-3 py-2 font-medium">Type</th>
+                  <th className="px-3 py-2 font-medium">Reference</th>
+                  <th className="px-3 py-2 font-medium">Details</th>
+                  <th className="px-3 py-2 font-medium">Product</th>
+                  <th className="px-3 py-2 font-medium">POD</th>
+                  <th className="px-3 py-2 font-medium text-right">Qty Pending (LBS)</th>
+                  <th className="px-3 py-2 font-medium text-right">Qty Pending (KGS)</th>
+                  <th className="px-3 py-2 font-medium text-right">Pending $</th>
+                </tr>
+              </thead>
+              <tbody>
+                {toShipRows.map(({ so, pendingQty, pendingAmount }) => {
+                  const soItemsData = orderItems(so);
+                  const productNames = Array.from(new Set(
+                    soItemsData.map(resolveCatalogName).filter(Boolean),
+                  ));
+                  return (
+                    <tr key={`tos-${so.id}`} className="border-b border-[#141414] hover:bg-[#0f0f0f] transition-colors">
+                      <td className="px-3 py-1.5 whitespace-nowrap text-slate-400 font-mono tabular-nums">{formatDate(so.orderDate)}</td>
+                      <td className="px-3 py-1.5">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-sm bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                          <ClipboardList size={9} /> To Ship
+                        </span>
+                      </td>
+                      <td className="px-3 py-1.5 font-mono text-[11px] text-slate-300">{so.orderNumber || so.id}</td>
+                      <td className="px-3 py-1.5 text-[11px] text-slate-500">{so.status || '—'}</td>
+                      <td className="px-3 py-1.5 text-slate-300 max-w-[220px]" title={productNames.join(', ')}>
+                        <div className="line-clamp-2 leading-tight">{joinProductNames(productNames.map(productName => ({ productName })))}</div>
+                      </td>
+                      <td className="px-3 py-1.5 text-[11px] text-slate-400 whitespace-nowrap">{formatPod(so.pod)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{formatQty(pendingQty, 'LBS')}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{formatQty(pendingQty, 'KGS')}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-amber-300">{formatCurrency(pendingAmount, so.currency)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-[#0f0f0f] border-t border-[#1f1f1f]">
+                <tr className="text-[11px] uppercase tracking-wider text-slate-400">
+                  <td colSpan={6} className="px-3 py-2 text-right font-medium">Total</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">{formatQty(toShipTotals.qty, 'LBS')}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">{formatQty(toShipTotals.qty, 'KGS')}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-amber-300">{formatCurrency(toShipTotals.amount)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </Card>
       )}
 

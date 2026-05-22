@@ -157,9 +157,16 @@ export async function invokeEdgeFunction(
     if (!resp.ok) {
         // Server rejected our token — treat as expired and drop it so
         // the next call surfaces the "please sign in" path instead of
-        // re-sending the same bad token.
+        // re-sending the same bad token. Broadcast a window event so a
+        // top-level banner can prompt the user to re-auth, instead of
+        // the failure being buried in the console.
         if (resp.status === 401 && !allowAnon) {
             clearEdgeToken();
+            try {
+                window.dispatchEvent(new CustomEvent('xs-session-expired', {
+                    detail: { fnName, ranAt: new Date().toISOString() },
+                }));
+            } catch { /* SSR / older runtimes */ }
             throw new Error(
                 'Your session expired. Please sign out and sign back in, then retry.',
             );

@@ -31,6 +31,7 @@ import { ProductDrawer }    from './components/ProductDrawer';
 import { ShortcutsHelp, ShortcutGroup } from './layout/ShortcutsHelp';
 import { DataMenuModal } from './layout/DataMenuModal';
 import { SettingsMenuModal } from './layout/SettingsMenuModal';
+import { SessionExpiredBanner } from './components/SessionExpiredBanner';
 import { getSupabaseClient } from '../services/supabase';
 import { SalesOrder } from './queries/useSalesOrders';
 import { useBackgroundJobs } from './hooks/useBackgroundJobs';
@@ -57,10 +58,15 @@ const PayablesV2        = lazy(() => import('./routes/PayablesV2'));
 const CommissionsV2     = lazy(() => import('./routes/CommissionsV2'));
 const CustomerBalancesV2 = lazy(() => import('./routes/CustomerBalancesV2'));
 const AiSalesV2          = lazy(() => import('./routes/AiSalesV2'));
-const TradingFollowUpV2  = lazy(() => import('./routes/TradingFollowUpV2'));
-const AgentFollowUpV2    = lazy(() => import('./routes/AgentFollowUpV2'));
+const TradingFollowUpV2    = lazy(() => import('./routes/TradingFollowUpV2'));
+const LogisticsFollowUpV2  = lazy(() => import('./routes/LogisticsFollowUpV2'));
+const AgentFollowUpV2      = lazy(() => import('./routes/AgentFollowUpV2'));
 const AdminUsersV2      = lazy(() => import('./routes/AdminUsersV2'));
 const AdminCompaniesV2  = lazy(() => import('./routes/AdminCompaniesV2'));
+const AdminCargoAgentsV2 = lazy(() => import('./routes/AdminCargoAgentsV2'));
+const AdminCarriersV2    = lazy(() => import('./routes/AdminCarriersV2'));
+const AdminPortsV2       = lazy(() => import('./routes/AdminPortsV2'));
+const AdminLocationsV2   = lazy(() => import('./routes/AdminLocationsV2'));
 const AiDashboardV2         = lazy(() => import('./routes/AiDashboardV2'));
 const AiUploadV2            = lazy(() => import('./routes/AiUploadV2'));
 const AiEmailAssistantV2    = lazy(() => import('./routes/AiEmailAssistantV2'));
@@ -151,9 +157,10 @@ const buildSections = (
     accent: 'amber',
     icon: Truck,
     items: [
-      { id: 'freight-quotes',   label: 'Freight Quotes',  icon: Calculator },
-      { id: 'bookings',         label: 'Bookings',        icon: CalendarCheck },
-      { id: 'bol',              label: 'Bill of Ladings', icon: Ship },
+      { id: 'freight-quotes',     label: 'Freight Quotes',     icon: Calculator },
+      { id: 'bookings',           label: 'Bookings',           icon: CalendarCheck },
+      { id: 'bol',                label: 'Bill of Ladings',    icon: Ship },
+      { id: 'logistics-followup', label: 'Logistics Follow Up', icon: BellRing },
     ],
   },
   {
@@ -204,9 +211,10 @@ const routeTitles: Record<string, string> = {
   'commissions':     'Commission Invoices',
   'agent-followup':  'Agent Follow Up',
   // Logistics
-  'freight-quotes':  'Freight Quotes',
-  'bookings':        'Bookings',
-  'bol':             'Bill of Ladings',
+  'freight-quotes':    'Freight Quotes',
+  'bookings':          'Bookings',
+  'bol':               'Bill of Ladings',
+  'logistics-followup':'Logistics Follow Up',
   // Finance
   'payables':        'Payables',
   'receivables':     'Receivables',
@@ -222,6 +230,10 @@ const routeTitles: Record<string, string> = {
   'packing-lists':   'Packing Lists',
   'logistics-docs':  'Logistics Docs',
   'payment-terms':   'Payment Terms',
+  'cargo-agents':    'Cargo Agents',
+  'carriers':        'Carriers',
+  'ports':           'Ports',
+  'locations':       'Locations',
   // Reachable via Settings modal
   'users':           'Users',
   'companies':       'Companies',
@@ -265,9 +277,10 @@ const routeSection: Record<string, string> = {
   'commissions':     'Agent Sales',
   'agent-followup':  'Agent Sales',
   // Logistics
-  'freight-quotes':  'Logistics',
-  'bookings':        'Logistics',
-  'bol':             'Logistics',
+  'freight-quotes':     'Logistics',
+  'bookings':           'Logistics',
+  'bol':                'Logistics',
+  'logistics-followup': 'Logistics',
   'shipments':       'Logistics',
   'packing-lists':   'Logistics',
   'logistics-docs':  'Logistics',
@@ -284,6 +297,10 @@ const routeSection: Record<string, string> = {
   'inventory':       'Data',
   'opportunities':   'Data',
   'payment-terms':   'Data',
+  'cargo-agents':    'Data',
+  'carriers':        'Data',
+  'ports':           'Data',
+  'locations':       'Data',
   // Settings
   'users':           'Settings',
   'companies':       'Settings',
@@ -334,9 +351,27 @@ const AppV2Inner: React.FC = () => {
   const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const toast = useToast();
-  const { currentCompanyId } = useCompany();
+  const { currentCompanyId, setCurrentCompanyId } = useCompany();
   const { user, loading: authLoading } = useAuth();
   const companies = useCompanies();
+
+  // Auto-scope to the only accessible company. When a user has access
+  // to a single company, the 'ALL' scope is meaningless — pin the
+  // switcher to that company so every query, breadcrumb, and create
+  // form gets the right companyId without an extra click. Also covers
+  // the case where a stale sessionStorage value points outside the
+  // user's now-narrower access list.
+  useEffect(() => {
+    const allowed = user?.allowedCompanies;
+    if (!allowed || allowed.length === 0) return;
+    if (allowed.length === 1 && currentCompanyId !== allowed[0]) {
+      setCurrentCompanyId(allowed[0]);
+      return;
+    }
+    if (allowed.length > 1 && currentCompanyId !== 'ALL' && !allowed.includes(currentCompanyId)) {
+      setCurrentCompanyId(allowed[0]);
+    }
+  }, [user?.allowedCompanies, currentCompanyId, setCurrentCompanyId]);
   const {
     salesOrder, openSalesOrder, closeSalesOrder,
     customer, closeCustomer,
@@ -590,6 +625,7 @@ const AppV2Inner: React.FC = () => {
 
   return (
     <>
+      <SessionExpiredBanner />
       <AppShell
         sections={buildSections(
           () => setDataMenuOpen(true),
@@ -628,6 +664,10 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'commissions'     && <CommissionsV2 />}
           {activeId === 'users'           && <AdminUsersV2 />}
           {activeId === 'companies'       && <AdminCompaniesV2 />}
+          {activeId === 'cargo-agents'    && <AdminCargoAgentsV2 />}
+          {activeId === 'carriers'        && <AdminCarriersV2 />}
+          {activeId === 'ports'           && <AdminPortsV2 />}
+          {activeId === 'locations'       && <AdminLocationsV2 />}
           {activeId === 'logistics-docs'  && <LogisticsDocsV2 />}
           {activeId === 'pl'              && <PLV2 />}
           {activeId === 'ai-dashboard'    && <AiDashboardV2 />}
@@ -644,8 +684,9 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'pl-invoice'      && <PLInvoiceEngineV2 />}
           {activeId === 'cost-profit'     && <CostProfitAIV2 />}
           {activeId === 'ai-sales'        && <AiSalesV2 />}
-          {activeId === 'trading-followup' && <TradingFollowUpV2 />}
-          {activeId === 'agent-followup'  && <AgentFollowUpV2 navigate={navigate} />}
+          {activeId === 'trading-followup'   && <TradingFollowUpV2 />}
+          {activeId === 'logistics-followup' && <LogisticsFollowUpV2 />}
+          {activeId === 'agent-followup'     && <AgentFollowUpV2 navigate={navigate} />}
           {activeId === 'agent-portal-quotes'   && <AgentPortalV2 view="quotes" />}
           {activeId === 'agent-portal-bookings' && <AgentPortalV2 view="bookings" />}
         </Suspense>

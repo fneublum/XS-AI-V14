@@ -21,6 +21,7 @@ export interface Company {
   country: string | null;
   phone: string | null;
   ein: string | null;
+  email: string | null;
 }
 
 interface RawCompany {
@@ -34,6 +35,7 @@ interface RawCompany {
   country: string | null;
   phone: string | null;
   ein: string | null;
+  email: string | null;
 }
 
 export function useCompanies() {
@@ -61,6 +63,7 @@ export function useCompanies() {
         country: r.country,
         phone: r.phone,
         ein: r.ein,
+        email: r.email,
       }));
       if (!allowed || allowed.length === 0) return rows;
       const allowSet = new Set(allowed);

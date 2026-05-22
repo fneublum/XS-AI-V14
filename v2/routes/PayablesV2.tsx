@@ -30,22 +30,43 @@ const calcDueDate = (invoiceDate: string | null, paymentTerms: string | null): D
   return base;
 };
 
-type DueLabel = 'Overdue' | 'Due Soon' | 'On Track' | 'No Date';
-const getDueStatus = (r: Payable): { label: DueLabel; priority: number } => {
-  const due = calcDueDate(r.invoiceDate, r.paymentTerms);
-  if (!due) return { label: 'No Date', priority: 3 };
-  const diffDays = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-  if (diffDays < 0)  return { label: 'Overdue',  priority: 1 };
-  if (diffDays <= 7) return { label: 'Due Soon', priority: 2 };
-  return { label: 'On Track', priority: 4 };
+// Status pill: prefer the stored `status` value (admin-managed via the
+// drawer), fall back to date-derived "Due Soon" / "On Track" / "Overdue"
+// only when the row has no explicit status — so existing rows without
+// stored status keep a sensible badge until the admin sets one.
+type StatusLabel = 'UNPAID' | 'PAID' | 'OVERDUE' | 'Due Soon' | 'On Track' | 'No Date';
+
+const statusPriority: Record<StatusLabel, number> = {
+  'OVERDUE':  1,
+  'UNPAID':   2,
+  'Due Soon': 3,
+  'No Date':  4,
+  'On Track': 5,
+  'PAID':     6,
 };
 
-const StatusPill: React.FC<{ label: DueLabel }> = ({ label }) => {
-  const map: Record<DueLabel, { cls: string; icon: React.ReactNode }> = {
-    'Overdue':  { cls: 'bg-rose-500/10 text-rose-300 border-rose-500/20', icon: <AlertCircle size={10} /> },
-    'Due Soon': { cls: 'bg-amber-500/10 text-amber-300 border-amber-500/20', icon: <Clock size={10} /> },
+const resolveStatus = (r: Payable): StatusLabel => {
+  const stored = (r.status ?? '').trim().toUpperCase();
+  if (stored === 'PAID')    return 'PAID';
+  if (stored === 'OVERDUE') return 'OVERDUE';
+  if (stored === 'UNPAID')  return 'UNPAID';
+  // No stored status — derive from invoiceDate + paymentTerms.
+  const due = calcDueDate(r.invoiceDate, r.paymentTerms);
+  if (!due) return 'No Date';
+  const diffDays = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0)  return 'OVERDUE';
+  if (diffDays <= 7) return 'Due Soon';
+  return 'On Track';
+};
+
+const StatusPill: React.FC<{ label: StatusLabel }> = ({ label }) => {
+  const map: Record<StatusLabel, { cls: string; icon: React.ReactNode }> = {
+    'OVERDUE':  { cls: 'bg-rose-500/10 text-rose-300 border-rose-500/20',     icon: <AlertCircle size={10} /> },
+    'UNPAID':   { cls: 'bg-amber-500/10 text-amber-300 border-amber-500/20',   icon: <Clock size={10} /> },
+    'PAID':     { cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20', icon: <CheckCircle size={10} /> },
+    'Due Soon': { cls: 'bg-amber-500/10 text-amber-300 border-amber-500/20',   icon: <Clock size={10} /> },
     'On Track': { cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20', icon: <CheckCircle size={10} /> },
-    'No Date':  { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/20', icon: null },
+    'No Date':  { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/20',   icon: null },
   };
   const { cls, icon } = map[label];
   return (
@@ -79,8 +100,8 @@ const buildColumns = (
       </span>
     ) },
   { id: 'status', header: 'Status', sortable: true, filterable: true,
-    value: r => getDueStatus(r).label,
-    cell: r => <StatusPill label={getDueStatus(r).label} /> },
+    value: r => resolveStatus(r),
+    cell: r => <StatusPill label={resolveStatus(r)} /> },
   { id: 'qb', header: 'QB', sortable: true, filterable: true,
     value: r => (r.qbStatus === 'Sent' || qbStatuses[r.id]?.synced) ? 'Sent' : '—',
     cell: r => {
@@ -115,21 +136,62 @@ const buildColumns = (
     } },
 ];
 
+// Full editable column set for the `invoices_suppliers` row. Mirrors
+// the columns selected by usePayables — keep these in sync so the
+// drawer can both read and write every meaningful field. `items`,
+// `originalDocument`, `qb_status`, `createdAt`, `companyId` are managed
+// elsewhere (AI Upload / QB Sync / system) and intentionally omitted.
 const fields: FieldDef[] = [
-  { key: 'invoiceNumber', label: 'Invoice #', required: true, mono: true },
+  // ── Payment status — top of the drawer ───────────────────────
+  // Rendered as a row of chip buttons (select type) at the top of the
+  // form. Three canonical states: UNPAID (new bill, not yet settled),
+  // PAID (settled), OVERDUE (admin-flagged past-due). Default for new
+  // rows is UNPAID. The list Status column mirrors this value.
+  { key: 'status', label: 'Payment status', type: 'select',
+    fullWidth: true, defaultValue: 'UNPAID',
+    options: [
+      { value: 'UNPAID',  label: 'UNPAID'  },
+      { value: 'PAID',    label: 'PAID'    },
+      { value: 'OVERDUE', label: 'OVERDUE' },
+    ] },
+  // ── Header ────────────────────────────────────────────────────
+  { key: 'invoiceNumber',  label: 'Invoice #', required: true, mono: true },
   { key: 'shipperName', label: 'Supplier', fullWidth: true,
     source: {
       table: 'suppliers', valueColumn: 'name', labelColumn: 'name',
       secondaryColumn: 'country', scopeByCompany: true,
     } },
-  { key: 'invoiceDate',   label: 'Invoice date', type: 'date' },
-  { key: 'paymentTerms', label: 'Payment terms',
+  { key: 'shipperAddress', label: 'Supplier address', fullWidth: true },
+  { key: 'invoiceDate',    label: 'Invoice date', type: 'date' },
+  { key: 'dateOrder',      label: 'Order date',   type: 'date' },
+  { key: 'paymentTerms',   label: 'Payment terms',
     source: {
       table: 'payment_terms', valueColumn: 'description', labelColumn: 'description',
       secondaryColumn: 'code', scopeByCompany: true,
     } },
-  { key: 'totalAmount',   label: 'Amount', type: 'number', mono: true, min: 0, step: 0.01 },
-  { key: 'currency',      label: 'Currency', mono: true, defaultValue: 'USD' },
+  // ── Parties / Routing ────────────────────────────────────────
+  { key: 'soldTo',         label: 'Sold to' },
+  { key: 'shipTo',         label: 'Ship to' },
+  { key: 'incoterms',      label: 'Incoterm', mono: true },
+  { key: 'freightTerms',   label: 'Freight terms' },
+  { key: 'carrier',        label: 'Carrier' },
+  { key: 'transportRef',   label: 'Transport ref', mono: true },
+  { key: 'customerPo',     label: 'Customer PO', mono: true },
+  // ── Quantities / Weights ─────────────────────────────────────
+  { key: 'totalQuantity',  label: 'Total quantity', mono: true },
+  { key: 'grossWeight',    label: 'Gross weight (kg)', mono: true },
+  { key: 'netWeight',      label: 'Net weight (kg)',   mono: true },
+  { key: 'tareWeight',     label: 'Tare weight (kg)',  mono: true },
+  // ── Money ────────────────────────────────────────────────────
+  { key: 'subtotal',       label: 'Subtotal',   type: 'number', mono: true, min: 0, step: 0.01 },
+  { key: 'totalAmount',    label: 'Amount',     type: 'number', mono: true, min: 0, step: 0.01, required: true },
+  { key: 'currency',       label: 'Currency',   mono: true, defaultValue: 'USD' },
+  // ── Banking (Remit to) ───────────────────────────────────────
+  { key: 'remitTo',        label: 'Remit to',        fullWidth: true },
+  { key: 'bankName',       label: 'Bank name' },
+  { key: 'swiftCode',      label: 'SWIFT',           mono: true },
+  { key: 'routingNumber',  label: 'Routing #',       mono: true },
+  { key: 'accountNumber',  label: 'Account #',       mono: true },
 ];
 
 interface PayableDraft {

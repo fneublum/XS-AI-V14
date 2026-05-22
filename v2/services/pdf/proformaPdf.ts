@@ -10,9 +10,12 @@ import autoTable from 'jspdf-autotable';
 import type {
   PdfCompany, PdfCustomer, PdfBooking,
 } from './types';
+import { wrapByChars } from './wrapText';
 
 export interface PdfBank {
   id?: string;
+  /** Owning company. Used to fall back when an order has no explicit bankId. */
+  company_id?: string | null;
   name?: string | null;
   swift_code?: string | null;
   routing?: string | null;
@@ -113,8 +116,8 @@ export function generateProformaPdf(order: ProformaOrder, ctx: ProformaPdfCtx): 
   const addressLine2 = (company?.city && company?.state)
     ? `${company.city}, ${company.state} ${company.zip || ''}`
     : 'St Johns, FL';
-  const phone = '(904) 439-9343';
-  const email = 'felipe@ec4.enterprises';
+  const phone = company?.phone || '(904) 439-9343';
+  const email = company?.email || 'felipe@ec4.enterprises';
 
   let yPos = 15;
   const rightX = 130;
@@ -191,18 +194,18 @@ export function generateProformaPdf(order: ProformaOrder, ctx: ProformaPdfCtx): 
         .filter((s: string) => !dropSet.has(normalizeAddr(s)))
         .join(', ');
       if (streetOnly) {
-        const lines = doc.splitTextToSize(streetOnly, colWidth);
+        const lines = wrapByChars(streetOnly, Math.max(20, Math.floor(colWidth / 1.85)));
         doc.text(lines, xPos, y);
-        y += (lines as string[]).length * 4;
+        y += lines.length * 4;
       }
     }
 
     const stateZip = [state, zip].filter(Boolean).join(' ');
     const cityStateZip = [city, stateZip].filter(Boolean).join(', ');
     if (cityStateZip) {
-      const lines = doc.splitTextToSize(cityStateZip, colWidth);
+      const lines = wrapByChars(cityStateZip, Math.max(20, Math.floor(colWidth / 1.85)));
       doc.text(lines, xPos, y);
-      y += (lines as string[]).length * 4;
+      y += lines.length * 4;
     }
     if (taxId)   { doc.text(`TAX ID : ${taxId}`, xPos, y); y += 4; }
     if (country) { doc.text(country, xPos, y); y += 4; }
@@ -408,7 +411,17 @@ export function generateProformaPdf(order: ProformaOrder, ctx: ProformaPdfCtx): 
   const bankLineSpacing = 5;
   let currentBankY = bankY + 5;
 
-  const selectedBank = order.bankId ? banks.find(b => b.id === order.bankId) : null;
+  // Pick the bank for this order. Priority:
+  //   1. The bank explicitly set on the order (order.bankId).
+  //   2. Any bank belonging to the order's company — convenient default
+  //      so newly-onboarded companies with a single bank don't need every
+  //      historic SO to be re-saved with a bankId.
+  const selectedBank =
+    (order.bankId && banks.find(b => b.id === order.bankId)) ||
+    (order.companyId
+      ? banks.find(b => b.company_id === order.companyId)
+      : undefined) ||
+    null;
 
   if (selectedBank) {
     doc.text(companyName,             14, currentBankY); currentBankY += bankLineSpacing;

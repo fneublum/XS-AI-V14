@@ -1,7 +1,7 @@
 // Phase 3B — Supplier editor drawer. Full v1 parity.
 
 import React, { useEffect, useState } from 'react';
-import { X as XIcon, Plus } from 'lucide-react';
+import { X as XIcon, Plus, Share2 } from 'lucide-react';
 import {
   Drawer, Input, FormField, Label, Button, Badge, ConfirmDialog,
 } from '../primitives';
@@ -60,6 +60,7 @@ export const SupplierDrawer: React.FC<Props> = ({ supplier, mode, onOpenChange }
   const [newCategory, setNewCategory]     = useState('');
   const [rating, setRating]               = useState('3');
   const [paymentTerms, setPaymentTerms]   = useState('Net 30 Days');
+  const [sharedWith, setSharedWith]       = useState<string[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const del = useEntityDelete({ table: 'suppliers', listQueryKeys: ['suppliers'] });
@@ -87,7 +88,11 @@ export const SupplierDrawer: React.FC<Props> = ({ supplier, mode, onOpenChange }
     setCategories(supplier.categories ?? []);
     setRating(supplier.rating === null || supplier.rating === undefined ? '3' : String(supplier.rating));
     setPaymentTerms(supplier.paymentTerms ?? 'Net 30 Days');
+    setSharedWith(supplier.sharedWith ?? []);
   }, [supplier?.id, mode]);
+
+  const toggleShare = (id: string) =>
+    setSharedWith(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
   const ratingNum = Number(rating);
   const ratingValid = Number.isFinite(ratingNum) && ratingNum >= 0 && ratingNum <= 5;
@@ -119,6 +124,7 @@ export const SupplierDrawer: React.FC<Props> = ({ supplier, mode, onOpenChange }
     categories,
     rating: Number.isFinite(ratingNum) ? ratingNum : null,
     paymentTerms: paymentTerms || null,
+    sharedWith,
   });
 
   const save = () => {
@@ -224,6 +230,36 @@ export const SupplierDrawer: React.FC<Props> = ({ supplier, mode, onOpenChange }
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {availableCompanies.length > 1 && (
+            <div className={sectionClass}>
+              <div className="flex items-center gap-2">
+                <Share2 size={12} className="text-indigo-400" />
+                <Label className={labelClass}>Cross-company visibility</Label>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {availableCompanies
+                  .filter(c => c.id !== companyId)
+                  .map(c => {
+                    const on = sharedWith.includes(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => toggleShare(c.id)}
+                        className={
+                          on
+                            ? 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
+                            : 'px-2.5 py-1 rounded-md text-[11px] text-slate-400 border border-[#1f1f1f] hover:text-slate-200 hover:border-[#2a2a2a]'
+                        }
+                      >
+                        {c.name}
+                      </button>
+                    );
+                  })}
+              </div>
             </div>
           )}
 

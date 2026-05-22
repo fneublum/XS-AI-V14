@@ -33,6 +33,7 @@ export interface SalesOrder {
   bankId: string | null;
   notifyPartyId: string | null;
   notifyPartyName: string | null;
+  bookingNumber: string | null;
 }
 
 interface RawRow {
@@ -63,10 +64,16 @@ interface RawRow {
   bankId: string | null;
   notifyPartyId: string | null;
   notifyPartyName: string | null;
+  bookingNumber: string | null;
 }
 
-function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
-  return companyId === 'ALL' ? q : (q.eq('"companyId"', companyId) as Q);
+function scopeByCompany<Q extends { eq: Function; or: Function }>(q: Q, companyId: string): Q {
+  // 'ALL' scope means no filter. Otherwise include rows scoped to the
+  // current company AND system-wide rows (companyId='ALL') so legacy /
+  // imported sales orders that weren't tagged with a specific company
+  // still surface in the list.
+  if (companyId === 'ALL') return q;
+  return (q.or(`"companyId".eq.${companyId},"companyId".eq.ALL`) as Q);
 }
 
 const parseItems = (raw: unknown): LineItem[] => {
@@ -157,6 +164,7 @@ export function useSalesOrders({
         bankId: r.bankId,
         notifyPartyId: r.notifyPartyId,
         notifyPartyName: r.notifyPartyName,
+        bookingNumber: r.bookingNumber,
       }));
     },
   );

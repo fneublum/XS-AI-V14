@@ -25,6 +25,7 @@ import {
   generateProformaPdf, ProformaOrder, PdfBank,
 } from '../services/pdf/proformaPdf';
 import { findCompany } from '../services/pdf/types';
+import { isEc4Company } from '../services/pdf/isEc4Company';
 import { sendEmail } from '../../services/emailService';
 import { resolveRecipientsSync, joinRecipients } from '../services/recipients';
 
@@ -146,6 +147,8 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange, autoAc
     return (own || logos.data[0]).url || null;
   }, [logos.data, currentCompanyId]);
 
+  const scopedStampUrl = isEc4Company(company) ? stampUrl : null;
+
   // Cleanup blob URL when the outer modal closes.
   useEffect(() => {
     if (!order && previewUrl) {
@@ -175,7 +178,7 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange, autoAc
             customers: customers.data ?? [],
             bookings:  bookings.data  ?? [],
             banks:     banks.data     ?? [],
-            logoUrl, stampUrl,
+            logoUrl, stampUrl: scopedStampUrl,
           });
           setPreviewUrl(docToBlobUrl(doc));
         } catch (err) {
@@ -194,7 +197,7 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange, autoAc
             customers: customers.data ?? [],
             bookings:  bookings.data  ?? [],
             banks:     banks.data     ?? [],
-            logoUrl, stampUrl,
+            logoUrl, stampUrl: scopedStampUrl,
           });
           const filename = `Proforma_${order.orderNumber}.pdf`;
           const attachments = [{
@@ -247,7 +250,7 @@ export const ProformaDocsModal: React.FC<Props> = ({ order, onOpenChange, autoAc
     customers: customers.data ?? [],
     bookings:  bookings.data  ?? [],
     banks:     banks.data     ?? [],
-    logoUrl, stampUrl,
+    logoUrl, stampUrl: scopedStampUrl,
   });
 
   const runAction = (action: 'preview' | 'download') => {

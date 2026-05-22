@@ -16,6 +16,7 @@ import { verify as verifyJwt } from 'https://deno.land/x/djwt@v3.0.1/mod.ts';
 export interface AuthedUser {
   id: string;
   email?: string;
+  allowedCompanyIds: string[];
 }
 
 let cachedKey: CryptoKey | null = null;
@@ -67,10 +68,18 @@ export async function requireUser(
         ),
       };
     }
+    const appMeta = (claims.app_metadata && typeof claims.app_metadata === 'object')
+      ? claims.app_metadata as Record<string, unknown>
+      : {};
+    const rawAllowed = appMeta.allowed_company_ids;
+    const allowedCompanyIds = Array.isArray(rawAllowed)
+      ? rawAllowed.filter((v): v is string => typeof v === 'string')
+      : [];
     return {
       user: {
         id: sub,
         email: typeof claims.email === 'string' ? claims.email : undefined,
+        allowedCompanyIds,
       },
     };
   } catch {

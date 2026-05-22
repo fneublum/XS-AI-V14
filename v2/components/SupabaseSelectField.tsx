@@ -165,11 +165,54 @@ export const SupabaseSelectField: React.FC<Props> = ({
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return options;
+
+    // Tokenize the query and the row text so OCR'd legal names like
+    // "FIBERTEX, S.A. DE C.V." still match a stored row named just
+    // "FIBERTEX" — strict substring matching would fail (the full
+    // query doesn't fit inside the shorter stored value).
+    //
+    // Strategy, in order:
+    //   1. Forward substring   — stored value contains the query.
+    //   2. Reverse substring   — query contains the stored value.
+    //   3. Token overlap       — any meaningful (≥3 char, non-stopword)
+    //                            token from the query appears anywhere
+    //                            in the row's searchable text.
+    const STOP_TOKENS = new Set([
+      'sa', 'cv', 'ltd', 'ltda', 'inc', 'llc', 'co', 'corp', 'company',
+      'de', 'do', 'da', 'dos', 'das', 'los', 'las', 'el', 'la', 'le',
+      'y', 'and', 'via', 'from', 'to', 'on', 'of', 'the', 'a', 'an',
+      'sas', 'srl', 'gmbh', 'plc', 'pty', 'pte', 'spa', 'oy', 'ab',
+      'comercio', 'industria', 'comércio', 'indústria',
+    ]);
+    const tokenize = (s: string): string[] =>
+      s
+        .toLowerCase()
+        .split(/[\s.,;:()\[\]/\-+&]+/)
+        .filter(t => t.length >= 3 && !STOP_TOKENS.has(t));
+
+    const qTokens = tokenize(q);
+
     return options.filter(row => {
       const v = String(row[source.valueColumn] ?? '').toLowerCase();
       const l = String(row[labelCol] ?? '').toLowerCase();
       const s = source.secondaryColumn ? String(row[source.secondaryColumn] ?? '').toLowerCase() : '';
-      return v.includes(q) || l.includes(q) || s.includes(q);
+      const all = `${v} ${l} ${s}`;
+
+      // 1 — forward substring on any of the searchable columns.
+      if (v.includes(q) || l.includes(q) || s.includes(q)) return true;
+
+      // 2 — reverse substring: when the user has typed (or pasted) the
+      // long legal name and the stored value is the short trade name.
+      // Require the stored value to be at least 3 chars so we don't
+      // match every row when a 1-char column slips in.
+      if (v.length >= 3 && q.includes(v)) return true;
+      if (l.length >= 3 && q.includes(l)) return true;
+
+      // 3 — token overlap. Match if at least one meaningful token from
+      // the query lands inside the row's combined searchable text.
+      if (qTokens.length > 0 && qTokens.some(t => all.includes(t))) return true;
+
+      return false;
     });
   }, [options, filter, source.valueColumn, labelCol, source.secondaryColumn]);
 

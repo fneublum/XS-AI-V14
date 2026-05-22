@@ -28,6 +28,11 @@ interface Config<T extends { id: string }> {
   onEmail?: (row: T) => void;
   /** If provided, adds a Copy icon that calls this with the source row. */
   onDuplicate?: (row: T) => void;
+  /** Override the eye-icon behavior. Receives a callback that opens the
+   *  default inspect drawer so the override can fall back when needed
+   *  (e.g. row has no PDF attached). When omitted, eye opens the
+   *  drawer as before. */
+  onView?: (row: T, openDrawer: () => void) => void;
 }
 
 interface Result<T> {
@@ -40,7 +45,7 @@ interface Result<T> {
 }
 
 export function useRowCrud<T extends { id: string }>({
-  table, listQueryKeys, rowLabel, fields, title, onDeleted, onEmail, onDuplicate,
+  table, listQueryKeys, rowLabel, fields, title, onDeleted, onEmail, onDuplicate, onView,
 }: Config<T>): Result<T> {
   const toast = useToast();
   const [inspectRow, setInspectRow] = useState<T | null>(null);
@@ -49,8 +54,15 @@ export function useRowCrud<T extends { id: string }>({
 
   const del = useEntityDelete({ table, listQueryKeys });
 
-  const openView = (row: T) => { setInspectRow(row); setInspectMode('view'); };
+  const openDrawerView = (row: T) => { setInspectRow(row); setInspectMode('view'); };
   const openEdit = (row: T) => { setInspectRow(row); setInspectMode('edit'); };
+  // When the caller provided an onView override, run it and let it
+  // decide whether to also open the drawer. Otherwise default to the
+  // drawer-only behavior the hook always had.
+  const openView = (row: T) => {
+    if (onView) onView(row, () => openDrawerView(row));
+    else openDrawerView(row);
+  };
 
   const rowActions = (row: T): React.ReactNode => (
     <RowActions

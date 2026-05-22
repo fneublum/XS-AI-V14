@@ -8,6 +8,22 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { sendEmail } from '../services/emailService';
 import { workflowEngine } from '../services/workflowEngine';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
+
+// Escape user-supplied values before interpolating into HTML strings.
+// Supplier names, PO notes, and product names all originate from data the
+// user (or an AI extractor) typed in — if we drop them raw into the
+// email body, a value like `<img src=x onerror=fetch(...)>` executes
+// both in the local preview AND in the recipient's email client.
+const escapeHtml = (v: unknown): string => {
+    const s = v == null ? '' : String(v);
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+};
 
 interface PurchaseOrdersProps {
     purchaseOrders: PurchaseOrder[];
@@ -423,10 +439,11 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
         const supplier = suppliers.find(s => s.id === po.supplierId);
         const supplierEmail = supplier?.email || '';
 
+        const curr = escapeHtml(po.currency);
         let htmlBody = `
-            <h3>Purchase Order PO-${po.id}</h3>
-            <p><strong>Order Date:</strong> ${po.orderDate}</p>
-            <p><strong>Status:</strong> ${po.status}</p>
+            <h3>Purchase Order PO-${escapeHtml(po.id)}</h3>
+            <p><strong>Order Date:</strong> ${escapeHtml(po.orderDate)}</p>
+            <p><strong>Status:</strong> ${escapeHtml(po.status)}</p>
             <br/>
             <table style="width: 100%; border-collapse: collapse; font-family: Arial, sans-serif;">
                 <thead style="background-color: #f1f5f9;">
@@ -443,10 +460,10 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
         po.items.forEach(item => {
             htmlBody += `
                 <tr>
-                    <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">${item.productName}</td>
-                    <td style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">${item.quantity.toLocaleString()}</td>
-                    <td style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">${po.currency} ${item.unitPrice.toLocaleString()}</td>
-                    <td style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">${po.currency} ${item.total.toLocaleString()}</td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">${escapeHtml(item.productName)}</td>
+                    <td style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">${escapeHtml(item.quantity.toLocaleString())}</td>
+                    <td style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">${curr} ${escapeHtml(item.unitPrice.toLocaleString())}</td>
+                    <td style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">${curr} ${escapeHtml(item.total.toLocaleString())}</td>
                 </tr>
             `;
         });
@@ -456,12 +473,12 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
                 <tfoot>
                     <tr>
                         <td colspan="3" style="text-align: right; padding: 8px; font-weight: bold;">Total Amount:</td>
-                        <td style="text-align: right; padding: 8px; font-weight: bold;">${po.currency} ${po.totalAmount.toLocaleString()}</td>
+                        <td style="text-align: right; padding: 8px; font-weight: bold;">${curr} ${escapeHtml(po.totalAmount.toLocaleString())}</td>
                     </tr>
                 </tfoot>
             </table>
             <br/>
-            <p>${po.notes ? `<strong>Notes:</strong> ${po.notes}` : ''}</p>
+            <p>${po.notes ? `<strong>Notes:</strong> ${escapeHtml(po.notes)}` : ''}</p>
             <p>Please confirm receipt of this order.</p>
         `;
 
@@ -706,7 +723,7 @@ const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ purchaseOrders, onAdd, 
                                 ) : (
                                     <div
                                         className="w-full border border-slate-300 rounded p-4 text-sm h-64 overflow-y-auto bg-white prose prose-sm max-w-none"
-                                        dangerouslySetInnerHTML={{ __html: emailDraft.body }}
+                                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(emailDraft.body) }}
                                     />
                                 )}
                             </div>

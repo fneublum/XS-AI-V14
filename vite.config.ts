@@ -1,6 +1,16 @@
 import path from 'path';
+import { readFileSync } from 'fs';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+
+// Embed package.version + build timestamp in the bundle so the browser
+// can self-report which build it's running. Useful when HTTP caching /
+// service-worker caching serves a stale build and we need a fast check
+// (`window.__APP_VERSION__` in the console).
+const pkgVersion = (JSON.parse(
+  readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'),
+) as { version: string }).version;
+const buildTimeIso = new Date().toISOString();
 
 // Note: API keys (Gemini, ElevenLabs, ShipsGo) must NOT be exposed to the client
 // bundle. All AI/external calls go through Supabase Edge Functions where secrets
@@ -22,6 +32,8 @@ export default defineConfig(() => {
     // an identifier — `({})` fails the JSON-literal check in vite 6).
     define: {
       'process.env': JSON.stringify({}),
+      __APP_VERSION__: JSON.stringify(pkgVersion),
+      __BUILD_TIME__: JSON.stringify(buildTimeIso),
     },
     resolve: {
       alias: {

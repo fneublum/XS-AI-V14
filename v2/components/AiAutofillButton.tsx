@@ -124,9 +124,9 @@ export function AiAutofillButton<T>({
         disabled={disabled || extract.isPending}
         onClick={() => setOpen(o => !o)}
         className={cn(
-          'inline-flex items-center gap-1.5 rounded-md border border-indigo-500/40 ' +
-          'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 text-indigo-200 ' +
-          'hover:from-indigo-500/30 hover:to-purple-500/30 ' +
+          'inline-flex items-center gap-1.5 rounded-md ' +
+          'bg-gradient-to-r from-indigo-600 to-purple-600 text-white ' +
+          'hover:from-indigo-500 hover:to-purple-500 ' +
           'h-7 px-2.5 text-[12px] font-medium ' +
           'disabled:opacity-60 disabled:cursor-not-allowed',
           className,

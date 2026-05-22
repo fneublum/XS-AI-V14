@@ -21,6 +21,7 @@ export interface PoPdfCtx {
 
 const fmtMoney = (n: number, currency: string): string =>
   `${currency} ${(Number.isFinite(n) ? n : 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 

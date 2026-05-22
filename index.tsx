@@ -6,6 +6,28 @@ import App from './App';
 import { initializeMsal } from './services/smailAuth';
 import { shouldMountV2 } from './v2/services/featureFlags';
 
+// Surface the build's version + timestamp on window so anyone can run
+// `__APP_VERSION__` (or `window.__APP_VERSION__`) in the console to
+// confirm which bundle is loaded. `__APP_VERSION__` is substituted by
+// Vite's `define` at build time — see vite.config.ts.
+declare global {
+  // eslint-disable-next-line no-var
+  var __APP_VERSION__: string;
+  // eslint-disable-next-line no-var
+  var __BUILD_TIME__: string;
+  interface Window {
+    __APP_VERSION__?: string;
+    __BUILD_TIME__?: string;
+  }
+}
+try {
+  if (typeof window !== 'undefined') {
+    window.__APP_VERSION__ = __APP_VERSION__;
+    window.__BUILD_TIME__ = __BUILD_TIME__;
+    console.log(`%cXS-ERP v${__APP_VERSION__}`, 'color:#818cf8;font-weight:600', `· built ${__BUILD_TIME__}`);
+  }
+} catch { /* defines missing in some test envs */ }
+
 // Phase 3A/B — v2 opt-in. Precedence (highest wins):
 //   1. `?v2=1` URL param — always v2
 //   2. `?v2=0` URL param — always v1

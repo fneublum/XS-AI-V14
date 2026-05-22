@@ -1,7 +1,7 @@
 // Browser-side scheduler for the background autonomy loop.
 //
 // Runs while the app tab is open. Two cadences:
-//   - Inbox triage: every 15 min (plus once at mount)
+//   - Inbox triage: every 30 min (plus once at mount)
 //   - Booking monitor: every 60 min (consumes the latest triage pass)
 //
 // Results are broadcast via custom events so any panel can subscribe
@@ -53,7 +53,7 @@ export const getLastBookingAlerts = () => lastBookings;
 export const getLastProcess = () => lastProcess;
 export const getLastReplies = () => lastReplies;
 
-const INBOX_INTERVAL_MS = 15 * 60 * 1000;
+const INBOX_INTERVAL_MS = 30 * 60 * 1000;
 const BOOKING_INTERVAL_MS = 60 * 60 * 1000;
 
 function hasAnyEmailProvider(): boolean {

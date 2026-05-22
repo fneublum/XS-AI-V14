@@ -51,10 +51,11 @@ const normalizeCustomerName = (s: string | undefined | null): string =>
 const formatCurrency = (val: number | null | undefined, currency = 'USD'): string => {
   const num = typeof val === 'number' ? val : parseFloat(val as unknown as string);
   if (num == null || Number.isNaN(num)) return '—';
+  const opts = { style: 'currency' as const, minimumFractionDigits: 2, maximumFractionDigits: 2 };
   try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(num);
+    return new Intl.NumberFormat('en-US', { ...opts, currency }).format(num);
   } catch {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
+    return new Intl.NumberFormat('en-US', { ...opts, currency: 'USD' }).format(num);
   }
 };
 

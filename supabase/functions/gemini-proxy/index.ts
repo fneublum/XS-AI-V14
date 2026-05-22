@@ -39,7 +39,12 @@ const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 
 // Request body size cap (bytes). The SDK's payload for normal prompts
 // is well under this; files/inlineData pushes up fast so we gate it.
-const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2 MB
+// 25 MB cap — covers PDFs up to ~17-18 MB after base64 + JSON envelope
+// overhead. Gemini's `generateContent` accepts inline payloads up to
+// 20 MB; anything bigger should go through the Files API (separate
+// architecture). This is also the practical OCR ceiling: scanned PDFs
+// from EC4's flow rarely exceed 10 MB.
+const MAX_BODY_BYTES = 25 * 1024 * 1024;
 
 // Allowed models. Edit to add new Gemini variants.
 const ALLOWED_MODELS = new Set([

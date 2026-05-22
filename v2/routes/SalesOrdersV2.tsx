@@ -13,7 +13,7 @@ import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { ProformaDocsModal } from '../components/ProformaDocsModal';
 import { useSalesOrders, SalesOrder } from '../queries/useSalesOrders';
-import { useEntityInsert } from '../queries/useEntityMutations';
+import { useEntityInsert, useEntityUpdate } from '../queries/useEntityMutations';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import { cn } from '../primitives/utils';
@@ -201,6 +201,10 @@ const SalesOrdersV2: React.FC = () => {
     listQueryKeys: ['salesOrders', 'recentSalesOrders', 'dashboardStats'],
     idPrefix: 'SO',
   });
+  const update = useEntityUpdate<{ id: string } & Record<string, unknown>>({
+    table: 'sales_orders',
+    listQueryKeys: ['salesOrders', 'recentSalesOrders', 'dashboardStats'],
+  });
 
   const all = useSalesOrders({ search });
   const rows = useMemo(() => {
@@ -241,6 +245,60 @@ const SalesOrdersV2: React.FC = () => {
     });
   };
 
+  /** Fill: flip the SO to FULFILLED and hand the user over to the
+   *  Packing List & Invoice page with a seed pre-filled from the SO.
+   *  PLInvoiceEngineV2 reads the seed on mount and opens the create
+   *  drawer ready for the user to set the PL number + container info. */
+  const fillFromSO = (row: SalesOrder) => {
+    update.mutate({ id: row.id, status: 'FULFILLED' } as never, {
+      onSuccess: () => {
+        const freightTermsForIncoterm = (i: string | null | undefined): string => {
+          const code = (i ?? '').toUpperCase();
+          if (['EXW', 'FCA', 'FAS', 'FOB'].includes(code)) return 'Collect';
+          if (['CPT', 'CIP', 'CFR', 'CIF', 'DAT', 'DAP', 'DDP'].includes(code)) return 'Prepaid';
+          return '';
+        };
+        const seed = {
+          plNumber: '',
+          soNumber: row.orderNumber ?? '',
+          poNumber: '',
+          invoiceNumber: '',
+          bookingNumber: (row as { bookingNumber?: string | null }).bookingNumber ?? '',
+          shipper: '',
+          consignee: row.customerName ?? '',
+          shippingPoint: row.poa ?? '',
+          destination: row.pod ?? '',
+          freightTerms: freightTermsForIncoterm(row.incoterm),
+          currency: row.currency ?? 'USD',
+          totalValue: row.totalAmount ? String(row.totalAmount) : '',
+          status: 'DRAFT',
+          date: new Date().toISOString().slice(0, 10),
+          notes: row.notes ?? '',
+        };
+        try {
+          sessionStorage.setItem('xs_v2_pl_seed_from_so', JSON.stringify({
+            seed,
+            sourceSoId: row.id,
+            stampedAt: Date.now(),
+          }));
+        } catch { /* sessionStorage full / blocked — non-fatal */ }
+        toast.push({
+          kind: 'success',
+          title: `${row.orderNumber} marked FULFILLED`,
+          description: 'Opening Packing List & Invoice — fill the PL # to continue.',
+        });
+        window.dispatchEvent(new CustomEvent('xs-v2-navigate', { detail: { id: 'pl-invoice' } }));
+      },
+      onError: (err) => {
+        toast.push({
+          kind: 'error',
+          title: 'Fulfill failed',
+          description: err.message,
+        });
+      },
+    });
+  };
+
   // View previews the Proforma PDF; Email opens the Proforma email
   // draft. Edit still opens the bespoke drawer.
   const rowActions = (row: SalesOrder) => (
@@ -249,6 +307,8 @@ const SalesOrdersV2: React.FC = () => {
       onEdit={() => openSalesOrder(row)}
       onEmail={() => setProformaEmailOrder(row)}
       onDuplicate={() => duplicateOrder(row)}
+      onFill={() => fillFromSO(row)}
+      fillLabel="Mark FULFILLED + open Packing List & Invoice"
       onDelete={() => confirmDelete(row)}
     />
   );

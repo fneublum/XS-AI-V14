@@ -100,6 +100,55 @@ const numOrUndef = (v: unknown): number | undefined => {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 };
 
+/**
+ * Multi-invoice prompt — same field shape as CUSTOMER_INV_PROMPT but
+ * instructs Gemini to return an array, even for single-invoice PDFs.
+ * Used by the batch upload flow on Agent Sales Orders so the caller
+ * doesn't have to switch prompts per file.
+ */
+export const CUSTOMER_INV_MULTI_PROMPT = `${CUSTOMER_INV_PROMPT}
+
+IMPORTANT — MULTIPLE INVOICES IN ONE PDF:
+A single PDF may contain SEVERAL distinct commercial invoices stacked
+together (e.g. an export shipment binder with separate invoices per
+container, per buyer, or per packing list). Treat each invoice as a
+self-contained unit and return ONE entry in the response array per
+invoice. If the PDF contains only one invoice, return a single-element
+array.
+
+Return shape — ALWAYS an array, never a single object:
+
+{
+  "invoices": [
+    { /* fields described above */ },
+    { /* fields described above */ }
+  ]
+}
+
+Return ONLY valid JSON — no markdown fences, no commentary.`;
+
+/**
+ * Apply normalizeCustomerInvoice to each invoice entry in a
+ * Gemini multi-invoice response. Accepts either:
+ *   { invoices: [{...}, ...] }   ← multi-invoice prompt response
+ *   [{...}, ...]                  ← bare array
+ *   {...}                         ← single invoice (treated as 1-entry array)
+ */
+export function normalizeMultipleInvoices(parsed: unknown): CustomerInvoiceDraft[] {
+  if (Array.isArray(parsed)) {
+    return parsed.map(p => normalizeCustomerInvoice(p as Record<string, unknown>));
+  }
+  if (parsed && typeof parsed === 'object') {
+    const obj = parsed as Record<string, unknown>;
+    if (Array.isArray(obj.invoices)) {
+      return obj.invoices.map(p => normalizeCustomerInvoice(p as Record<string, unknown>));
+    }
+    // Single-invoice object — wrap.
+    return [normalizeCustomerInvoice(obj)];
+  }
+  return [];
+}
+
 export function normalizeCustomerInvoice(parsed: Record<string, unknown>): CustomerInvoiceDraft {
   const str = (k: string): string => {
     const v = parsed[k];

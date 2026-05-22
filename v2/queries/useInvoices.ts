@@ -49,6 +49,13 @@ export interface Invoice {
   soNumber: string | null;
   memo: string | null;
   containers: string | null;
+  /** BOL stored as a data URL on the row. Drives the DeliveryDocsModal
+   *  "Uploaded" / "Upload required" state and is required by the
+   *  Dropbox Save row action. */
+  bolUrl: string | null;
+  /** Bill-of-Lading number, extracted via Gemini OCR when the user
+   *  uploads the BOL. Surfaced in Logistics Follow Up. */
+  bl: string | null;
   createdAt: string;
 }
 
@@ -96,6 +103,10 @@ interface Raw {
   soNumber: string | null;
   memo: string | null;
   containers: string | null;
+  bolUrl: string | null;
+  /** Legacy lowercase variant on some older rows. */
+  bolurl?: string | null;
+  bl: string | null;
   createdAt: string | null;
 }
 
@@ -209,6 +220,8 @@ export function useInvoices(search?: string) {
         soNumber: r.soNumber,
         memo: r.memo,
         containers: r.containers,
+        bolUrl: r.bolUrl ?? r.bolurl ?? null,
+        bl: r.bl,
         createdAt: r.createdAt ?? '',
       }));
     },

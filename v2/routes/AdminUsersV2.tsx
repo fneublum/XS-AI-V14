@@ -54,20 +54,30 @@ const columns: DataTableColumn<UserRow>[] = [
 ];
 
 // Canonical module list — mirrors `allowed_modules` values stored on
-// the ADMIN user and the top-level keys in `config/navigation.ts`.
-// Rows created before a module shipped still round-trip via the raw
-// array value, so adding new modules here is additive.
+// each user. Values are the coarse-grained gate IDs that the v1 Dock /
+// TopNavigation and the v2 sidebar both honour. Labels match the v2
+// sidebar wording where the two diverge (Purchase & cost / Order-Sale).
+// Grouped by sidebar section for readability; the underlying values are
+// what's stored in DB. Rows created before a module shipped still
+// round-trip via the raw array value, so adding new modules here is
+// additive — no migration needed.
 const MODULE_OPTIONS: Array<{ value: string; label: string }> = [
+  // ── Workspace ─────────────────────────────────────────────────
   { value: 'DASHBOARD',          label: 'Dashboard' },
   { value: 'CONNECTIONS',        label: 'Connections' },
-  { value: 'BUY',                label: 'Purchase & Cost' },
-  { value: 'COST_PROFIT_AI',     label: 'Cost / Profit AI' },
+  { value: 'AI_SALES_AGENT',     label: 'AI Sales Agent' },
+  // ── Trading ───────────────────────────────────────────────────
+  { value: 'BUY',                label: 'Purchase & cost' },
+  { value: 'COST_PROFIT_AI',     label: 'Order-Sale' },
   { value: 'PAPERWORK',          label: 'Paperwork' },
+  // ── Sales / Agent Sales ───────────────────────────────────────
   { value: 'SALES_HUB',          label: 'Sales Hub' },
   { value: 'SALES_FORCE',        label: 'Sales Force' },
   { value: 'COMMISSIONS',        label: 'Commissions' },
+  // ── Logistics / Finance ───────────────────────────────────────
   { value: 'LOGISTICS',          label: 'Logistics' },
   { value: 'FINANCE',            label: 'Finance' },
+  // ── System / AI / Portals ─────────────────────────────────────
   { value: 'DATA',               label: 'Data' },
   { value: 'AI_UPLOAD',          label: 'AI Upload' },
   { value: 'SETTINGS',           label: 'Settings' },
@@ -104,6 +114,14 @@ const AdminUsersV2: React.FC = () => {
     { key: 'username', label: 'Username', required: true, mono: true },
     { key: 'email',    label: 'Email', placeholder: 'name@company.com' },
     { key: 'phone',    label: 'Phone', mono: true },
+    // Password is write-only: useUsers deliberately doesn't fetch it,
+    // and `skipIfEmpty` keeps an empty edit field from wiping the
+    // stored value. New-user create accepts an initial password here;
+    // edit drawer leaves it blank by default and only sends an UPDATE
+    // when the admin types a new one.
+    { key: 'password', label: 'Password', type: 'password',
+      skipIfEmpty: true, fullWidth: true,
+      placeholder: 'Set or leave blank' },
     { key: 'role',     label: 'Role', required: true, type: 'select',
       options: ROLE_OPTIONS,
       defaultValue: 'USER' },

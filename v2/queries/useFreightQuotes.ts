@@ -143,11 +143,20 @@ export function useFreightQuotes(search?: string, agentName?: string | string[])
           .limit(200),
         currentCompanyId,
       );
+      // Whitespace-tolerant agent matching. Real-world rows have
+      // mismatched trailing spaces — `cargo_agents.name` is stored as
+      // "KAPPALOG " while quotes inserted by the V2 RFQ modal trim the
+      // name to "KAPPALOG". An exact `ilike` lookup misses those rows.
+      // Wrapping each filter in `*...*` makes the match substring-based,
+      // which is also what V1's bookings code does (matchesAnyAgent).
+      // Strip `*` and `,` to keep PostgREST's `.or` syntax intact.
+      const cleanAgent = (a: string) => String(a).trim().replace(/[*,]/g, '');
       if (agents.length === 1) {
-        q = q.ilike('agent_name', agents[0]) as typeof q;
+        const t = cleanAgent(agents[0]);
+        if (t) q = q.ilike('agent_name', `*${t}*`) as typeof q;
       } else if (agents.length > 1) {
         const clauses = agents
-          .map(a => `agent_name.ilike.${String(a).replace(/,/g, '')}`)
+          .map(a => `agent_name.ilike.*${cleanAgent(a)}*`)
           .join(',');
         q = q.or(clauses) as typeof q;
       }

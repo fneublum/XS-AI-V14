@@ -12,6 +12,13 @@ import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, Filter, Search, X, CheckCircle2 } from 'lucide-react';
 import { cn } from './utils';
 
+/** Footer aggregation. When a column opts in, DataTable renders a
+ *  <tfoot> row with one summary cell per column. The sum is computed
+ *  over `viewRows` (i.e. after sort/filter), so the totals respect
+ *  any active column filters. Each column controls its own display
+ *  via `formatAggregate` — default falls back to a locale-aware
+ *  integer. Mirrors the manually-rendered tfoot rows in the v2 PDF
+ *  generators / Trading Follow Up tables. */
 export interface DataTableColumn<T> {
   id: string;
   header: React.ReactNode;
@@ -29,6 +36,13 @@ export interface DataTableColumn<T> {
   value?: (row: T) => string | number | null | undefined;
   /** Custom comparator. Overrides the default string/number compare. */
   compare?: (a: T, b: T) => number;
+  /** When set, contributes to the footer totals row. Currently only
+   *  'sum' is supported. Pair with `formatAggregate` for non-integer
+   *  display (money, weight, etc). */
+  aggregate?: 'sum';
+  /** Custom renderer for the aggregated value. Default formats the
+   *  number with `toLocaleString()`. */
+  formatAggregate?: (value: number, rows: T[]) => React.ReactNode;
 }
 
 interface DataTableProps<T> {
@@ -81,6 +95,27 @@ interface HeaderMenuProps<T> {
   onClose: () => void;
 }
 
+// Normalize the column value into a comparison key so case + stray
+// punctuation + accents collapse to a single entry in the dropdown
+// AND match the same set of rows when picked. Handles:
+//   • "RSM Company" vs "RSM COMPANY"        — case
+//   • "FIBERTEX HONDURAS, S.A. DE C.V."
+//     vs "FIBERTEX HONDURAS S.A. DE C.V."   — punctuation
+//   • "FIAÇÃO PATAMUTE LTDA"
+//     vs "FIACAO PATAMUTE LTDA"             — diacritics
+//   • "PATEX - PATAMUTÉ TÊXTIL LTDA"
+//     vs "PATEX PATAMUTE TEXTIL LTDA"       — combined
+export const normalizeFilterKey = (s: string): string =>
+  s
+    .toLowerCase()
+    // Strip diacritics: Unicode NFD splits "ç" into "c" + combining
+    // cedilla, then we drop every U+0300–U+036F combining mark.
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[.,;:'"!?()\[\]/\\&|+-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClose }: HeaderMenuProps<T>) {
   const [needle, setNeedle] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
@@ -94,20 +129,27 @@ function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClos
     return () => document.removeEventListener('mousedown', onDown);
   }, [onClose]);
 
-  const unique = useMemo(() => {
-    const seen = new Set<string>();
+  // Group raw values by their normalized key. Pick the first
+  // occurrence as the display label so the dropdown still shows
+  // human-readable text; `key` is what the active filter set stores
+  // (also what we'll match rows against in viewRows).
+  const groups = useMemo(() => {
+    const map = new Map<string, string>();
     for (const v of values) {
-      const key = String(v ?? '');
-      if (key && !seen.has(key)) seen.add(key);
+      const raw = String(v ?? '').trim();
+      if (!raw) continue;
+      const key = normalizeFilterKey(raw);
+      if (!key || map.has(key)) continue;
+      map.set(key, raw);
     }
-    return Array.from(seen).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }),
+    return Array.from(map.entries()).sort((a, b) =>
+      a[1].localeCompare(b[1], undefined, { numeric: true, sensitivity: 'base' }),
     );
   }, [values]);
 
   const filtered = needle
-    ? unique.filter(v => v.toLowerCase().includes(needle.toLowerCase()))
-    : unique;
+    ? groups.filter(([, display]) => display.toLowerCase().includes(needle.toLowerCase()))
+    : groups;
 
   return (
     <div
@@ -139,13 +181,13 @@ function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClos
         )}
         {filtered.length === 0 ? (
           <div className="px-2 py-2 text-[11.5px] text-slate-600">No values</div>
-        ) : filtered.map(v => {
-          const on = activeSet.has(v);
+        ) : filtered.map(([key, display]) => {
+          const on = activeSet.has(key);
           return (
             <button
-              key={v}
+              key={key}
               type="button"
-              onClick={() => onToggle(v)}
+              onClick={() => onToggle(key)}
               className="w-full text-left px-2 py-1 text-[11.5px] text-slate-200 hover:bg-[#161616] rounded-sm flex items-center gap-2"
             >
               <span className={
@@ -154,7 +196,7 @@ function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClos
               }>
                 {on && <CheckCircle2 size={9} className="text-white" />}
               </span>
-              <span className="truncate" title={v}>{v}</span>
+              <span className="truncate" title={display}>{display}</span>
             </button>
           );
         })}
@@ -205,8 +247,11 @@ export function DataTable<T>({
           const col = columns.find(c => c.id === columnId);
           if (!col) continue;
           const raw = col.value ? col.value(r) : null;
-          const str = String(raw ?? '');
-          if (!selected.has(str)) return false;
+          // Match against the normalized key — the active set stores
+          // keys (lowercase, punctuation-collapsed), so "RSM Company"
+          // and "RSM COMPANY" filter the same set of rows.
+          const key = normalizeFilterKey(String(raw ?? '').trim());
+          if (!selected.has(key)) return false;
         }
         return true;
       });
@@ -228,6 +273,11 @@ export function DataTable<T>({
   const isCompact = density === 'compact';
   const cellPadClass = isCompact ? 'px-2 py-0.5' : 'px-3 py-1.5';
   const tableFontClass = isCompact ? 'text-[11px] leading-[14px]' : 'text-[11.5px] leading-[16px]';
+  // Compact mode collapses to one row per record. Without nowrap, long
+  // values like "USHOU - Houston, Texas, United States → BRMAO - …" or
+  // multi-word customer names wrap inside the cell and break the row
+  // height back to the verbose layout the dense view was meant to fix.
+  const cellWrapClass = isCompact ? 'whitespace-nowrap' : '';
 
   return (
     // No overflow-x-auto here — it breaks the sticky-thead chain.
@@ -349,6 +399,7 @@ export function DataTable<T>({
                     key={col.id}
                     className={cn(
                       cellPadClass,
+                      cellWrapClass,
                       'text-slate-200 align-middle',
                       alignClass[col.align ?? 'left'],
                       col.mono && 'font-mono tabular-nums',
@@ -358,7 +409,7 @@ export function DataTable<T>({
                   </td>
                 ))}
                 {rowActions && (
-                  <td className={cn(cellPadClass, 'text-right align-middle')}>
+                  <td className={cn(cellPadClass, cellWrapClass, 'text-right align-middle')}>
                     {rowActions(row)}
                   </td>
                 )}
@@ -366,6 +417,72 @@ export function DataTable<T>({
             ))
           )}
         </tbody>
+        {(() => {
+          // Footer totals row — rendered only when at least one column
+          // opts in via `aggregate`. Sum operates over the
+          // already-filtered/sorted `viewRows` so the values match what
+          // the user is looking at, not the raw row set.
+          const aggCols = columns.filter(c => c.aggregate === 'sum');
+          if (aggCols.length === 0 || viewRows.length === 0) return null;
+          // Memo would be nicer, but the column shape changes when
+          // stages flip — straight iteration keeps things simple.
+          const sums = new Map<string, number>();
+          for (const c of aggCols) {
+            let s = 0;
+            for (const r of viewRows) {
+              const v = c.value ? c.value(r) : null;
+              const n = typeof v === 'number' ? v : Number(v);
+              if (Number.isFinite(n)) s += n;
+            }
+            sums.set(c.id, s);
+          }
+          const aggIds = new Set(aggCols.map(c => c.id));
+          // Pick the first non-aggregate column to host the "Total"
+          // label so the footer reads naturally left-to-right.
+          const labelCol = columns.find(c => !aggIds.has(c.id))?.id ?? null;
+          return (
+            <tfoot className="bg-[#0f0f0f] border-t border-[#1f1f1f]">
+              <tr className="text-[11px] uppercase tracking-wider text-slate-400">
+                {columns.map(col => {
+                  if (col.aggregate === 'sum') {
+                    const sum = sums.get(col.id) ?? 0;
+                    const formatted = col.formatAggregate
+                      ? col.formatAggregate(sum, viewRows)
+                      : sum.toLocaleString();
+                    return (
+                      <td
+                        key={col.id}
+                        className={cn(
+                          cellPadClass,
+                          'font-semibold text-slate-100 align-middle',
+                          alignClass[col.align ?? 'left'],
+                          col.mono && 'font-mono tabular-nums',
+                        )}
+                      >
+                        {formatted}
+                      </td>
+                    );
+                  }
+                  return (
+                    <td
+                      key={col.id}
+                      className={cn(
+                        cellPadClass,
+                        'font-medium text-slate-400 align-middle',
+                        alignClass[col.align ?? 'left'],
+                      )}
+                    >
+                      {col.id === labelCol
+                        ? `Total · ${viewRows.length} row${viewRows.length === 1 ? '' : 's'}`
+                        : ''}
+                    </td>
+                  );
+                })}
+                {rowActions && <td className={cn(cellPadClass)} />}
+              </tr>
+            </tfoot>
+          );
+        })()}
       </table>
     </div>
   );

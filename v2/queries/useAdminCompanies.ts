@@ -11,20 +11,28 @@ export interface CompanyAdminRow {
   id: string;
   name: string;
   nickname: string | null;
+  address: string | null;
   city: string | null;
+  state: string | null;
+  zip: string | null;
   country: string | null;
   ein: string | null;
   phone: string | null;
+  email: string | null;
 }
 
 interface Raw {
   id: string;
   name: string | null;
   nickname: string | null;
+  address: string | null;
   city: string | null;
+  state: string | null;
+  zip: string | null;
   country: string | null;
   ein: string | null;
   phone: string | null;
+  email: string | null;
 }
 
 export function useAdminCompanies(search?: string) {
@@ -35,7 +43,7 @@ export function useAdminCompanies(search?: string) {
     async () => {
       const supabase = getSupabaseClient();
       let q = supabase.from('companies')
-        .select('id, name, nickname, city, country, ein, phone')
+        .select('id, name, nickname, address, city, state, zip, country, ein, phone, email')
         .order('name', { ascending: true })
         .limit(200);
 
@@ -49,10 +57,14 @@ export function useAdminCompanies(search?: string) {
         id: r.id,
         name: r.name ?? r.id,
         nickname: r.nickname,
+        address: r.address,
         city: r.city,
+        state: r.state,
+        zip: r.zip,
         country: r.country,
         ein: r.ein,
         phone: r.phone,
+        email: r.email,
       }));
     },
   );

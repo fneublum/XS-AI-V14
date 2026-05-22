@@ -96,7 +96,7 @@ export async function checkBookings(
       pod: row.pod ?? null,
       eta: etaStr,
       daysPastEta: Number.isFinite(daysPast) ? daysPast : 0,
-      status: row.status ?? 'BOOKED',
+      status: row.status ?? 'AVAILABLE',
       suggestedBl,
     });
   }

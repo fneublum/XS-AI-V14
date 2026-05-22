@@ -15,7 +15,7 @@ import { useEntityInsert } from '../queries/useEntityMutations';
 import { useCompany } from '../providers/CompanyProvider';
 import { SupabaseSelectField, FieldSource } from './SupabaseSelectField';
 
-export type FieldType = 'text' | 'number' | 'date' | 'select' | 'multiselect' | 'textarea';
+export type FieldType = 'text' | 'number' | 'date' | 'select' | 'multiselect' | 'textarea' | 'password';
 
 /** Select options support both plain strings (value === label) and
  *  `{ value, label }` pairs so a field can display an uppercase chip
@@ -81,6 +81,14 @@ export interface FieldDef {
    * persist on save.
    */
   hidden?: boolean;
+  /**
+   * When true, an empty value during the edit drawer's save is omitted
+   * from the UPDATE patch entirely (instead of writing `null`). Use
+   * for write-only fields like `users.password` where the row never
+   * round-trips the current value to the client — typing nothing should
+   * preserve the existing stored value, not overwrite it.
+   */
+  skipIfEmpty?: boolean;
 }
 
 export type { FieldSource };
@@ -367,10 +375,16 @@ export const QuickCreateDrawer: React.FC<Props> = ({
                   }
                   return (
                     <Input
-                      type={f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text'}
+                      type={
+                        f.type === 'date' ? 'date'
+                        : f.type === 'number' ? 'number'
+                        : f.type === 'password' ? 'password'
+                        : 'text'
+                      }
                       value={strValue}
                       onChange={e => set(f.key, e.target.value)}
                       placeholder={f.placeholder}
+                      autoComplete={f.type === 'password' ? 'new-password' : undefined}
                       min={f.min}
                       max={f.max}
                       step={f.step}

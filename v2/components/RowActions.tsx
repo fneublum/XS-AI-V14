@@ -5,7 +5,7 @@
 // Pass `undefined` for any handler to hide that icon.
 
 import React from 'react';
-import { Eye, Pencil, Trash2, Mail, FileText, Copy, FileDown, ArrowRight, X as XIcon } from 'lucide-react';
+import { Eye, Pencil, Trash2, Mail, FileText, Copy, FileDown, ArrowRight, X as XIcon, CloudUpload, Loader2, PackageCheck } from 'lucide-react';
 
 interface Props {
   onView?: () => void;
@@ -22,6 +22,18 @@ interface Props {
   onPdf?: () => void;
   /** Custom tooltip for the PDF icon. Default: "Preview PDF". */
   pdfLabel?: string;
+  /** Save to remote storage (e.g. Dropbox for delivery docs). When the
+   *  per-row action is running, pass `saving=true` to swap the icon for
+   *  a spinner and disable interaction. */
+  onSave?: () => void;
+  saveLabel?: string;
+  saving?: boolean;
+  /** Fulfill action — flips the row's status to FULFILLED and jumps the
+   *  user into the downstream workflow (e.g. Sales Order → Packing List
+   *  / Invoice). Distinct from Approve because it's a hand-off, not a
+   *  status change in place. */
+  onFill?: () => void;
+  fillLabel?: string;
   /** Stage-promotion action — e.g. Approve a Proposal → Offer. */
   onApprove?: () => void;
   approveLabel?: string;
@@ -51,6 +63,8 @@ export const RowActions: React.FC<Props> = ({
   onView, onEdit, onDelete, onEmail, onDuplicate, onDeliveryDocs,
   deliveryDocsLabel = 'Delivery documents',
   onPdf, pdfLabel = 'Preview PDF',
+  onSave, saveLabel = 'Save to Dropbox', saving = false,
+  onFill, fillLabel = 'Fill / Fulfill',
   onApprove, approveLabel = 'Approve',
   onReject,  rejectLabel  = 'Reject',
   disabled,
@@ -116,6 +130,18 @@ export const RowActions: React.FC<Props> = ({
         <Mail size={14} />
       </button>
     )}
+    {onSave && (
+      <button
+        type="button"
+        onClick={stop(onSave)}
+        disabled={disabled || saving}
+        title={saveLabel}
+        aria-label={saveLabel}
+        className={iconBtn}
+      >
+        {saving ? <Loader2 size={14} className="animate-spin" /> : <CloudUpload size={14} />}
+      </button>
+    )}
     {onDuplicate && (
       <button
         type="button"
@@ -126,6 +152,18 @@ export const RowActions: React.FC<Props> = ({
         className={iconBtn}
       >
         <Copy size={14} />
+      </button>
+    )}
+    {onFill && (
+      <button
+        type="button"
+        onClick={stop(onFill)}
+        disabled={disabled}
+        title={fillLabel}
+        aria-label={fillLabel}
+        className="p-1 rounded-sm text-indigo-300 hover:text-indigo-200 hover:bg-indigo-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
+      >
+        <PackageCheck size={14} />
       </button>
     )}
     {onApprove && (

@@ -11,6 +11,7 @@
 import { getAccountFor, getTokenFor, getGoogleAccount, getTokenForGoogle } from '../../services/smailAuth';
 import { analyzeDocument } from '../../services/geminiService';
 import { getSupabaseClient } from '../../services/supabase';
+import { listInboxLog } from './inboxLog';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -73,18 +74,55 @@ interface OutlookAtt {
   size?: number;
 }
 
-async function fetchUnreadOutlook(limit = 20): Promise<OutlookMsg[]> {
+/** Window in hours that the scanner looks back. Used in both Outlook
+ *  and Gmail fetchers — needs to be wider than the scan interval so a
+ *  briefly-skipped tick (sleep, tab inactive) doesn't drop messages on
+ *  the floor. The log de-dup ensures we don't re-OCR known messages. */
+const SCAN_LOOKBACK_HOURS = 24;
+
+/** Microsoft Graph rejects fractional seconds in `$filter` datetime
+ *  values (`2026-05-17T19:05:24.801Z` → 400 InvalidFilterClauseValue).
+ *  Strip milliseconds and emit second-precision ISO. */
+function lookbackCutoffGraph(hours: number): string {
+  const iso = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  // "2026-05-17T19:05:24.801Z" → "2026-05-17T19:05:24Z"
+  return iso.replace(/\.\d+Z$/, 'Z');
+}
+
+async function fetchRecentOutlook(limit = 20): Promise<OutlookMsg[]> {
   const account = getAccountFor('automation') || getAccountFor('my');
   if (!account) return [];
   const key = getAccountFor('automation') ? 'automation' : 'my';
   try {
     const token = await getTokenFor(key, ['Mail.Read']);
-    const url = `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=isRead eq false and hasAttachments eq true&$top=${limit}&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,hasAttachments,isRead`;
+    // Pull every recent message with attachments, regardless of read
+    // state. The previous `isRead eq false` filter silently dropped
+    // any email the user happened to open in Outlook before the next
+    // scan tick — bookings disappeared from the AI Inbox as soon as
+    // they were viewed. Wider window + log de-dup is safer.
+    //
+    // Two Microsoft Graph quirks land here:
+    //   1. When `$orderby` references a property, that property must
+    //      appear FIRST in `$filter`. So `receivedDateTime` leads.
+    //   2. `$filter` datetime values reject fractional seconds —
+    //      hence `lookbackCutoffGraph`.
+    const cutoff = lookbackCutoffGraph(SCAN_LOOKBACK_HOURS);
+    const url =
+      `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages` +
+      `?$filter=receivedDateTime ge ${cutoff} and hasAttachments eq true` +
+      `&$top=${limit}&$orderby=receivedDateTime desc` +
+      `&$select=id,subject,from,receivedDateTime,hasAttachments,isRead`;
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      // Surface the 400/401 reason so silent failures stop being silent.
+      const detail = await res.text().catch(() => '');
+      console.warn(`[inbox-scan] Outlook list failed (${res.status}): ${detail.slice(0, 300)}`);
+      return [];
+    }
     const body = await res.json();
     return (body?.value as OutlookMsg[]) ?? [];
-  } catch {
+  } catch (e) {
+    console.warn('[inbox-scan] Outlook list threw:', e);
     return [];
   }
 }
@@ -124,13 +162,17 @@ interface GmailMsg {
   internalDate?: string;
 }
 
-async function fetchUnreadGmail(limit = 20): Promise<GmailMsg[]> {
+async function fetchRecentGmail(limit = 20): Promise<GmailMsg[]> {
   const acct = getGoogleAccount();
   if (!acct) return [];
   try {
     const token = await getTokenForGoogle();
+    // Gmail's search-style query — `newer_than:1d` matches the
+    // Outlook lookback window. Dropped `is:unread` for the same
+    // reason as Outlook: read state is unreliable as a filter.
+    const q = encodeURIComponent('has:attachment newer_than:1d');
     const listRes = await fetch(
-      `https://www.googleapis.com/gmail/v1/users/me/messages?q=is:unread has:attachment&maxResults=${limit}`,
+      `https://www.googleapis.com/gmail/v1/users/me/messages?q=${q}&maxResults=${limit}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
     if (!listRes.ok) return [];
@@ -305,17 +347,49 @@ async function triageOne(
   }
 }
 
-/** Scan the top unread messages across both connected providers. Runs
- *  attachments sequentially — keeps the Gemini concurrency low so a
- *  background tick doesn't monopolize the quota. */
+/** Scan recent messages with attachments across both connected
+ *  providers. Skips messages already in the inbox log so we don't
+ *  pay Gemini OCR for the same attachment twice. Runs attachments
+ *  sequentially — keeps Gemini concurrency low so a background tick
+ *  doesn't monopolize the quota. */
 export async function scanInbox(opts?: { outlookLimit?: number; gmailLimit?: number }): Promise<TriageItem[]> {
   const outLimit = opts?.outlookLimit ?? 15;
   const gmailLimit = opts?.gmailLimit ?? 10;
   const out: TriageItem[] = [];
 
+  // Build a set of messageIds we've already FULLY processed so we skip
+  // them here instead of paying for OCR. The inbox log is per-browser
+  // (localStorage), which is fine because the scan only runs while
+  // the user's tab is open.
+  //
+  // Important: dedup only on terminal-success actions. Items that
+  // ended in `skipped_unclassified`, `no_match`, or `failed` need a
+  // second chance — when we ship a new doc-type handler (e.g. the
+  // recent BOOKING support) the previously-skipped messages should
+  // get reprocessed, not stay stuck in "Needs review" forever.
+  const TERMINAL_ACTIONS = new Set([
+    'saved_new_invoice',
+    'saved_new_purchase_order',
+    'saved_new_bill_of_lading',
+    'saved_new_packing_list',
+    'saved_new_booking',
+    'attached_to_existing',
+    'drafted',
+    'correction_proposed',
+    'correction_applied',
+    'correction_confirmed_current',
+  ]);
+  const seen = new Set<string>(
+    listInboxLog()
+      .filter(e => e.status === 'active' && TERMINAL_ACTIONS.has(e.action))
+      .map(e => e.messageId)
+      .filter((id): id is string => !!id),
+  );
+
   // Outlook
-  const outlookMsgs = await fetchUnreadOutlook(outLimit);
+  const outlookMsgs = await fetchRecentOutlook(outLimit);
   for (const m of outlookMsgs) {
+    if (seen.has(m.id)) continue;
     const atts = await fetchOutlookAttachments(m.id);
     for (const a of atts) {
       if (a['@odata.type']?.includes('fileAttachment') &&
@@ -336,8 +410,9 @@ export async function scanInbox(opts?: { outlookLimit?: number; gmailLimit?: num
   }
 
   // Gmail
-  const gmailMsgs = await fetchUnreadGmail(gmailLimit);
+  const gmailMsgs = await fetchRecentGmail(gmailLimit);
   for (const m of gmailMsgs) {
+    if (seen.has(m.id)) continue;
     const pdfPart = findPdfPart(m.payload?.parts);
     if (!pdfPart) continue;
     const base64 = await fetchGmailAttachment(m.id, pdfPart.attachmentId);

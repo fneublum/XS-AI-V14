@@ -4,11 +4,40 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildCorsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
-import { requireUser } from '../_shared/auth.ts';
+import { requireUser, type AuthedUser } from '../_shared/auth.ts';
 
 // Per-request CORS headers. The router rebinds this before dispatching.
 // (Keeps all existing handler signatures — they close over this symbol.)
 let corsHeaders: Record<string, string> = {};
+
+// Per-request authed caller, rebound by the router. Handlers read this
+// (rather than taking it as a param) so we don't have to change every
+// signature in the file. assertTenantAccess() reads it to verify the
+// caller is allowed to act on a given companyId.
+let currentUser: AuthedUser | null = null;
+
+function assertTenantAccess(companyId: string): Response | null {
+    if (!currentUser) {
+        return new Response(
+            JSON.stringify({ error: "Unauthenticated" }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+    }
+    if (!companyId || companyId === "ALL") {
+        return new Response(
+            JSON.stringify({ error: "companyId is required and must reference a specific company" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+    }
+    if (!currentUser.allowedCompanyIds.includes(companyId)) {
+        // Don't leak whether the company exists — same response either way.
+        return new Response(
+            JSON.stringify({ error: "Forbidden: caller is not a member of this company" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+    }
+    return null;
+}
 
 const QB_API_BASE = "https://quickbooks.api.intuit.com/v3/company";
 const QB_SANDBOX_API_BASE = "https://sandbox-quickbooks.api.intuit.com/v3/company";
@@ -37,28 +66,19 @@ function getApiBase(): string {
 async function getValidToken(companyId: string): Promise<{ accessToken: string; realmId: string }> {
     const supabase = getSupabase();
 
-    // Try exact company match first
-    let { data: tokenRow, error } = await supabase
+    // Exact company match only. The previous implementation fell back to
+    // "any most-recently-updated token" when no row existed for the
+    // requested companyId, which let a caller act on another tenant's
+    // QuickBooks account by passing an unknown companyId. Callers must
+    // already have passed assertTenantAccess() to reach here.
+    const { data: tokenRow, error } = await supabase
         .from("qb_tokens")
         .select("*")
         .eq("company_id", companyId)
         .single();
 
-    // Fallback: if no exact match, try to find any valid QB token
     if (error || !tokenRow) {
-        console.log(`No QB token for company_id="${companyId}", trying fallback...`);
-        const { data: anyToken, error: anyErr } = await supabase
-            .from("qb_tokens")
-            .select("*")
-            .order("updated_at", { ascending: false })
-            .limit(1)
-            .single();
-
-        if (anyErr || !anyToken) {
-            throw new Error("QuickBooks is not connected. Please connect via Settings first.");
-        }
-        console.log(`Using fallback QB token from company_id="${anyToken.company_id}"`);
-        tokenRow = anyToken;
+        throw new Error("QuickBooks is not connected for this company. Please connect via Settings first.");
     }
 
     // Check if token is expired (with 5 min buffer)
@@ -324,6 +344,8 @@ async function syncBill(req: Request): Promise<Response> {
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
+    const denied = assertTenantAccess(companyId);
+    if (denied) return denied;
 
     try {
         const { accessToken, realmId } = await getValidToken(companyId);
@@ -454,6 +476,8 @@ async function syncInvoice(req: Request): Promise<Response> {
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
+    const denied = assertTenantAccess(companyId);
+    if (denied) return denied;
 
     try {
         const { accessToken, realmId } = await getValidToken(companyId);
@@ -588,6 +612,8 @@ async function voidInvoice(req: Request): Promise<Response> {
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
+    const denied = assertTenantAccess(companyId);
+    if (denied) return denied;
 
     try {
         const { accessToken, realmId } = await getValidToken(companyId);
@@ -712,7 +738,9 @@ async function batchSyncStatus(req: Request): Promise<Response> {
 
 async function queryItems(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const companyId = url.searchParams.get("companyId") || "ALL";
+    const companyId = url.searchParams.get("companyId") || "";
+    const denied = assertTenantAccess(companyId);
+    if (denied) return denied;
 
     try {
         const { accessToken, realmId } = await getValidToken(companyId);
@@ -745,7 +773,9 @@ async function queryItems(req: Request): Promise<Response> {
 
 async function bulkCreateItems(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const companyId = url.searchParams.get("companyId") || "ALL";
+    const companyId = url.searchParams.get("companyId") || "";
+    const denied = assertTenantAccess(companyId);
+    if (denied) return denied;
 
     // Items to create in QB
     const ITEMS_TO_CREATE = [
@@ -854,6 +884,8 @@ async function checkPaymentStatuses(req: Request): Promise<Response> {
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
+    const denied = assertTenantAccess(companyId);
+    if (denied) return denied;
 
     try {
         const { accessToken, realmId } = await getValidToken(companyId);
@@ -931,7 +963,9 @@ async function checkPaymentStatuses(req: Request): Promise<Response> {
 
 async function queryCustomers(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const companyId = url.searchParams.get("companyId") || "ALL";
+    const companyId = url.searchParams.get("companyId") || "";
+    const denied = assertTenantAccess(companyId);
+    if (denied) return denied;
 
     try {
         const { accessToken, realmId } = await getValidToken(companyId);
@@ -963,7 +997,9 @@ async function queryCustomers(req: Request): Promise<Response> {
 
 async function customerStatement(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const companyId = url.searchParams.get("companyId") || "ALL";
+    const companyId = url.searchParams.get("companyId") || "";
+    const denied = assertTenantAccess(companyId);
+    if (denied) return denied;
     const customerName = url.searchParams.get("customerName") || "";
     const startDate = url.searchParams.get("startDate") || "";
     const endDate = url.searchParams.get("endDate") || "";
@@ -1249,6 +1285,7 @@ Deno.serve(async (req: Request) => {
     // All qb-sync actions are client-invoked — require a valid JWT.
     const auth = await requireUser(req, corsHeaders);
     if ('response' in auth) return auth.response;
+    currentUser = auth.user;
 
     try {
         const url = new URL(req.url);

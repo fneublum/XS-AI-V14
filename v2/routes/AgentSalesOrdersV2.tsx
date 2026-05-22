@@ -21,16 +21,18 @@ import { useCompany } from '../providers/CompanyProvider';
 import { useAgentSalesOrders, AgentOrderRow } from '../queries/useAgentSalesOrders';
 import { AgentOrderWorkflowDrawer } from '../components/AgentOrderWorkflowDrawer';
 import { EmailComposeDrawer, type EmailDraft } from '../components/EmailComposeDrawer';
+import { CommissionBillingDrawer } from '../components/CommissionBillingDrawer';
+import { useSuppliers } from '../queries/useSuppliers';
 import { generateAgentOfferPdf, type AgentPartyDetails } from '../services/pdf/agentOfferPdf';
 import { generateAgentProposalPdf } from '../services/pdf/agentProposalPdf';
 import { generateProposalLabels, type ProposalLabels } from '../services/agentTranslation';
-import { useSuppliers } from '../queries/useSuppliers';
 import { useCustomers } from '../queries/useCustomers';
 import { usePaymentTerms } from '../queries/usePaymentTerms';
 import { usePorts } from '../queries/usePorts';
 import { RowActions } from '../components/RowActions';
 import { useRowDelete } from '../components/useRowDelete';
 import { AiUploadModal } from '../components/AiUploadModal';
+import { InvoiceBatchUploadModal } from '../components/InvoiceBatchUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { PROPOSAL_PROMPT, normalizeProposal, parseProposalXlsx, type ProposalDraft } from '../lib/agentProposalSpec';
 import { CUSTOMER_INV_PROMPT, normalizeCustomerInvoice, type CustomerInvoiceDraft } from '../lib/agentInvoiceSpec';
@@ -59,13 +61,15 @@ const STAGE_FILTERS: Array<{ id: PipelineStage; label: string }> = [
   { id: 'PAID_COMMISSION',   label: 'Paid' },
 ];
 
-// Stage badge on Invoiced/Unpaid/Paid tabs: clickable menu to
-// transition the order's status without opening the full workflow
-// drawer. The label is sourced from `stageLabel` so it stays in sync
-// with the rest of the app.
-const STAGE_OPTIONS: Array<{
-  status: 'INVOICED' | 'UNPAID_COMMISSION' | 'PAID_COMMISSION';
-}> = [
+// Stage badge: clickable menu that transitions the order's status
+// without opening the full workflow drawer. PROFORMA is included so
+// the user can flip a customer-contract row to INVOICED right from
+// the list once the goods ship, or move it back if they pulled the
+// trigger early. The label is sourced from `stageLabel` so it stays
+// in sync with the rest of the app.
+type EditableStage = 'PROFORMA' | 'INVOICED' | 'UNPAID_COMMISSION' | 'PAID_COMMISSION';
+const STAGE_OPTIONS: Array<{ status: EditableStage }> = [
+  { status: 'PROFORMA' },
   { status: 'INVOICED' },
   { status: 'UNPAID_COMMISSION' },
   { status: 'PAID_COMMISSION' },
@@ -73,9 +77,9 @@ const STAGE_OPTIONS: Array<{
 
 // Stages where bulk multi-select + bulk stage update is available.
 // Mirrors the StageEditor whitelist below — anywhere a single row can
-// hop between INVOICED/UNPAID/PAID, the bulk path can too.
+// hop between these stages, the bulk path can too.
 const SELECTABLE_STAGES = new Set<PipelineStage>([
-  'INVOICED', 'UNPAID_COMMISSION', 'PAID_COMMISSION',
+  'PROFORMA', 'INVOICED', 'UNPAID_COMMISSION', 'PAID_COMMISSION',
 ]);
 
 const StageEditor: React.FC<{ row: AgentOrderRow }> = ({ row }) => {
@@ -157,7 +161,11 @@ const StageEditor: React.FC<{ row: AgentOrderRow }> = ({ row }) => {
 };
 
 const headerColumns: DataTableColumn<AgentOrderRow>[] = [
+  // `width` values are explicit so Order can fit the long multi-PO
+  // numbers (e.g. "00002853-54-55-56-57") without wrapping while
+  // Incoterm stays compact — the field is always a 3-letter code.
   { id: 'order', header: 'Order', mono: true, sortable: true, filterable: true,
+    width: '200px',
     value: r => r.orderNumber, cell: r => r.orderNumber },
   { id: 'seller', header: 'Seller', sortable: true, filterable: true,
     value: r => r.sellerName ?? '',
@@ -166,6 +174,7 @@ const headerColumns: DataTableColumn<AgentOrderRow>[] = [
     value: r => r.customerName,
     cell: r => <span className="text-slate-100" title={tooltipName(r.customerName)}>{shortName(r.customerName, 1)}</span> },
   { id: 'incoterm', header: 'Incoterm', sortable: true, filterable: true,
+    width: '90px',
     value: r => r.incoterm ?? '',
     cell: r => <span className="text-slate-400 font-mono text-[11.5px]">{r.incoterm ?? '—'}</span> },
 ];
@@ -310,6 +319,8 @@ const qtyColumn: DataTableColumn<AgentOrderRow> = {
     : (r.totalQuantity > 0
         ? formatQty(r.totalQuantity)
         : <span className="text-slate-600">—</span>),
+  aggregate: 'sum',
+  formatAggregate: (n) => formatQty(n),
 };
 
 const unitColumn: DataTableColumn<AgentOrderRow> = {
@@ -326,21 +337,23 @@ const unitColumn: DataTableColumn<AgentOrderRow> = {
 const totalsColumns: DataTableColumn<AgentOrderRow>[] = [
   { id: 'amount', header: 'Order total', align: 'right', mono: true, sortable: true,
     value: r => r.orderTotal,
-    cell: r => fmtMoney(r.orderTotal) },
+    cell: r => fmtMoney(r.orderTotal),
+    aggregate: 'sum',
+    formatAggregate: (n) => fmtMoney(n) },
   { id: 'commission', header: 'Commission', align: 'right', mono: true, sortable: true,
     value: r => r.commissionAmount,
     cell: r => r.commissionAmount > 0
       ? <span className="text-emerald-400">{fmtMoney(r.commissionAmount)}</span>
-      : <span className="text-slate-600">—</span> },
+      : <span className="text-slate-600">—</span>,
+    aggregate: 'sum',
+    formatAggregate: (n) => <span className="text-emerald-300">{fmtMoney(n)}</span> },
 ];
 
 const stageColumn: DataTableColumn<AgentOrderRow> = {
   id: 'stage', header: 'Stage', sortable: true, filterable: true,
   value: r => r.stage,
   cell: r => {
-    if (r.stage === 'INVOICED'
-     || r.stage === 'UNPAID_COMMISSION'
-     || r.stage === 'PAID_COMMISSION') {
+    if (SELECTABLE_STAGES.has(r.stage)) {
       return <StageEditor row={r} />;
     }
     return <Badge variant={stageTone[r.stage]} dot>{stageLabel[r.stage]}</Badge>;
@@ -450,6 +463,25 @@ const AgentSalesOrdersV2: React.FC = () => {
   // into the workflow drawer for the new row. The list refetch is
   // async, so stash the id and open the drawer once the row arrives.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
+
+  // Bulk-billing: when the user clicks "Bill commission" with N rows
+  // selected, we queue them and walk the CommissionBillingDrawer one
+  // row at a time. After each generate, EmailComposeDrawer opens for
+  // that row and the next is dequeued when the user closes the email.
+  const suppliers = useSuppliers();
+  const resolveSupplierEmail = (sellerName: string): { email: string | null; matchedName: string | null } => {
+    const list = suppliers.data ?? [];
+    if (list.length === 0 || !sellerName) return { email: null, matchedName: null };
+    const norm = (s: string) => s.toUpperCase().replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+    const target = norm(sellerName);
+    let hit = list.find(s => norm(s.name ?? '') === target);
+    if (!hit) hit = list.find(s => norm(s.name ?? '').includes(target) || target.includes(norm(s.name ?? '')));
+    if (!hit) return { email: null, matchedName: null };
+    return { email: (hit.email ?? '').trim() || null, matchedName: hit.name ?? null };
+  };
+  const [billingOrder, setBillingOrder] = useState<AgentOrderRow | null>(null);
+  const [billingQueue, setBillingQueue] = useState<string[]>([]);
+  const [billingEmailDraft, setBillingEmailDraft] = useState<EmailDraft | null>(null);
 
   // Multi-select for bulk stage update. Cleared whenever the stage
   // pill changes; pruned to currently-visible rows after refetch.
@@ -861,6 +893,35 @@ const AgentSalesOrdersV2: React.FC = () => {
               <span className="text-slate-500"> selected</span>
             </div>
             <div className="flex items-center gap-2">
+              {/* Bulk-bill the commissions for every selected row.
+                  Walks the CommissionBillingDrawer one row at a time —
+                  on success, the EmailComposeDrawer opens; closing it
+                  advances to the next row. */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (bulkUpdateStage.isPending) return;
+                  const ids = [...selectedIds];
+                  const first = (orders.data ?? []).find(o => o.id === ids[0]);
+                  if (!first) {
+                    toast.push({ kind: 'error', title: 'Order not loaded — refresh and retry.' });
+                    return;
+                  }
+                  setBillingQueue(ids.slice(1));
+                  setBillingOrder(first);
+                }}
+                disabled={bulkUpdateStage.isPending}
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-500 hover:to-purple-500 text-[11.5px] font-medium disabled:opacity-50"
+                title={selectedIds.size === 1
+                  ? 'Generate commission invoice for the selected order and open the email composer'
+                  : `Walk through all ${selectedIds.size} selected orders, one billing drawer at a time`}
+              >
+                <Mail size={11} /> Bill commission
+                {selectedIds.size > 1 && (
+                  <span className="px-1 rounded bg-white/15 text-[10px]">{selectedIds.size}</span>
+                )}
+              </button>
+              <span className="text-slate-700 mx-1">·</span>
               <span className="text-slate-500">Set stage:</span>
               {STAGE_OPTIONS.map(opt => (
                 <button
@@ -1009,6 +1070,44 @@ const AgentSalesOrdersV2: React.FC = () => {
         open={!!emailDraft}
         onOpenChange={(o) => !o && setEmailDraft(null)}
         draft={emailDraft}
+      />
+
+      {/* Bulk commission-billing workflow: walks the queue one row
+          at a time. Each generate produces a separate PDF + email. */}
+      <CommissionBillingDrawer
+        open={!!billingOrder}
+        onOpenChange={(o) => {
+          if (!o) {
+            // User cancelled or finished — abort the rest of the queue.
+            setBillingOrder(null);
+            setBillingQueue([]);
+          }
+        }}
+        order={billingOrder}
+        resolveSupplierEmail={resolveSupplierEmail}
+        onReady={(draft) => setBillingEmailDraft(draft)}
+      />
+      <EmailComposeDrawer
+        open={!!billingEmailDraft}
+        onOpenChange={(o) => {
+          if (o) return;
+          setBillingEmailDraft(null);
+          // After the user closes the email composer, dequeue the next
+          // selected order (if any) and reopen the billing drawer.
+          setBillingQueue(prev => {
+            if (prev.length === 0) {
+              // Queue done — clear selection so the bulk bar resets.
+              setSelectedIds(new Set());
+              return prev;
+            }
+            const [nextId, ...rest] = prev;
+            const next = (orders.data ?? []).find(o => o.id === nextId);
+            if (next) setBillingOrder(next);
+            else setSelectedIds(new Set());
+            return rest;
+          });
+        }}
+        draft={billingEmailDraft}
       />
 
       {deleteDialog}
@@ -1397,10 +1496,38 @@ const NewProformaButton: React.FC = () => {
 // ── New-invoice OCR (list-level entry point on Invoiced tab) ──────
 //
 // Creates both a commission_sales_orders row AND a
-// commission_customer_invoices row in one shot — for when an invoice
-// arrives without a prior proposal/offer/proforma on file.
+// commission_customer_invoices row for each invoice the user feeds in.
+// Now backed by InvoiceBatchUploadModal which handles all three flows:
+//   • 1 PDF → 1 invoice          (single file, single row in queue)
+//   • 1 PDF → N invoices         (Gemini emits an array)
+//   • N PDFs uploaded together   (each file parses in parallel)
+// All extracted invoices land in one review queue with a single
+// Save All button at the end.
 
 const NewInvoiceButton: React.FC = () => {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <Button size="sm" onClick={() => setOpen(true)}
+        className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-8 px-3 text-[12.5px]">
+        <Sparkles size={12} className="mr-1.5" />
+        OCR new invoice
+      </Button>
+      <InvoiceBatchUploadModal open={open} onOpenChange={setOpen} />
+    </>
+  );
+};
+
+// ── Legacy single-invoice OCR component (kept for reference) ─────────
+// The component below is the prior implementation that handled exactly
+// one invoice per PDF via AiUploadModal. It is no longer rendered —
+// NewInvoiceButton now opens InvoiceBatchUploadModal which supersedes
+// it. Keeping the code around briefly so the field schema + save logic
+// stay diff-visible if we need to compare row writes during rollout.
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const NewInvoiceButtonLegacy: React.FC = () => {
   const [open, setOpen] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();

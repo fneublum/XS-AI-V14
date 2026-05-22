@@ -62,13 +62,15 @@ const DEFAULT_INVOICE_MEMO =
   'TREATED WOOD PRESENT ON THE CARGO\n\n' +
   'Manufacturer: Various generators in the USA. Goods collected and consolidated by EC4 ENTERPRISES LLC';
 
-/** Format a numeric-ish string as 999,999.9 (commas + 1 decimal). */
+/** Format a numeric-ish string as 999,999.99 (commas + 2 decimals).
+ *  Matches the PDF-side `fmt(...)` so the drawer Weights section
+ *  shows the same precision the user sees on the rendered invoice. */
 const fmtQty1 = (raw: string): string => {
   const trimmed = (raw ?? '').toString().replace(/,/g, '').trim();
   if (trimmed === '') return '';
   const n = Number(trimmed);
   if (!Number.isFinite(n)) return raw;
-  return n.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 /** Weight input — shows 999,999.9 format on blur, raw digits while
@@ -488,6 +490,64 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
     if (c.pod) setPod(c.pod);
   };
 
+  // Picking an SO copies its Commercial (currency, incoterm, payment
+  // terms), Shipment (POA/POD), and line items into the draft. Mirrors
+  // what users do manually today; explicit user action so overwriting
+  // is expected.
+  const applySoToInvoice = async (orderNumber: string): Promise<void> => {
+    setSoNumber(orderNumber);
+    const trimmed = orderNumber.trim();
+    if (!trimmed) return;
+    try {
+      const sb = getSupabaseClient();
+      let q = sb.from('sales_orders')
+        .select('*')
+        .eq('orderNumber', trimmed)
+        .eq('status', 'APPROVED')
+        .limit(1);
+      if (soldTo) q = q.eq('customerName', soldTo);
+      const { data, error } = await q.maybeSingle();
+      if (error || !data) return;
+      // Commercial
+      if (data.currency)     setCurrency(data.currency);
+      if (data.incoterm) {
+        setIncoterm(data.incoterm);
+        setFreightTerms(freightTermsForIncoterm(data.incoterm));
+      }
+      if (data.paymentTerms) setPaymentTerms(data.paymentTerms);
+      // Shipment
+      if (data.poa) setPoa(data.poa);
+      if (data.pod) setPod(data.pod);
+      // Booking (carry-over)
+      if (data.bookingNumber && !bookingNumber) setBookingNumber(data.bookingNumber);
+      // Line items — parse JSON if stored as string
+      let rawItems: unknown = data.items;
+      if (typeof rawItems === 'string') {
+        try { rawItems = JSON.parse(rawItems); } catch { rawItems = []; }
+      }
+      if (Array.isArray(rawItems) && rawItems.length > 0) {
+        const mapped: LineItem[] = rawItems.map((r: any) => ({
+          productId: r?.productId ?? undefined,
+          productName: String(r?.productName ?? r?.name ?? ''),
+          customerDescription: r?.customerDescription ?? r?.description ?? '',
+          hsCode: r?.hsCode ?? '',
+          grade: r?.grade ?? '',
+          quantity: Number(r?.quantity) || 0,
+          unitPrice: Number(r?.unitPrice ?? r?.price) || 0,
+          total: Number(r?.total) || ((Number(r?.quantity) || 0) * (Number(r?.unitPrice ?? r?.price) || 0)),
+        }));
+        setItems(mapped);
+      }
+      toast.push({
+        kind: 'success',
+        title: `SO ${trimmed} applied`,
+        description: 'Commercial, Shipment, and Line items filled from the sales order.',
+      });
+    } catch {
+      // Silent failure — user can still type the SO number freely.
+    }
+  };
+
   // Keep POD in sync with the currently-selected Sold-To customer. As
   // soon as soldTo and the customers list are both populated AND pod
   // is empty, default POD from the customer's saved port (case- and
@@ -639,12 +699,38 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
       }
     };
 
+    // Flip the linked sales order to FULFILLED so it stops appearing in
+    // the Trading Follow Up "To Ship" table and the SO list reflects
+    // that a shipment went out against it. Only runs when the invoice
+    // is the FIRST one for this SO (we don't want to flip back to
+    // FULFILLED after the user reverts the SO manually), but for now we
+    // treat any invoice referencing the SO as fulfilment. If we need
+    // partial-shipment support later, switch to a count of matching
+    // invoices vs. ordered qty.
+    const linkSalesOrder = async () => {
+      const soNo = soNumber?.trim();
+      if (!soNo) return;
+      const sb = getSupabaseClient();
+      const { error } = await sb
+        .from('sales_orders')
+        .update({ status: 'FULFILLED' })
+        .eq('orderNumber', soNo)
+        .neq('status', 'FULFILLED'); // skip rows already settled
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.warn('[InvoiceDrawer] linkSalesOrder failed:', error);
+        return;
+      }
+      void qc.invalidateQueries({ queryKey: ['salesOrders'] });
+    };
+
     try {
       const { droppedColumns } = await mutateWithStripRetry(
         mode === 'create' ? 'insert' : 'update',
         payload,
       );
       await linkPackingList();
+      await linkSalesOrder();
       const title = mode === 'create' ? 'Invoice created' : 'Saved';
       toast.push({
         kind: droppedColumns.length > 0 ? 'warning' : 'success',
@@ -784,9 +870,31 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
             </div>
             <div className="grid grid-cols-3 gap-2">
               <FormField>
-                <Label className={labelClass}>SO #</Label>
-                <Input value={soNumber} onChange={e => setSoNumber(e.target.value)}
-                  className={inputClass + ' font-mono tabular-nums'} />
+                <Label className={labelClass}>
+                  SO #
+                  {soldTo && (
+                    <span className="ml-2 text-[10px] text-slate-600 font-normal normal-case tracking-normal">
+                      approved · {soldTo}
+                    </span>
+                  )}
+                </Label>
+                <SupabaseSelectField
+                  source={{
+                    table: 'sales_orders',
+                    valueColumn: 'orderNumber',
+                    labelColumn: 'orderNumber',
+                    secondaryColumn: 'orderDate',
+                    scopeByCompany: true,
+                    equalsFilter: soldTo
+                      ? { status: 'APPROVED', customerName: soldTo }
+                      : { status: 'APPROVED' },
+                  }}
+                  value={soNumber}
+                  mono
+                  allowFreeText
+                  placeholder={soldTo ? 'pick or type' : 'pick consignee first'}
+                  onPick={v => { void applySoToInvoice(v); }}
+                />
               </FormField>
               <FormField>
                 <Label className={labelClass}>PL #</Label>

@@ -26,6 +26,7 @@ export type ProcessAction =
   | 'saved_new_purchase_order'
   | 'saved_new_bill_of_lading'
   | 'saved_new_packing_list'
+  | 'saved_new_booking'
   | 'skipped_unclassified'
   | 'failed';
 
@@ -57,12 +58,26 @@ const PROMPT_PL = `Extract Packing List fields as JSON:
 {"plNumber": string|null, "blNumber": string|null, "shipper": string|null, "consignee": string|null, "shippingPoint": string|null, "destination": string|null, "date": string|null, "carrier": string|null, "containerNumber": string|null, "sealNumber": string|null, "vesselVoyage": string|null, "productDescription": string|null, "grossWeight": string|null, "netWeight": string|null, "poNumber": string|null}
 Return ONLY valid JSON.`;
 
+// Carrier booking confirmations (Maersk, Hapag, MSC, KAPPALOG NVOCC,
+// etc.). The DB columns mirror what shows up across these carriers'
+// PDFs — port codes are 5-letter UN/LOCODE (USCHS, BRPEC), dates are
+// loose strings, equipment is e.g. "2x45GP" or "1x40HC".
+//
+// `pol` / `pod` MUST come back as the 5-letter UN/LOCODE only
+// (e.g. "USHOU", not "USHOU - Houston, Texas"). We post-process and
+// validate against the `ports` table after extraction.
+const PROMPT_BOOKING = `Extract Booking Confirmation fields as JSON:
+{"bookingNumber": string|null, "customer": string|null, "agentName": string|null, "vesselVoyage": string|null, "pol": string|null, "pod": string|null, "equipment": string|null, "etd": string|null, "eta": string|null, "cargoCutOff": string|null, "vgmCutOff": string|null, "draftCutOff": string|null, "freeTime": string|null, "terminal": string|null}
+For "pol" and "pod" return ONLY the 5-letter UN/LOCODE (uppercase), e.g. "USHOU" — never the city name or descriptive form.
+Return ONLY valid JSON.`;
+
 function promptFor(docType: TriageDocType): string | null {
   if (docType === 'INVOICE') return PROMPT_INVOICE;
   if (docType === 'PURCHASE ORDER') return PROMPT_PO;
   if (docType === 'BILL OF LADING') return PROMPT_BL;
   if (docType === 'PACKING LIST') return PROMPT_PL;
   if (docType === 'PROFORMA INVOICE') return PROMPT_INVOICE;
+  if (docType === 'BOOKING') return PROMPT_BOOKING;
   return null;
 }
 
@@ -249,6 +264,20 @@ async function saveNewInvoice(item: TriageItem, base64: string): Promise<Process
   const sb = getSupabaseClient();
   const { error } = await sb.from('invoices').insert(row);
   if (error) return { item, action: 'failed', message: `⚠️ Invoice save failed: ${error.message}`, error: error.message };
+  // Auto-fulfil the linked SO so the Trading Follow Up "To Ship" table
+  // drops it now that an invoice exists. Mirror the manual-create logic.
+  const linkedSo = (row.soNumber ?? '').trim();
+  if (linkedSo) {
+    const { error: soErr } = await sb
+      .from('sales_orders')
+      .update({ status: 'FULFILLED' })
+      .eq('orderNumber', linkedSo)
+      .neq('status', 'FULFILLED');
+    if (soErr) {
+      // eslint-disable-next-line no-console
+      console.warn(`[inboxProcessor] linkSalesOrder ${linkedSo} failed:`, soErr);
+    }
+  }
   return {
     item, action: 'saved_new_invoice', entityId: row.id,
     message: `📄 Invoice ${invoiceNumber}${row.soldTo ? ` from ${row.soldTo}` : ''} · saved from email (${item.from})`,
@@ -313,6 +342,134 @@ async function saveNewBL(item: TriageItem, base64: string): Promise<ProcessResul
     message: `📄 Bill of Lading ${blNumber}${row.shipper ? ` · ${row.shipper}` : ''} · saved from email` };
 }
 
+/** Best-effort UN/LOCODE extractor. Inputs we see in the wild:
+ *   - "USHOU"                                 → "USHOU"
+ *   - "USHOU - Houston, Texas, United States" → "USHOU"
+ *   - "Houston (USHOU)"                       → "USHOU"
+ *   - "Manaus, Brazil"                        → null (no code present)
+ * After extraction we validate against the `ports` table so a typo
+ * doesn't end up persisted as a fake code. */
+function extractLocode(raw: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim().toUpperCase();
+  // Anchored 5-letter form ("USHOU - Houston" / "USHOU")
+  const anchored = /^([A-Z]{5})\b/.exec(trimmed);
+  if (anchored) return anchored[1];
+  // Parenthesised form: "Houston (USHOU)"
+  const parens = /\(([A-Z]{5})\)/.exec(trimmed);
+  if (parens) return parens[1];
+  // Any 5-letter word that's not a common city ALL-CAPS word.
+  const loose = /\b([A-Z]{5})\b/.exec(trimmed);
+  return loose ? loose[1] : null;
+}
+
+async function resolvePortCode(raw: string | null): Promise<string | null> {
+  const candidate = extractLocode(raw);
+  if (!candidate) return raw && raw.trim() ? raw.trim() : null;
+  // Validate against the ports table. We only auto-replace when the
+  // code exists — that way a typo from the LLM doesn't quietly land
+  // as a fake UN/LOCODE; we keep the raw text in that case so the
+  // user can spot it in "Needs review" / the bookings list.
+  const sb = getSupabaseClient();
+  const { data } = await sb.from('ports').select('code').eq('code', candidate).maybeSingle();
+  if (data?.code) return data.code;
+  // Code shape looks right but doesn't exist in the table — surface
+  // the bare code anyway since that's what the user wants to see.
+  // (If we later flip this to keep `raw`, the Bookings list goes back
+  // to "USHOU - Houston, Texas, United States" verbose strings.)
+  return candidate;
+}
+
+/** Resolve a concrete companyId for auto-save rows. The inbox scan
+ *  runs in the background and doesn't carry React context, so we read
+ *  the user's selected company straight from sessionStorage. When the
+ *  user is in "ALL" mode, fall back to their first allowed company so
+ *  the new row lands somewhere they can see — null companyId leaves
+ *  the row invisible to every company-scoped query. */
+function resolveCompanyIdForSave(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = sessionStorage.getItem('xs_v2_current_company');
+    if (stored && stored !== 'ALL') return stored;
+    // Fall back to the logged-in user's first allowed company.
+    const userRaw = sessionStorage.getItem('xs_current_user');
+    if (userRaw) {
+      const u = JSON.parse(userRaw) as { allowed_company_ids?: string[]; allowedCompanyIds?: string[] };
+      const ids = u.allowed_company_ids ?? u.allowedCompanyIds ?? [];
+      if (Array.isArray(ids) && ids.length > 0) return ids[0];
+    }
+  } catch { /* noop */ }
+  return null;
+}
+
+async function saveNewBooking(item: TriageItem, base64: string): Promise<ProcessResult> {
+  const parsed = parseJsonLoose(String(await analyzeDocument(base64, 'application/pdf', PROMPT_BOOKING) ?? ''));
+  if (!parsed) return { item, action: 'failed', message: `⚠️ Could not extract Booking fields from ${item.attachmentName}`, error: 'extract-failed' };
+  const bookingNumber = pickStr(parsed, 'bookingNumber') ?? item.extractedRef ?? `BK-${Date.now()}`;
+
+  const sb = getSupabaseClient();
+
+  // Duplicate guard. The same booking confirmation often arrives more
+  // than once (forwarded thread, agent re-send, attachment-only reply).
+  // We previously inserted blindly and the bookings table had two
+  // identical rows for 270999154 after the latest scan. Look it up
+  // first — if a row already exists, attach this PDF to it instead.
+  const existingRes = await sb.from('bookings')
+    .select('id')
+    .eq('bookingNumber', bookingNumber)
+    .maybeSingle<{ id: string }>();
+  if (existingRes.data?.id) {
+    const dataUrl = `data:application/pdf;base64,${base64}`;
+    const { error: upErr } = await sb.from('bookings')
+      .update({ originalDocument: dataUrl })
+      .eq('id', existingRes.data.id);
+    if (upErr) {
+      return { item, action: 'failed', message: `⚠️ Booking ${bookingNumber} already existed; PDF attach failed: ${upErr.message}`, error: upErr.message };
+    }
+    return {
+      item, action: 'attached_to_existing', entityId: existingRes.data.id,
+      message: `📎 Booking ${bookingNumber} already exists — PDF attached.`,
+    };
+  }
+
+  // Normalize POL/POD to UN/LOCODE matched against the ports table.
+  const [pol, pod] = await Promise.all([
+    resolvePortCode(pickStr(parsed, 'pol')),
+    resolvePortCode(pickStr(parsed, 'pod')),
+  ]);
+
+  // Booking IDs follow V1's pattern `BK<timestamp>` so existing reads
+  // (e.g. useBookings) treat the row the same as a manually-created one.
+  // companyId + createdAt are mandatory for the Bookings page to show
+  // the row at all — null companyId + null createdAt left the previous
+  // auto-saves invisible behind the company-scoped query.
+  const row = {
+    id: `BK${Date.now()}`,
+    bookingNumber,
+    companyId: resolveCompanyIdForSave(),
+    customer: pickStr(parsed, 'customer'),
+    agentName: pickStr(parsed, 'agentName'),
+    vesselVoyage: pickStr(parsed, 'vesselVoyage'),
+    pol,
+    pod,
+    equipment: pickStr(parsed, 'equipment'),
+    etd: pickStr(parsed, 'etd'),
+    eta: pickStr(parsed, 'eta'),
+    cargoCutOff: pickStr(parsed, 'cargoCutOff'),
+    vgmCutOff: pickStr(parsed, 'vgmCutOff'),
+    draftCutOff: pickStr(parsed, 'draftCutOff'),
+    freeTime: pickStr(parsed, 'freeTime'),
+    terminal: pickStr(parsed, 'terminal'),
+    originalDocument: `data:application/pdf;base64,${base64}`,
+    status: 'AVAILABLE',
+    createdAt: new Date().toISOString(),
+  };
+  const { error } = await sb.from('bookings').insert(row);
+  if (error) return { item, action: 'failed', message: `⚠️ Booking save failed: ${error.message}`, error: error.message };
+  return { item, action: 'saved_new_booking', entityId: row.id,
+    message: `📦 Booking ${bookingNumber}${row.customer ? ` · ${row.customer}` : ''} · saved from email` };
+}
+
 async function saveNewPL(item: TriageItem, base64: string): Promise<ProcessResult> {
   const parsed = parseJsonLoose(String(await analyzeDocument(base64, 'application/pdf', PROMPT_PL) ?? ''));
   if (!parsed) return { item, action: 'failed', message: `⚠️ Could not extract PL fields from ${item.attachmentName}`, error: 'extract-failed' };
@@ -372,6 +529,8 @@ export async function processTriageItem(item: TriageItem): Promise<ProcessResult
       result = await saveNewBL(item, b64);
     } else if (item.docType === 'PACKING LIST') {
       result = await saveNewPL(item, b64);
+    } else if (item.docType === 'BOOKING') {
+      result = await saveNewBooking(item, b64);
     } else {
       result = { item, action: 'skipped_unclassified',
         message: `📥 Email "${item.subject}" from ${item.from} · classifier: ${item.docType}` };

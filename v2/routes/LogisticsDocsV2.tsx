@@ -234,7 +234,7 @@ const LogisticsDocsV2: React.FC = () => {
           { key: 'originalDocument', label: 'Document URL', fullWidth: true,
             placeholder: 'https://…' },
           { key: 'status',           label: 'Status', type: 'select',
-            options: ['BOOKED', 'CONFIRMED'], defaultValue: 'BOOKED' },
+            options: ['AVAILABLE'], defaultValue: 'AVAILABLE' },
         ]}
       />
 

@@ -56,14 +56,16 @@ export function setFlag<K extends keyof FeatureFlags>(key: K, value: FeatureFlag
 /**
  * Decide whether to mount v2 on this page load.
  * Must be safe to call before React mounts.
+ *
+ * As of 2026-05-18 V2 is the only supported app shell. The previous
+ * v2=0 escape hatch / localStorage override is intentionally ignored
+ * so stale flags from earlier opt-in testing can no longer strand a
+ * browser on V1. The V1 code is still imported by a handful of V2
+ * components (e.g. some PDF generators), so we don't delete it — we
+ * just never mount the v1 root.
  */
 export function shouldMountV2(): boolean {
-  if (typeof window === 'undefined') return false;
-  const params = new URLSearchParams(window.location.search);
-  const v2Param = params.get('v2');
-  if (v2Param === '1') return true;
-  if (v2Param === '0') return false;
-  return getFlag('v2-default');
+  return true;
 }
 
 /**

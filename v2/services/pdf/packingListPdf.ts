@@ -5,6 +5,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { InvoicePdfCtx, PdfInvoice } from './types';
+import { wrapByChars } from './wrapText';
 
 const INCOTERM_NAMES: Record<string, string> = {
   EXW: 'EX WORKS', FCA: 'FREE CARRIER', CPT: 'CARRIAGE PAID TO',
@@ -38,7 +39,7 @@ export function generatePackingListPdf(
   const companyAddress = company?.address || '112 Bartran Oaks Walk #600010';
   const companyCity = `${company?.city || 'ST Johns'}, ${company?.state || 'FL'} ${company?.zip || '32260'} US`;
   const companyPhone = company?.phone || '9044399343';
-  const companyEmail = 'felipe@ec4.enterprises';
+  const companyEmail = company?.email || 'felipe@ec4.enterprises';
   const companyWeb   = 'www.ec4.enterprises';
 
   // Header
@@ -103,8 +104,8 @@ export function generatePackingListPdf(
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(darkGray);
-  doc.text('CONSIGNEE (bill to)', 14, y);
-  doc.text('NOTIFY (ship to)', 75, y);
+  doc.text('CONSIGNEE', 14, y);
+  doc.text('NOTIFY', 75, y);
 
   doc.text('INVOICE #', 140, y);
   doc.setFont('helvetica', 'normal');
@@ -136,13 +137,13 @@ export function generatePackingListPdf(
   let consigneeY = y;
 
   doc.setFont('helvetica', 'bold');
-  const consigneeLines = doc.splitTextToSize(consigneeName, 55);
+  const consigneeLines = wrapByChars(consigneeName, 30);
   doc.text(consigneeLines, 14, consigneeY);
   consigneeY += consigneeLines.length * 4;
 
   doc.setFont('helvetica', 'normal');
   if (consigneeAddress) {
-    const lines = doc.splitTextToSize(consigneeAddress, 55);
+    const lines = wrapByChars(consigneeAddress, 30);
     doc.text(lines, 14, consigneeY);
     consigneeY += lines.length * 4;
   }
@@ -152,13 +153,13 @@ export function generatePackingListPdf(
   // Notify (ship to)
   let notifyY = y;
   doc.setFont('helvetica', 'bold');
-  const notifyLines = doc.splitTextToSize(notifyName, 55);
+  const notifyLines = wrapByChars(notifyName, 30);
   doc.text(notifyLines, 75, notifyY);
   notifyY += notifyLines.length * 4;
 
   doc.setFont('helvetica', 'normal');
   if (notifyAddress) {
-    const lines = doc.splitTextToSize(notifyAddress, 55);
+    const lines = wrapByChars(notifyAddress, 30);
     doc.text(lines, 75, notifyY);
     notifyY += lines.length * 4;
   }

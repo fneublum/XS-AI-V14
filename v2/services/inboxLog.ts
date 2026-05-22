@@ -26,7 +26,23 @@ export type InboxAction =
   | 'correction_manual_only'
   | 'correction_applied';
 
-export type InboxStatus = 'active' | 'discarded' | 'sent' | 'undone';
+export type InboxStatus = 'active' | 'discarded' | 'sent' | 'undone' | 'superseded';
+
+/** Actions that conclude a message's processing. Once an entry with
+ *  one of these actions lands, any prior non-terminal entries for the
+ *  same messageId get archived so they stop cluttering "Needs review". */
+const TERMINAL_ACTIONS = new Set<InboxAction>([
+  'saved_new_invoice',
+  'saved_new_purchase_order',
+  'saved_new_bill_of_lading',
+  'saved_new_packing_list',
+  'saved_new_booking',
+  'attached_to_existing',
+  'drafted',
+  'correction_proposed',
+  'correction_applied',
+  'correction_confirmed_current',
+]);
 
 export interface InboxLogEntry {
   id: string;                   // uuid
@@ -125,6 +141,22 @@ export function appendInboxLog(
     status: entry.status ?? 'active',
     createdAt: new Date().toISOString(),
   };
+  // If this new entry is a terminal action (success / draft / correction),
+  // mark any prior non-terminal entries for the same messageId as
+  // superseded so they no longer clutter "Needs review". Without this,
+  // a re-scan that finally finds a BOOKING save path leaves the stale
+  // "skipped_unclassified" row hanging in the queue.
+  if (TERMINAL_ACTIONS.has(full.action) && full.messageId) {
+    for (const prior of all) {
+      if (
+        prior.messageId === full.messageId &&
+        prior.status === 'active' &&
+        !TERMINAL_ACTIONS.has(prior.action)
+      ) {
+        prior.status = 'superseded';
+      }
+    }
+  }
   all.push(full);
   writeAll(all);
   return full;
@@ -172,7 +204,8 @@ export function filterByQueue(entries: InboxLogEntry[], queue: InboxQueue): Inbo
         (e.action === 'saved_new_invoice' ||
          e.action === 'saved_new_purchase_order' ||
          e.action === 'saved_new_bill_of_lading' ||
-         e.action === 'saved_new_packing_list')
+         e.action === 'saved_new_packing_list' ||
+         e.action === 'saved_new_booking')
       );
     case 'attached':
       return entries.filter(e => e.status === 'active' && e.action === 'attached_to_existing');

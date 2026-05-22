@@ -85,10 +85,19 @@ Deno.serve(async (req: Request) => {
     const authResult = await requireUser(req, corsHeaders);
     if ('response' in authResult) return authResult.response;
 
-    const contentLength = parseInt(req.headers.get('Content-Length') || '0', 10);
-    if (contentLength > MAX_BODY_BYTES) {
+    // Read the raw body and enforce the size cap on actual bytes received.
+    // We previously trusted Content-Length, which is client-controlled — a
+    // caller could send Content-Length: 0 with a 100MB body and bypass the
+    // cap entirely, then bill the team via the upstream Anthropic request.
+    let raw: string;
+    try {
+        raw = await req.text();
+    } catch {
+        return json({ error: 'Failed to read request body' }, 400, corsHeaders);
+    }
+    if (raw.length > MAX_BODY_BYTES) {
         return json(
-            { error: `Request too large (${contentLength} > ${MAX_BODY_BYTES} bytes)` },
+            { error: `Request too large (${raw.length} > ${MAX_BODY_BYTES} bytes)` },
             413,
             corsHeaders,
         );
@@ -96,7 +105,7 @@ Deno.serve(async (req: Request) => {
 
     let body: MessagesRequest;
     try {
-        body = await req.json();
+        body = JSON.parse(raw) as MessagesRequest;
     } catch {
         return json({ error: 'Invalid JSON' }, 400, corsHeaders);
     }

@@ -6,7 +6,7 @@
 // and switching to v1; v1 picks the key up and auto-opens the existing
 // Documents Modal (preview / download / email Invoice, PL, SLI, BOL).
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
@@ -16,6 +16,13 @@ import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { useInvoices, Invoice } from '../queries/useInvoices';
 import { useBookings } from '../queries/useBookings';
+import { useCompanies } from '../queries/useCompanies';
+import { useCustomers } from '../queries/useCustomers';
+import { useSuppliers } from '../queries/useSuppliers';
+import { useProducts } from '../queries/useProducts';
+import { usePackingLists } from '../queries/usePackingLists';
+import { usePorts } from '../queries/usePorts';
+import { useCompanyImages } from '../queries/useCompanyImages';
 import { usePaymentTerms } from '../queries/usePaymentTerms';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useEditor } from '../providers/EditorProvider';
@@ -27,6 +34,11 @@ import { InvoicePreviewDialog } from '../components/InvoicePreviewDialog';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
 import { formatMoney as fmtMoney } from '../lib/formatMoney';
+import { saveToDropbox, dropboxFolderName } from '../services/saveToDropbox';
+import { findCompany, InvoicePdfCtx, PdfInvoice, PdfBankRow } from '../services/pdf/types';
+import { isEc4Company } from '../services/pdf/isEc4Company';
+import { useSupabaseQuery } from '../queries/useSupabaseQuery';
+import { getSupabaseClient } from '../../services/supabase';
 
 // Extract the POD code from either a UN/LOCODE (`BRPEC`) or a labeled
 // form like `Manaus (BRMAO)` — the field is stored both ways across
@@ -197,7 +209,101 @@ const InvoicesV2: React.FC = () => {
   const invoices = useInvoices(search);
   const bookings = useBookings();
   const paymentTerms = usePaymentTerms();
+  // Aux queries needed to build the InvoicePdfCtx for Dropbox save.
+  // These are cached at the QueryClient level so reopening the modal
+  // (or hitting Save first) shares the same data.
+  const companies = useCompanies();
+  const customers = useCustomers();
+  const suppliers = useSuppliers();
+  const products = useProducts();
+  const packingLists = usePackingLists();
+  const ports = usePorts();
+  const logos = useCompanyImages('LOGO');
+  const banks = useSupabaseQuery<PdfBankRow[]>(
+    ['banks', 'invoice-ctx'],
+    async () => {
+      const { data, error } = await getSupabaseClient().from('banks').select('*').limit(500);
+      if (error) throw new Error(error.message);
+      return (data as PdfBankRow[] | null) ?? [];
+    },
+  );
   const total = (invoices.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
+
+  // Track per-row Save state so the Save icon shows a spinner only for
+  // the row the user clicked. Keyed by invoice.id.
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  // EC4 stamp loaded once, same as DeliveryDocsModal. Fetched on mount
+  // so the first Save click doesn't have to wait on network for the
+  // stamp image — though it's not strictly required for the Dropbox
+  // save flow (PDFs are stored, not printed).
+  const [stampUrl, setStampUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('/ec4_stamp.png');
+        if (!resp.ok) return;
+        const blob = await resp.blob();
+        const reader = new FileReader();
+        reader.onload = () => { if (!cancelled) setStampUrl(reader.result as string); };
+        reader.readAsDataURL(blob);
+      } catch { /* no stamp */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const logoUrl = useMemo(() => {
+    if (!logos.data || logos.data.length === 0) return null;
+    const own = logos.data.find(i => i.companyId === currentCompanyId);
+    return (own || logos.data[0]).url || null;
+  }, [logos.data, currentCompanyId]);
+
+  const buildCtx = (): InvoicePdfCtx => {
+    const company = findCompany(companies.data ?? [], currentCompanyId);
+    return {
+      company,
+      customers: customers.data ?? [],
+      suppliers: suppliers.data ?? [],
+      products: products.data ?? [],
+      packingLists: packingLists.data ?? [],
+      bookings: bookings.data ?? [],
+      ports: (ports.data ?? []).map(p => ({ id: p.id, code: p.code, name: p.name, country: p.country ?? undefined })),
+      banks: banks.data ?? [],
+      logoUrl,
+      stampUrl: isEc4Company(company) ? stampUrl : null,
+      brMode: false,
+    };
+  };
+
+  const handleSaveToDropbox = async (row: Invoice) => {
+    setSavingId(row.id);
+    try {
+      const pdfInvoice: PdfInvoice = {
+        ...row,
+        incoterm: row.incoterm ?? undefined,
+        date: row.invoiceDate ?? undefined,
+      } as PdfInvoice;
+      const result = await saveToDropbox({
+        invoice: row,
+        pdfInvoice,
+        ctx: buildCtx(),
+      });
+      toast.push({
+        kind: 'success',
+        title: 'Saved to Dropbox',
+        description: `${dropboxFolderName(row)} · ${result.uploaded.length} files`,
+      });
+    } catch (e: any) {
+      toast.push({
+        kind: 'error',
+        title: 'Save failed',
+        description: e?.message ?? 'Unknown error',
+      });
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   // Lookups drive the Terms code (description → code), POD, and ETD
   // (bookingNumber → etd) columns.
@@ -257,6 +363,9 @@ const InvoicesV2: React.FC = () => {
       onEdit={() => openInvoice(row)}
       onEmail={() => { setEmailAutoMode(true); setDeliveryDocsInvId(row.id); }}
       onDeliveryDocs={() => { setEmailAutoMode(false); setDeliveryDocsInvId(row.id); }}
+      onSave={() => handleSaveToDropbox(row)}
+      saving={savingId === row.id}
+      saveLabel={`Save to Dropbox · ${dropboxFolderName(row)}`}
       onDuplicate={() => duplicateInvoice(row)}
       onDelete={() => confirmDelete(row)}
     />
@@ -473,6 +582,23 @@ const InvoicesV2: React.FC = () => {
                 payload.companyId = currentCompanyId;
               }
               await insert.mutateAsync(payload);
+              // Flip the linked SO to FULFILLED so it drops off the
+              // Trading Follow Up "To Ship" table. Same logic as the
+              // InvoiceDrawer save path.
+              const soNo = (d.soNumber || '').trim();
+              if (soNo) {
+                try {
+                  const sb = getSupabaseClient();
+                  await sb
+                    .from('sales_orders')
+                    .update({ status: 'FULFILLED' })
+                    .eq('orderNumber', soNo)
+                    .neq('status', 'FULFILLED');
+                } catch (e) {
+                  // eslint-disable-next-line no-console
+                  console.warn('[InvoicesV2.aiUpload] linkSalesOrder failed:', e);
+                }
+              }
               toast.push({
                 kind: 'success',
                 title: 'Invoice created',

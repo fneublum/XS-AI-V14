@@ -12,7 +12,7 @@ import React from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
   X as XIcon, Package, Building2, Users, CreditCard, Anchor,
-  Truck, Landmark, MapPin, FileText, Database, LayoutGrid,
+  Truck, MapPin, FileText, Database, LayoutGrid,
   Briefcase, Ship, PackageCheck, Scan, Image as ImageIcon,
 } from 'lucide-react';
 
@@ -71,13 +71,11 @@ const SECTIONS: Array<{ label: string; items: DataItem[] }> = [
       },
       {
         label: 'Cargo Agents', description: 'Forwarders + brokers',
-        icon: <Truck size={16} />,
-        v1: { module: 'DATA', submodule: 'AGENTS' },
+        icon: <Truck size={16} />, routeId: 'cargo-agents',
       },
       {
         label: 'Carriers', description: 'Ocean / air / trucking',
-        icon: <Ship size={16} />,
-        v1: { module: 'DATA', submodule: 'CARRIERS' },
+        icon: <Ship size={16} />, routeId: 'carriers',
       },
     ],
   },
@@ -86,18 +84,11 @@ const SECTIONS: Array<{ label: string; items: DataItem[] }> = [
     items: [
       {
         label: 'Ports', description: 'POA / POD reference',
-        icon: <Anchor size={16} />,
-        v1: { module: 'DATA', submodule: 'PORTS' },
+        icon: <Anchor size={16} />, routeId: 'ports',
       },
       {
         label: 'Locations', description: 'Pickup / drop points',
-        icon: <MapPin size={16} />,
-        v1: { module: 'DATA', submodule: 'LOCATIONS' },
-      },
-      {
-        label: 'Banks', description: 'Remit-to accounts',
-        icon: <Landmark size={16} />,
-        v1: { module: 'DATA', submodule: 'BANKS' },
+        icon: <MapPin size={16} />, routeId: 'locations',
       },
     ],
   },

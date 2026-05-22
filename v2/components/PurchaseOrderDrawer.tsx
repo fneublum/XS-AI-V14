@@ -1,7 +1,7 @@
 // Phase 3B — Purchase Order editor drawer. Full v1 parity.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Mail } from 'lucide-react';
+import { Mail, RefreshCw } from 'lucide-react';
 import {
   Drawer, Input, FormField, Label, Button, Badge, ConfirmDialog,
 } from '../primitives';
@@ -11,6 +11,8 @@ import { useCompanies } from '../queries/useCompanies';
 import { useSuppliers } from '../queries/useSuppliers';
 import { PurchaseOrder } from '../queries/usePurchaseOrders';
 import { useEntityUpdate, useEntityInsert, useEntityDelete } from '../queries/useEntityMutations';
+import { getSupabaseClient } from '../../services/supabase';
+import { useQueryClient } from '@tanstack/react-query';
 import { LineItemsEditor, LineItem, computeSubtotal, sanitizeItems } from './LineItemsEditor';
 import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
 import { resolveRecipientsSync } from '../services/recipients';
@@ -68,6 +70,11 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
 
   const [confirmDelete, setConfirmDelete]       = useState(false);
   const [emailDraft, setEmailDraft]             = useState<EmailDraft | null>(null);
+  const [regenerating, setRegenerating]         = useState(false);
+  // Tracks the current id locally so the renamed PO is reflected in the
+  // drawer header without waiting for the parent list to refetch.
+  const [liveId, setLiveId]                     = useState<string | null>(null);
+  const qc = useQueryClient();
 
   const update = useEntityUpdate<{ id: string } & Record<string, unknown>>({
     table: 'purchase_orders', listQueryKeys: ['purchaseOrders'],
@@ -82,6 +89,7 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
 
   useEffect(() => {
     if (!po) return;
+    setLiveId(po.id);
     setCompanyId(po.companyId ?? (currentCompanyId !== 'ALL' ? currentCompanyId : ''));
     setSupplierId(po.supplierId ?? '');
     setSupplierName(po.supplierName ?? '');
@@ -178,6 +186,45 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     });
   };
 
+  // Regenerate the PO id. Useful when OCR landed garbage in the id or
+  // the supplier was later changed and the prefix no longer matches.
+  // Renames the row's primary key in-place; no foreign key references
+  // exist on purchase_orders.id today so this is safe.
+  const regenerateId = async () => {
+    const currentId = liveId ?? po?.id;
+    if (!currentId) return;
+    if (mode !== 'edit') return;
+    if (!supplierName.trim()) {
+      toast.push({ kind: 'warning', title: 'Set supplier first', description: 'The new PO # uses the supplier prefix.' });
+      return;
+    }
+    setRegenerating(true);
+    try {
+      const newId = await nextPONumber(supplierName);
+      if (newId === currentId) {
+        toast.push({ kind: 'info', title: 'PO # unchanged', description: newId });
+        return;
+      }
+      const supabase = getSupabaseClient();
+      const { error } = await supabase
+        .from('purchase_orders')
+        .update({ id: newId })
+        .eq('id', currentId);
+      if (error) throw new Error(error.message);
+      setLiveId(newId);
+      void qc.invalidateQueries({ queryKey: ['purchaseOrders'] });
+      toast.push({ kind: 'success', title: 'PO # regenerated', description: newId });
+    } catch (err) {
+      toast.push({
+        kind: 'error',
+        title: 'Regenerate failed',
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
   const sendEmail = () => {
     const r = resolveRecipientsSync({
       actors: [{ supplierId, supplierName }],
@@ -212,7 +259,7 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
       <Drawer
         open={!!po}
         onOpenChange={onOpenChange}
-        title={mode === 'create' ? 'New purchase order' : `PO ${po.id.slice(0, 12)}`}
+        title={mode === 'create' ? 'New purchase order' : `PO ${(liveId ?? po.id).slice(0, 16)}`}
         description={mode === 'edit' ? `${supplierName} · ${status}` : 'Create a purchase order.'}
         widthClass="w-[min(98vw,960px)]"
         footer={
@@ -353,13 +400,29 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
               placeholder="Internal notes for this PO" />
           </div>
 
-          <div className="pt-2 border-t border-[#1f1f1f] text-[11px] text-slate-500 flex items-center gap-2">
+          <div className="pt-2 border-t border-[#1f1f1f] text-[11px] text-slate-500 flex items-center gap-2 flex-wrap">
             <Badge variant="neutral">purchase_orders</Badge>
             <span className="text-slate-600">
               Subtotal <span className="font-mono tabular-nums text-slate-300">{fmtMoney(subtotal, currency)}</span>
             </span>
-            <span className="ml-auto font-mono tabular-nums text-slate-600">
-              {mode === 'create' ? 'new' : `#${po.id.slice(0, 8)}`}
+            <span className="ml-auto flex items-center gap-2">
+              <span className="font-mono tabular-nums text-slate-500">
+                {mode === 'create' ? 'new' : `# ${liveId ?? po.id}`}
+              </span>
+              {mode === 'edit' && (
+                <button
+                  type="button"
+                  onClick={regenerateId}
+                  disabled={regenerating || !supplierName.trim() || pending}
+                  title={supplierName.trim()
+                    ? 'Recompute PO # from the current supplier name'
+                    : 'Set supplier first'}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] uppercase tracking-wider text-slate-400 border border-[#1f1f1f] hover:text-indigo-300 hover:border-indigo-500/40 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw size={10} className={regenerating ? 'animate-spin' : ''} />
+                  {regenerating ? 'Regenerating…' : 'Regenerate'}
+                </button>
+              )}
             </span>
           </div>
         </div>

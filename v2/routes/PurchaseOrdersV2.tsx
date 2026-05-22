@@ -181,10 +181,8 @@ const PurchaseOrdersV2: React.FC = () => {
 
   const rowActions = (row: PurchaseOrder) => (
     <RowActions
-      onView={() => openPurchaseOrder(row)}
+      onView={() => setPreviewPO(row)}
       onEdit={() => openPurchaseOrder(row)}
-      onPdf={() => setPreviewPO(row)}
-      pdfLabel="View / download PO"
       onEmail={() => setEmailDraft(buildEmailDraft(row))}
       onDuplicate={() => duplicatePO(row)}
       onDelete={() => confirmDelete(row)}
@@ -212,7 +210,7 @@ const PurchaseOrdersV2: React.FC = () => {
             + New PO
           </Button>
           <Button size="sm" onClick={() => setAiUploadOpen(true)}
-            className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
+            className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-500 hover:to-purple-500 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
             <Sparkles size={12} />
             AI Upload
           </Button>

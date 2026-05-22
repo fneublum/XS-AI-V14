@@ -15,6 +15,7 @@ export interface PdfCompany {
   country?: string;
   phone?: string;
   ein?: string;
+  email?: string;
 }
 
 export interface PdfCustomer {
@@ -76,6 +77,23 @@ export interface PdfBooking {
   vesselVoyage?: string | null;
 }
 
+export interface PdfBankRow {
+  id?: string;
+  company_id?: string | null;
+  name?: string | null;
+  code?: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip_code?: string | null;
+  country?: string | null;
+  swift_code?: string | null;
+  routing?: string | null;
+  wire?: string | null;
+  account_number?: string | null;
+}
+
 export interface InvoicePdfCtx {
   company: PdfCompany | undefined;
   customers: PdfCustomer[];
@@ -84,6 +102,9 @@ export interface InvoicePdfCtx {
   packingLists: PdfPackingList[];
   ports: PdfPort[];
   bookings: PdfBooking[];
+  /** Banks scoped to the relevant companies. Used as a fallback when
+   *  the invoice row itself has no denormalized bank fields. */
+  banks?: PdfBankRow[];
   logoUrl: string | null;
   stampUrl: string | null;
   /** Brazil mode — affects number formatting in packing list / SLI. */

@@ -1,13 +1,14 @@
 // Phase 3B — v2 Freight Quotes.
 
 import React, { useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Mail } from 'lucide-react';
 import { Badge, Button, Input, FormField, Label } from '../primitives';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
 import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
 import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
+import { SendQuoteRequestModal } from '../components/SendQuoteRequestModal';
 import { useRowCrud } from '../components/useRowCrud';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { nextFQNumber } from '../lib/fqNumber';
@@ -300,6 +301,7 @@ const FreightQuotesV2: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [createSeed, setCreateSeed] = useState<Record<string, string> | undefined>(undefined);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
+  const [sendQuoteOpen, setSendQuoteOpen] = useState(false);
   const quotes = useFreightQuotes(search);
   const insert = useEntityInsert<Record<string, unknown>>({
     table: 'freight_quotes',
@@ -357,6 +359,11 @@ const FreightQuotesV2: React.FC = () => {
             <Button size="sm" onClick={openCreate}
               className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
               + New quote
+            </Button>
+            <Button size="sm" onClick={() => setSendQuoteOpen(true)}
+              className="bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 hover:text-indigo-100 hover:border-indigo-400/60 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
+              <Mail size={12} />
+              Send Quote Request
             </Button>
             <Button size="sm" onClick={() => setAiUploadOpen(true)}
               className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
@@ -520,6 +527,10 @@ const FreightQuotesV2: React.FC = () => {
           }}
         />
       )}
+      <SendQuoteRequestModal
+        open={sendQuoteOpen}
+        onOpenChange={setSendQuoteOpen}
+      />
       {drawers}
     </>
   );

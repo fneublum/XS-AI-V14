@@ -1577,7 +1577,7 @@ const InvoicedTab: React.FC<{ order: AgentOrderRow }> = ({ order }) => {
 
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={() => setUploadOpen(true)}
-          className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-8 px-3 text-[12.5px]">
+          className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-500 hover:to-purple-500 h-8 px-3 text-[12.5px]">
           <Sparkles size={12} className="mr-1.5" />
           Add / OCR commercial invoice
         </Button>

@@ -85,7 +85,11 @@ const LoginV2: React.FC = () => {
     e.preventDefault();
     setError(null);
 
-    const u = username.trim().toLowerCase();
+    // Preserve the user's typed case — the auth-issue Edge Function
+    // does a case-insensitive `ilike` lookup, so any casing that
+    // matches the stored row works. Forcing lowercase here was the
+    // bug: rows stored as "MAX" never matched the lowercased "max".
+    const u = username.trim();
     const p = password.trim();
     if (!u || !p) {
       setError('Please enter username and password.');

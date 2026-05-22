@@ -525,9 +525,11 @@ const txtInputCls =
 
 const LB_TO_KG = 0.453592;
 
-/** Quantity format — commas and one decimal place (999,999.9). */
+/** Quantity format — commas and two decimal places (999,999.99).
+ *  Matches the PDF-side and InvoiceDrawer precision so the drawer
+ *  values align with what prints on the delivery docs. */
 const fmtWeightStr = (n: number | null): string =>
-  n == null ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  n == null ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /** Money format — commas and two decimals (999,999.99). */
 const fmtAmountStr = (n: number | null): string =>
   n == null ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1123,13 +1125,33 @@ export function buildPackingListAiUploadConfig(opts: {
   insert: { mutateAsync: (p: Record<string, unknown>) => Promise<unknown> };
   toast: { push: (t: { kind: 'info' | 'success' | 'warning' | 'error'; title: string; description?: string }) => void };
   currentCompanyId: string | null;
+  /** Optional baseline values applied to the empty draft. Used by the
+   *  Sales Order → Fill flow to carry SO context (customer / POL /
+   *  POD / currency / SO #) into the OCR review. OCR results overlay
+   *  the seed; seed only fills blanks the model didn't return. */
+  seed?: Partial<PLDraft>;
 }): AiUploadModalConfig<PLDraft> {
-  const { insert, toast, currentCompanyId } = opts;
+  const { insert, toast, currentCompanyId, seed } = opts;
+  const hasSeed = !!seed && Object.values(seed).some(v => v != null && v !== '');
   return {
-    title: 'AI upload — packing list',
-    description: 'Drop a PL PDF, pick a file, or paste text or a screenshot.',
-    emptyDraft: emptyPLDraft,
-    fromExtracted: (d) => d,
+    title: hasSeed ? 'AI upload — packing list (from Sales Order)' : 'AI upload — packing list',
+    description: hasSeed
+      ? `Pre-filled from ${seed?.soNumber || 'the sales order'}. Drop the PL PDF to OCR remaining fields, or fill them in below.`
+      : 'Drop a PL PDF, pick a file, or paste text or a screenshot.',
+    emptyDraft: () => ({ ...emptyPLDraft(), ...(seed ?? {}) }),
+    // Seed only fills blanks the OCR didn't return — typed fields from
+    // the PL PDF win over SO context.
+    fromExtracted: (d) => {
+      const out: PLDraft = { ...d };
+      if (seed) {
+        for (const [k, v] of Object.entries(seed) as Array<[keyof PLDraft, unknown]>) {
+          const cur = (out as Record<string, unknown>)[k as string];
+          const blank = cur == null || cur === '' || (Array.isArray(cur) && cur.length === 0);
+          if (blank && v != null && v !== '') (out as Record<string, unknown>)[k as string] = v;
+        }
+      }
+      return out;
+    },
     extractSpec: { prompt: PL_PROMPT, normalize: normalizePLJson },
     extractSummary: (d) => {
       const parts = [

@@ -83,10 +83,16 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+    // Case-insensitive username lookup. We use `ilike` with the input
+    // escaped (\, %, _ all become literal) so the match is whole-string
+    // — `MAX` / `max` / `Max` all log in to the same row, but a typed
+    // `m_x` or `m%` doesn't widen the search into a wildcard match.
+    const ilikeEscape = (s: string): string =>
+        s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
     const { data: user, error } = await supabase
         .from('users')
         .select('id, username, email, password, role, allowed_company_ids')
-        .eq('username', username)
+        .ilike('username', ilikeEscape(username))
         .maybeSingle<UserRow>();
 
     // Constant-shape response to prevent user enumeration.

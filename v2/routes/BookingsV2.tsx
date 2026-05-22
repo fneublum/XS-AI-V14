@@ -1,6 +1,7 @@
 // Phase 3B — v2 Bookings.
 
 import React, { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Sparkles } from 'lucide-react';
 import { Badge, Button, Input, FormField, Label } from '../primitives';
 import { DataTableColumn } from '../primitives/DataTable';
@@ -13,6 +14,8 @@ import { useCompany } from '../providers/CompanyProvider';
 import { useToast } from '../primitives/Toast';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useBookings, Booking } from '../queries/useBookings';
+import { getSupabaseClient } from '../../services/supabase';
+import { PdfViewerModal } from '../components/PdfViewerModal';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
 import { vividStatusClass, BadgeTone } from '../lib/statusBadge';
@@ -42,7 +45,10 @@ const columns: DataTableColumn<Booking>[] = [
     value: r => r.bookingNumber, cell: r => r.bookingNumber },
   { id: 'customer', header: 'Customer', sortable: true, filterable: true,
     value: r => r.customer ?? '',
-    cell: r => <span className="text-slate-100" title={tooltipName(r.customer)}>{shortName(r.customer)}</span> },
+    // First token only — keeps the Bookings list scannable when customer
+    // names are long (e.g. "RECIRCULAR INDUSTRIA E COMERCIO DE PLASTICOS
+    // LTDA"). Full name available on hover via `tooltipName`.
+    cell: r => <span className="text-slate-100" title={tooltipName(r.customer)}>{shortName(r.customer, 1)}</span> },
   { id: 'vessel', header: 'Vessel / Voyage', sortable: true, filterable: true,
     value: r => r.vesselVoyage ?? '',
     cell: r => <span className="font-mono text-[11.5px] text-slate-300">{r.vesselVoyage ?? '—'}</span> },
@@ -114,8 +120,8 @@ const fields: FieldDef[] = [
       secondaryColumn: 'customerName', scopeByCompany: true,
     } },
   { key: 'status',        label: 'Status', type: 'select',
-    options: ['AVAILABLE', 'BOOKED', 'CONFIRMED', 'LOADED', 'DEPARTED', 'SHIPPED', 'CANCELLED'],
-    defaultValue: 'BOOKED' },
+    options: ['AVAILABLE', 'LOADED', 'DEPARTED', 'SHIPPED', 'CANCELLED'],
+    defaultValue: 'AVAILABLE' },
   { key: 'etd',           label: 'ETD', type: 'date' },
   { key: 'eta',           label: 'ETA', type: 'date' },
   { key: 'cargoCutOff',   label: 'Cargo cut-off', type: 'date' },
@@ -139,12 +145,18 @@ interface BookingDraft {
   cargoCutOff: string;
   vgmCutOff: string;
   draftCutOff: string;
+  /** PDF data URL of the source document the AI extracted from. Carried
+   *  through `fromExtracted` so the save step can persist it on the row
+   *  — otherwise the eye action falls back to the "No PDF attached"
+   *  state even though we just OCR'd one. */
+  originalDocument: string | null;
 }
 
 const emptyBookingDraft = (): BookingDraft => ({
   bookingNumber: '', customer: '', agentName: '', vesselVoyage: '',
   pol: '', pod: '', equipment: '', freeTime: '', terminal: '',
-  status: 'BOOKED', etd: '', eta: '', cargoCutOff: '', vgmCutOff: '', draftCutOff: '',
+  status: 'AVAILABLE', etd: '', eta: '', cargoCutOff: '', vgmCutOff: '', draftCutOff: '',
+  originalDocument: null,
 });
 
 const BOOKING_PROMPT = `You are extracting fields from a SHIPPING BOOKING CONFIRMATION
@@ -161,7 +173,7 @@ values must be null — never guess.
   "equipment":     string | null,   // "1 x 40HC" etc.
   "freeTime":      number | null,   // days
   "terminal":      string | null,
-  "status":        "BOOKED" | "CONFIRMED" | "LOADED" | "DEPARTED" | "CANCELLED" | null,
+  "status":        "AVAILABLE" | "LOADED" | "DEPARTED" | "CANCELLED" | null,
   "etd":           string | null,   // YYYY-MM-DD
   "eta":           string | null,   // YYYY-MM-DD
   "cargoCutOff":   string | null,   // YYYY-MM-DD or ISO datetime
@@ -199,8 +211,9 @@ function normalizeBookingJson(parsed: Record<string, unknown>): BookingDraft {
     equipment:     str('equipment'),
     freeTime:      num('freeTime'),
     terminal:      str('terminal'),
-    status:        (['BOOKED','CONFIRMED','LOADED','DEPARTED','CANCELLED'].includes(status)
-                     ? status : 'BOOKED'),
+    status:        (['AVAILABLE','LOADED','DEPARTED','SHIPPED','CANCELLED'].includes(status)
+                     ? status
+                     : (status === 'BOOKED' || status === 'CONFIRMED' ? 'AVAILABLE' : 'AVAILABLE')),
     etd:           str('etd'),
     eta:           str('eta'),
     cargoCutOff:   str('cargoCutOff'),
@@ -216,17 +229,70 @@ const BookingsV2: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
   const bookings = useBookings(search);
+  const qc = useQueryClient();
   const insert = useEntityInsert<Record<string, unknown>>({
     table: 'bookings',
     listQueryKeys: ['bookings', 'logisticsDocs'],
     idPrefix: 'BKG',
   });
 
+  // State for the PDF viewer modal — populated whenever the user clicks
+  // the eye icon. The modal handles both the "PDF present" (viewer +
+  // download + email) and "PDF missing" (empty state with upload picker)
+  // paths, so the eye action is always consistent.
+  const [pdfModal, setPdfModal] = useState<{
+    open: boolean; rowId: string | null; dataUrl: string | null; title: string;
+  }>({ open: false, rowId: null, dataUrl: null, title: '' });
+
+  const openOriginalPdf = async (row: Booking): Promise<void> => {
+    // Open the modal immediately so the user gets feedback; the data URL
+    // streams in once the fetch resolves (may be null → empty state).
+    setPdfModal({
+      open: true,
+      rowId: row.id,
+      dataUrl: null,
+      title: `Booking ${row.bookingNumber}`,
+    });
+    try {
+      const sb = getSupabaseClient();
+      const { data, error } = await sb
+        .from('bookings')
+        .select('originalDocument')
+        .eq('id', row.id)
+        .maybeSingle<{ originalDocument: string | null }>();
+      if (error) throw new Error(error.message);
+      const dataUrl = data?.originalDocument ?? null;
+      const isPdf = !!dataUrl && dataUrl.startsWith('data:application/pdf');
+      setPdfModal(prev => prev.rowId === row.id
+        ? { ...prev, dataUrl: isPdf ? dataUrl : null }
+        : prev);
+    } catch (e) {
+      toast.push({
+        kind: 'error',
+        title: 'Could not load PDF',
+        description: (e as Error)?.message ?? 'Try again.',
+      });
+    }
+  };
+
+  // Save a newly-uploaded PDF for the currently-open booking. Used by
+  // the modal's empty-state Upload button.
+  const attachOriginalPdf = async (newDataUrl: string): Promise<void> => {
+    const rowId = pdfModal.rowId;
+    if (!rowId) throw new Error('No booking is open.');
+    const sb = getSupabaseClient();
+    const { error } = await sb.from('bookings').update({ originalDocument: newDataUrl }).eq('id', rowId);
+    if (error) throw new Error(error.message);
+    setPdfModal(prev => prev.rowId === rowId ? { ...prev, dataUrl: newDataUrl } : prev);
+    void qc.invalidateQueries({ queryKey: ['bookings'] });
+  };
+
   const { rowActions, drawers, openView } = useRowCrud<Booking>({
     table: 'bookings',
     listQueryKeys: ['bookings', 'logisticsDocs'],
     rowLabel: r => r.bookingNumber,
     fields,
+    onView: openOriginalPdf,
   });
 
   const openCreate = () => setCreateOpen(true);
@@ -251,6 +317,7 @@ const BookingsV2: React.FC = () => {
         onRetry={bookings.refetch}
         onRowClick={openView}
         rowActions={rowActions}
+        density="compact"
         headerAction={
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={openCreate}
@@ -286,7 +353,10 @@ const BookingsV2: React.FC = () => {
             title: 'AI upload — booking confirmation',
             description: 'Drop a booking PDF / image, pick a file, or paste text or a screenshot. Gemini extracts the fields; you review and save.',
             emptyDraft: emptyBookingDraft,
-            fromExtracted: (d) => d,
+            fromExtracted: (d, originalDocument) => ({
+              ...d,
+              originalDocument: originalDocument ?? d.originalDocument ?? null,
+            }),
             extractSpec: { prompt: BOOKING_PROMPT, normalize: normalizeBookingJson },
             extractSummary: (d) =>
               [d.bookingNumber, d.pol, d.pod].filter(Boolean).join(' · ') || null,
@@ -367,7 +437,7 @@ const BookingsV2: React.FC = () => {
                 <FormField>
                   <FieldLabel>Status</FieldLabel>
                   <div className="flex flex-wrap gap-1.5">
-                    {(['BOOKED','CONFIRMED','LOADED','DEPARTED','CANCELLED'] as const).map(opt => (
+                    {(['AVAILABLE','LOADED','DEPARTED','SHIPPED','CANCELLED'] as const).map(opt => (
                       <button key={opt} type="button"
                         onClick={() => setD({ ...d, status: opt })}
                         className={d.status === opt
@@ -421,12 +491,13 @@ const BookingsV2: React.FC = () => {
                 equipment:     d.equipment.trim() || null,
                 freeTime:      d.freeTime.trim() === '' ? null : Number(d.freeTime),
                 terminal:      d.terminal.trim() || null,
-                status:        d.status || 'BOOKED',
+                status:        d.status || 'AVAILABLE',
                 etd:           d.etd || null,
                 eta:           d.eta || null,
                 cargoCutOff:   d.cargoCutOff || null,
                 vgmCutOff:     d.vgmCutOff || null,
                 draftCutOff:   d.draftCutOff || null,
+                originalDocument: d.originalDocument || null,
               };
               if (currentCompanyId && currentCompanyId !== 'ALL') {
                 payload.companyId = currentCompanyId;
@@ -442,6 +513,13 @@ const BookingsV2: React.FC = () => {
         />
       )}
       {drawers}
+      <PdfViewerModal
+        open={pdfModal.open}
+        onOpenChange={(o) => setPdfModal((p) => ({ ...p, open: o }))}
+        dataUrl={pdfModal.dataUrl}
+        title={pdfModal.title}
+        onUpload={attachOriginalPdf}
+      />
     </>
   );
 };

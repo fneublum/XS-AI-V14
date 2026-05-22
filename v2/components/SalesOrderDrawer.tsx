@@ -90,6 +90,7 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
   const [bankId, setBankId]                 = useState('');
   const [notifyPartyId, setNotifyPartyId]   = useState('');
   const [notifyPartyName, setNotifyPartyName] = useState('');
+  const [bookingNumber, setBookingNumber]   = useState('');
 
   // Notes / signatures
   const [notes, setNotes]                   = useState('');
@@ -138,6 +139,7 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
     setBankId(order.bankId ?? '');
     setNotifyPartyId(order.notifyPartyId ?? '');
     setNotifyPartyName(order.notifyPartyName ?? '');
+    setBookingNumber(order.bookingNumber ?? '');
     setNotes(order.notes ?? '');
     setCreatedBy(order.createdBy ?? '');
     setApprovedBy(order.approvedBy ?? '');
@@ -147,17 +149,52 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
   // from the sales_orders table (last existing number + 1, format
   // `SO-NNNNN`). Runs only once when the drawer opens in create mode
   // with an empty orderNumber so a user-typed override sticks.
+  //
+  // Resilience: the input is read-only in create mode (to enforce the
+  // SO-NNNNN format), which means a silent failure on `nextSONumber()`
+  // left the user stuck on "Generating…" forever — Save stayed
+  // disabled because `orderNumber` never populated. Race against a 4s
+  // timeout and fall back to a Unix-seconds-derived SO# so the user
+  // can always proceed.
   useEffect(() => {
     if (mode !== 'create') return;
     if (orderNumber.trim() !== '') return;
     let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const fallbackSO = () => {
+      // 6-digit number derived from Unix seconds mod 1M — large enough
+      // not to collide with the sequential floor (5083+) for a long time
+      // and short enough to keep `SO-NNNNNN` legible.
+      const n = Math.floor(Date.now() / 1000) % 1_000_000;
+      return `SO-${String(n).padStart(6, '0')}`;
+    };
+
     (async () => {
       try {
-        const next = await nextSONumber();
+        const next = await Promise.race<string>([
+          nextSONumber(),
+          new Promise<string>((_, rej) => {
+            timeoutId = window.setTimeout(
+              () => rej(new Error('nextSONumber timeout')),
+              4000,
+            );
+          }),
+        ]);
         if (!cancelled) setOrderNumber(prev => (prev.trim() === '' ? next : prev));
-      } catch { /* ignore — user can type their own */ }
+      } catch (err) {
+        // Either threw or timed out — use the timestamp fallback so
+        // the user is never stuck on "Generating…".
+        console.warn('[SalesOrderDrawer] SO# auto-gen failed; using fallback:', err);
+        if (!cancelled) setOrderNumber(prev => (prev.trim() === '' ? fallbackSO() : prev));
+      } finally {
+        if (timeoutId) window.clearTimeout(timeoutId);
+      }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
     // Intentional: only seed when the drawer first switches into
     // create mode — a re-render shouldn't re-fetch and overwrite.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -171,6 +208,16 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
 
   const canSave = customerName.trim() !== '' && orderNumber.trim() !== '';
   const pending = update.isPending || insert.isPending || del.isPending;
+  // Surface why the Create / Save button is disabled. Previously the
+  // button just greyed out silently with no inline feedback, so users
+  // who hadn't picked a customer thought "Save" was broken on the SO
+  // drawer. The chip + tooltip below explain what's missing.
+  const missingFields: string[] = [];
+  if (orderNumber.trim() === '') missingFields.push('Order #');
+  if (customerName.trim() === '') missingFields.push('Customer');
+  const disabledReason = missingFields.length > 0
+    ? `Add ${missingFields.join(' + ')} to enable save`
+    : '';
 
   const selectCustomer = (id: string) => {
     setCustomerId(id);
@@ -211,6 +258,7 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
     bankId: bankId || null,
     notifyPartyId: notifyPartyId || null,
     notifyPartyName: notifyPartyName || null,
+    bookingNumber: bookingNumber.trim() || null,
     notes: notes || null,
     createdBy: createdBy || null,
     approvedBy: approvedBy || null,
@@ -327,12 +375,24 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
             >
               Cancel
             </Button>
+            {disabledReason && !pending && (
+              <span
+                className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-amber-200 bg-amber-500/10 border border-amber-500/30"
+                title={disabledReason}
+              >
+                {disabledReason}
+              </span>
+            )}
             <Button
               size="sm"
               onClick={save}
               disabled={!canSave || pending}
               loading={pending}
-              className="ml-auto bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40"
+              title={disabledReason || undefined}
+              className={
+                (disabledReason && !pending ? '' : 'ml-auto ') +
+                'bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-600/40'
+              }
             >
               {pending ? 'Saving…' : mode === 'create' ? 'Create order' : 'Save changes'}
             </Button>
@@ -542,14 +602,52 @@ export const SalesOrderDrawer: React.FC<Props> = ({ order, mode, onOpenChange })
                 <Input value={pickupLocation} onChange={e => setPickupLocation(e.target.value)}
                   className={inputClass} placeholder="Address" />
               </FormField>
+              <FormField className="col-span-2">
+                <Label className={labelClass}>
+                  Booking #
+                  <span className="ml-2 text-[10px] text-slate-600 font-normal normal-case tracking-normal">
+                    pick an AVAILABLE booking or type a new number
+                  </span>
+                </Label>
+                <SupabaseSelectField
+                  source={{
+                    table: 'bookings',
+                    valueColumn: 'bookingNumber',
+                    labelColumn: 'bookingNumber',
+                    secondaryColumn: 'vesselVoyage',
+                    scopeByCompany: true,
+                    equalsFilter: { status: 'AVAILABLE' },
+                  }}
+                  value={bookingNumber}
+                  mono
+                  allowFreeText
+                  placeholder="e.g. NAM8503707"
+                  onPick={v => setBookingNumber(v)}
+                />
+              </FormField>
             </div>
           </div>
 
-          {/* Banking (Notify party moved up to the Header section) */}
+          {/* Banking (Notify party moved up to the Header section).
+              Explicitly optional: SO save validation only requires
+              Customer + Order #, and `sales_orders.bankId` is a
+              nullable column. The "optional" hint here heads off the
+              visual ambiguity that made users think the picker was
+              mandatory just because it had its own section. */}
           <div className={sectionClass}>
-            <Label className={labelClass}>Banking</Label>
+            <Label className={labelClass}>
+              Banking
+              <span className="ml-2 text-[10px] text-slate-600 font-normal normal-case tracking-normal">
+                optional
+              </span>
+            </Label>
             <FormField>
-              <Label className={labelClass}>Bank (pay-to)</Label>
+              <Label className={labelClass}>
+                Bank (pay-to)
+                <span className="ml-2 text-[10px] text-slate-600 font-normal normal-case tracking-normal">
+                  optional — leave blank to omit from PDFs
+                </span>
+              </Label>
               <SupabaseSelectField
                 source={{
                   table: 'banks',

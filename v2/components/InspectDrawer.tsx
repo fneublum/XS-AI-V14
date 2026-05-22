@@ -104,6 +104,12 @@ export const InspectDrawer: React.FC<Props> = ({
       }
       const s = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
       if (s === '') {
+        // Write-only fields (e.g. users.password) must not be wiped on
+        // edit when the admin left the field blank. The current value
+        // isn't fetched to the client, so we omit the column from the
+        // UPDATE patch entirely and let the existing stored value
+        // stand.
+        if (f.skipIfEmpty) continue;
         patch[col] = null;
       } else if (f.type === 'number') {
         const n = Number(s);
@@ -245,9 +251,20 @@ export const InspectDrawer: React.FC<Props> = ({
                       />
                     ) : (
                       <Input
-                        type={f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text'}
+                        type={
+                          f.type === 'date' ? 'date'
+                          : f.type === 'number' ? 'number'
+                          : f.type === 'password' ? 'password'
+                          : 'text'
+                        }
                         value={(values[f.key] as string | undefined) ?? ''}
                         onChange={e => set(f.key, e.target.value)}
+                        placeholder={
+                          f.type === 'password' && f.skipIfEmpty
+                            ? 'Leave blank to keep current'
+                            : f.placeholder
+                        }
+                        autoComplete={f.type === 'password' ? 'new-password' : undefined}
                         min={f.min} max={f.max} step={f.step}
                         className={inputClass + (f.mono ? ' font-mono tabular-nums' : '')}
                       />
@@ -266,6 +283,11 @@ export const InspectDrawer: React.FC<Props> = ({
                   displayVal = displayVal.length === 0
                     ? []
                     : displayVal.split(',').map(s => s.trim()).filter(Boolean);
+                }
+                // Never display password (or any other write-only)
+                // field value in view mode. Mask with bullets.
+                if (f.type === 'password') {
+                  displayVal = '••••••••';
                 }
                 return (
                   <React.Fragment key={f.key}>

@@ -77,9 +77,32 @@ const PLInvoiceEngineV2: React.FC = () => {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<PackingList | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createSeed, setCreateSeed] = useState<Record<string, string> | undefined>(undefined);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
   const [batchUploadOpen, setBatchUploadOpen] = useState(false);
   const pls = usePackingLists(search);
+
+  // Pick up the seed left by Sales Orders → Fill. The Fill action's
+  // primary path is OCR'ing a real PL document, so we open the AI
+  // Upload modal pre-seeded with SO context — the modal lets the user
+  // drop the PDF for OCR and also exposes the full review form for
+  // manual fields. Cleared after read so a refresh doesn't reopen it.
+  useEffect(() => {
+    const raw = (() => { try { return sessionStorage.getItem('xs_v2_pl_seed_from_so'); } catch { return null; } })();
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as { seed?: Record<string, string>; stampedAt?: number };
+      if (!parsed?.seed || (parsed.stampedAt && Date.now() - parsed.stampedAt > 60_000)) {
+        sessionStorage.removeItem('xs_v2_pl_seed_from_so');
+        return;
+      }
+      setCreateSeed(parsed.seed);
+      setAiUploadOpen(true);
+      sessionStorage.removeItem('xs_v2_pl_seed_from_so');
+    } catch {
+      try { sessionStorage.removeItem('xs_v2_pl_seed_from_so'); } catch { /* noop */ }
+    }
+  }, []);
 
   const plInsert = useEntityInsert<Record<string, unknown>>({
     table: 'packing_lists',
@@ -117,12 +140,12 @@ const PLInvoiceEngineV2: React.FC = () => {
             + New packing list
           </Button>
           <Button size="sm" onClick={() => setAiUploadOpen(true)}
-            className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
+            className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-500 hover:to-purple-500 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
             <Sparkles size={12} />
             AI Upload
           </Button>
           <Button size="sm" onClick={() => setBatchUploadOpen(true)}
-            className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
+            className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-500 hover:to-purple-500 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
             <Sparkles size={12} />
             Batch upload
           </Button>
@@ -266,9 +289,10 @@ const PLInvoiceEngineV2: React.FC = () => {
       {aiUploadOpen && (
         <AiUploadModal<PLDraft>
           open={aiUploadOpen}
-          onOpenChange={setAiUploadOpen}
+          onOpenChange={(o) => { setAiUploadOpen(o); if (!o) setCreateSeed(undefined); }}
           config={buildPackingListAiUploadConfig({
             insert: plInsert, toast, currentCompanyId,
+            seed: createSeed as Partial<PLDraft> | undefined,
           })}
         />
       )}

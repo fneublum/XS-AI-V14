@@ -1898,10 +1898,10 @@ const InvoiceEngine: React.FC<InvoiceEngineProps> = ({
         const resumeBody = finalContainers.map((c: any) => [
             c.container || 'N/A',
             c.seal || '',
-            (totalGrossLbs / numContainers).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (totalNetLbs / numContainers).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (totalGrossKg / numContainers).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (totalNetKg / numContainers).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            (totalGrossLbs / numContainers).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (totalNetLbs / numContainers).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (totalGrossKg / numContainers).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (totalNetKg / numContainers).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             Math.round(totalVols / numContainers).toLocaleString()
         ]);
 
@@ -1917,10 +1917,10 @@ const InvoiceEngine: React.FC<InvoiceEngineProps> = ({
         resumeBody.push([
             'TOTALS',
             '',
-            totalStats.grossLbs.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totalStats.netLbs.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totalStats.grossKg.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totalStats.netKg.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            totalStats.grossLbs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totalStats.netLbs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totalStats.grossKg.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totalStats.netKg.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totalStats.volumes.toLocaleString()
         ]);
 
@@ -2107,10 +2107,10 @@ const InvoiceEngine: React.FC<InvoiceEngineProps> = ({
         const resumeBody = containers.map(c => [
             c.container || 'N/A',
             c.seal || '',
-            (totalGross_Lbs / num_Containers).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (totalNet_Lbs / num_Containers).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (totalGross_Kg / num_Containers).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            (totalNet_Kg / num_Containers).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            (totalGross_Lbs / num_Containers).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (totalNet_Lbs / num_Containers).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (totalGross_Kg / num_Containers).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            (totalNet_Kg / num_Containers).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             Math.round(total_Vols / num_Containers).toLocaleString()
         ]);
 
@@ -2126,10 +2126,10 @@ const InvoiceEngine: React.FC<InvoiceEngineProps> = ({
         resumeBody.push([
             'TOTALS',
             '',
-            totalStats.grossLbs.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totalStats.netLbs.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totalStats.grossKg.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-            totalStats.netKg.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            totalStats.grossLbs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totalStats.netLbs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totalStats.grossKg.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            totalStats.netKg.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
             totalStats.volumes.toLocaleString()
         ]);
 
