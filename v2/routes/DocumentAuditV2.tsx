@@ -283,13 +283,9 @@ const DocumentAuditV2: React.FC = () => {
       value: r => r.deal_name ?? '',
       cell: r => <span className="text-slate-300">{r.deal_name ?? '—'}</span>,
     },
-    {
-      id: 'company', header: 'Company', sortable: true, filterable: true,
-      value: r => r.company ?? '',
-      cell: r => r.company
-        ? <Badge variant="neutral">{r.company}</Badge>
-        : <span className="text-slate-600">—</span>,
-    },
+    // Company column removed — the global company switcher already
+    // scopes the audit list to the current company, so a per-row Company
+    // badge was redundant (and stole horizontal space from Carrier/Deal).
     {
       id: 'hold_risk_count', header: 'Issues', sortable: true, mono: true, align: 'right',
       value: r => r.hold_risk_count,
