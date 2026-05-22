@@ -53,6 +53,7 @@ const BookingsV2        = lazy(() => import('./routes/BookingsV2'));
 const ShipmentsV2       = lazy(() => import('./routes/ShipmentsV2'));
 const BillOfLadingsV2   = lazy(() => import('./routes/BillOfLadingsV2'));
 const DocumentAuditV2   = lazy(() => import('./routes/DocumentAuditV2'));
+const AiDraftsV2        = lazy(() => import('./routes/AiDraftsV2'));
 const PackingListsV2    = lazy(() => import('./routes/PackingListsV2'));
 const InvoicesV2        = lazy(() => import('./routes/InvoicesV2'));
 const ReceivablesV2     = lazy(() => import('./routes/ReceivablesV2'));
@@ -163,6 +164,7 @@ const buildSections = (
       { id: 'bookings',           label: 'Bookings',           icon: CalendarCheck },
       { id: 'bol',                label: 'Bill of Ladings',    icon: Ship },
       { id: 'document-audit',     label: 'Document Audit',     icon: ShieldAlert },
+      { id: 'ai-drafts',          label: 'AI Drafts',          icon: Sparkles },
       { id: 'logistics-followup', label: 'Logistics Follow Up', icon: BellRing },
     ],
   },
@@ -218,6 +220,7 @@ const routeTitles: Record<string, string> = {
   'bookings':          'Bookings',
   'bol':               'Bill of Ladings',
   'document-audit':    'Document Audit',
+  'ai-drafts':         'AI Drafts',
   'logistics-followup':'Logistics Follow Up',
   // Finance
   'payables':        'Payables',
@@ -285,6 +288,7 @@ const routeSection: Record<string, string> = {
   'bookings':           'Logistics',
   'bol':                'Logistics',
   'document-audit':     'Logistics',
+  'ai-drafts':          'Logistics',
   'logistics-followup': 'Logistics',
   'shipments':       'Logistics',
   'packing-lists':   'Logistics',
@@ -661,6 +665,7 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'shipments'       && <ShipmentsV2 />}
           {activeId === 'bol'             && <BillOfLadingsV2 />}
           {activeId === 'document-audit'  && <DocumentAuditV2 />}
+          {activeId === 'ai-drafts'       && <AiDraftsV2 />}
           {activeId === 'packing-lists'   && <PackingListsV2 />}
           {activeId === 'invoices'        && <InvoicesV2 />}
           {activeId === 'receivables'     && <ReceivablesV2 />}
