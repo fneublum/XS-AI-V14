@@ -128,6 +128,24 @@ const FinanceBalancesV2: React.FC = () => {
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState<string | null>(null);
 
+  // "All customers" summary mode — when the user picks the ALL option in
+  // the customer dropdown, we fan out fetchCustomerStatement across every
+  // visible QB↔ERP customer and roll the per-customer totals into a single
+  // summary table. Invoice details are intentionally NOT shown here — the
+  // user wanted a one-glance "who owes what" view.
+  type CustomerBalanceRow = {
+    customerName: string;
+    customerId: string | null;
+    totalInvoiced: number;
+    totalPaid: number;
+    outstandingBalance: number;
+    error?: string;
+  };
+  const ALL_SENTINEL = '__ALL__';
+  const [allBalances, setAllBalances] = useState<CustomerBalanceRow[] | null>(null);
+  const [loadingAll, setLoadingAll]   = useState(false);
+  const [allProgress, setAllProgress] = useState({ done: 0, total: 0 });
+
   // Void-invoice dialog state
   const [voidTarget, setVoidTarget] = useState<QBStatementInvoice | null>(null);
   const [voidingId, setVoidingId]   = useState<string | null>(null);
@@ -213,6 +231,54 @@ const FinanceBalancesV2: React.FC = () => {
       setLoading(false);
     }
   }, [companyId, selectedCustomer, startDate, endDate]);
+
+  // Bulk: pull a statement per visible customer, in batches of 5 (cap QB
+  // rate). Per-customer errors don't fail the whole run — they surface
+  // inline on the summary row so the user still sees everything else.
+  const runAllBalances = useCallback(async () => {
+    if (visibleCustomers.length === 0) {
+      setError('No matching customers');
+      return;
+    }
+    setLoadingAll(true);
+    setError(null);
+    setStatement(null);
+    setAllBalances([]);
+    setAllProgress({ done: 0, total: visibleCustomers.length });
+
+    const results: CustomerBalanceRow[] = [];
+    const BATCH = 5;
+    for (let i = 0; i < visibleCustomers.length; i += BATCH) {
+      const slice = visibleCustomers.slice(i, i + BATCH);
+      const settled = await Promise.allSettled(
+        slice.map(c => fetchCustomerStatement(companyId, c.displayName, startDate, endDate)),
+      );
+      settled.forEach((s, idx) => {
+        const c = slice[idx];
+        if (s.status === 'fulfilled') {
+          results.push({
+            customerName: c.displayName,
+            customerId: s.value.customerId,
+            totalInvoiced: s.value.totals.totalInvoiced,
+            totalPaid: s.value.totals.totalPaid,
+            outstandingBalance: s.value.totals.outstandingBalance,
+          });
+        } else {
+          const msg = s.reason instanceof Error ? s.reason.message : String(s.reason);
+          results.push({
+            customerName: c.displayName, customerId: null,
+            totalInvoiced: 0, totalPaid: 0, outstandingBalance: 0,
+            error: msg,
+          });
+        }
+      });
+      setAllProgress({ done: Math.min(i + BATCH, visibleCustomers.length), total: visibleCustomers.length });
+    }
+    // Sort by outstanding balance descending — biggest debtors first.
+    results.sort((a, b) => b.outstandingBalance - a.outstandingBalance);
+    setAllBalances(results);
+    setLoadingAll(false);
+  }, [companyId, visibleCustomers, startDate, endDate]);
 
   const handleConfirmVoid = useCallback(async () => {
     if (!voidTarget) return;
@@ -660,7 +726,11 @@ const FinanceBalancesV2: React.FC = () => {
                 <FilterLabel icon={<User size={11} />} text="Customer" />
                 <select
                   value={selectedCustomer}
-                  onChange={e => { setSelectedCustomer(e.target.value); setStatement(null); }}
+                  onChange={e => {
+                    setSelectedCustomer(e.target.value);
+                    setStatement(null);
+                    setAllBalances(null);
+                  }}
                   disabled={loadingCustomers || visibleCustomers.length === 0}
                   className="mt-1 w-full px-2.5 py-1.5 text-[12.5px] bg-[#0f0f0f] border border-[#1f1f1f] rounded-md text-slate-200 focus:outline-none focus:border-indigo-500 disabled:opacity-60"
                 >
@@ -671,6 +741,11 @@ const FinanceBalancesV2: React.FC = () => {
                         ? 'No matching customers'
                         : `Select a customer (${visibleCustomers.length})`}
                   </option>
+                  {visibleCustomers.length > 0 && (
+                    <option value={ALL_SENTINEL}>
+                      ⌘ All customers — totals only ({visibleCustomers.length})
+                    </option>
+                  )}
                   {visibleCustomers.map(c => (
                     <option key={c.id} value={c.displayName}>{c.displayName}</option>
                   ))}
@@ -712,25 +787,120 @@ const FinanceBalancesV2: React.FC = () => {
             </div>
 
             <div className="mt-3 flex items-center gap-3 flex-wrap">
-              <button
-                type="button"
-                onClick={runStatement}
-                disabled={!selectedCustomer || loading}
-                className={cn(
-                  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors',
-                  selectedCustomer && !loading
-                    ? 'bg-indigo-600 text-white hover:bg-indigo-500'
-                    : 'bg-[#141414] text-slate-600 cursor-not-allowed',
-                )}
-              >
-                {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                Generate Statement
-              </button>
+              {(() => {
+                const isAll = selectedCustomer === ALL_SENTINEL;
+                const busy = loading || loadingAll;
+                const enabled = !!selectedCustomer && !busy;
+                const label = isAll
+                  ? (loadingAll
+                      ? `Loading balances… (${allProgress.done}/${allProgress.total})`
+                      : 'Load all customer balances')
+                  : 'Generate Statement';
+                return (
+                  <button
+                    type="button"
+                    onClick={isAll ? runAllBalances : runStatement}
+                    disabled={!enabled}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors',
+                      enabled
+                        ? 'bg-indigo-600 text-white hover:bg-indigo-500'
+                        : 'bg-[#141414] text-slate-600 cursor-not-allowed',
+                    )}
+                  >
+                    {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    {label}
+                  </button>
+                );
+              })()}
               {error && (
                 <span className="text-[11px] text-red-400 flex items-center gap-1">
                   <AlertCircle size={11} /> {error}
                 </span>
               )}
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
+      {/* ── All customers summary ───────────────────────────────── */}
+      {selectedCustomer === ALL_SENTINEL && allBalances && allBalances.length > 0 && (
+        <Card>
+          <CardBody>
+            <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <div className="text-[13px] font-semibold text-slate-100">
+                  All customers — outstanding balances
+                </div>
+                <div className="text-[11.5px] text-slate-500 mt-0.5">
+                  {allBalances.length} customer{allBalances.length === 1 ? '' : 's'} ·
+                  period {formatDate(startDate) || '—'} → {formatDate(endDate) || '—'} ·
+                  sorted by largest balance
+                </div>
+              </div>
+              {(() => {
+                const grand = allBalances.reduce(
+                  (acc, r) => ({
+                    inv: acc.inv + r.totalInvoiced,
+                    pay: acc.pay + r.totalPaid,
+                    bal: acc.bal + r.outstandingBalance,
+                  }),
+                  { inv: 0, pay: 0, bal: 0 },
+                );
+                return (
+                  <div className="text-right">
+                    <div className="text-[10.5px] uppercase tracking-wider text-slate-500">Grand total balance</div>
+                    <div className={cn(
+                      'text-[15px] font-mono tabular-nums font-semibold',
+                      grand.bal > 0.005 ? 'text-amber-300' : 'text-emerald-300',
+                    )}>
+                      {formatCurrency(grand.bal)}
+                    </div>
+                    <div className="text-[10.5px] text-slate-500 font-mono tabular-nums">
+                      {formatCurrency(grand.inv)} invoiced − {formatCurrency(grand.pay)} paid
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="rounded-md border border-[#1f1f1f] overflow-hidden">
+              <table className="w-full text-[12px]">
+                <thead className="bg-[#0a0a0a] text-slate-500">
+                  <tr>
+                    <th className="text-left  px-3 py-2 font-medium uppercase tracking-wider">Customer</th>
+                    <th className="text-right px-3 py-2 font-medium uppercase tracking-wider">Total invoiced</th>
+                    <th className="text-right px-3 py-2 font-medium uppercase tracking-wider">Total paid</th>
+                    <th className="text-right px-3 py-2 font-medium uppercase tracking-wider">Balance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#1a1a1a] bg-[#0f0f0f]">
+                  {allBalances.map(r => {
+                    const owes = r.outstandingBalance > 0.005;
+                    return (
+                      <tr key={r.customerName} className="hover:bg-[#161616]">
+                        <td className="px-3 py-2 text-slate-200">
+                          {r.customerName}
+                          {r.error && (
+                            <span className="ml-2 text-[10.5px] text-rose-400" title={r.error}>error</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums text-slate-300">
+                          {formatCurrency(r.totalInvoiced)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums text-emerald-300/80">
+                          {formatCurrency(r.totalPaid)}
+                        </td>
+                        <td className={cn(
+                          'px-3 py-2 text-right font-mono tabular-nums font-semibold',
+                          owes ? 'text-amber-300' : 'text-emerald-300/80',
+                        )}>
+                          {formatCurrency(r.outstandingBalance)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </CardBody>
         </Card>
