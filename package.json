@@ -1,7 +1,7 @@
 {
   "name": "xsolution-ai-business-platform",
   "private": true,
-  "version": "14.08",
+  "version": "14.09",
   "type": "module",
   "scripts": {
     "dev": "vite",

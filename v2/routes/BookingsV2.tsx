@@ -83,6 +83,30 @@ const columns: DataTableColumn<Booking>[] = [
     cell: r => (
       <span className="text-slate-500 font-mono tabular-nums text-[11px]">{fmtDate(r.eta)}</span>
     ) },
+  // Cargo cut-off is operationally the most actionable of the three
+  // cut-off dates (containers must hit the terminal by this date or the
+  // booking misses the vessel). Surface it inline so users don't have to
+  // open the detail drawer to see it. Amber-tinted when it's within 3
+  // days to flag near-term pressure.
+  { id: 'cargoCutOff', header: 'Cargo cut-off', align: 'right', sortable: true,
+    value: r => r.cargoCutOff ?? '',
+    cell: r => {
+      if (!r.cargoCutOff) return <span className="text-slate-700">—</span>;
+      const ms = new Date(r.cargoCutOff).getTime() - Date.now();
+      const days = Math.floor(ms / 86_400_000);
+      const tone =
+        days < 0 ? 'text-rose-400'           // already past
+        : days <= 3 ? 'text-amber-300'        // imminent
+        : 'text-slate-500';
+      return (
+        <span
+          className={`font-mono tabular-nums text-[11px] ${tone}`}
+          title={days < 0 ? `${-days}d ago` : `in ${days}d`}
+        >
+          {fmtDate(r.cargoCutOff)}
+        </span>
+      );
+    } },
 ];
 
 const fields: FieldDef[] = [
