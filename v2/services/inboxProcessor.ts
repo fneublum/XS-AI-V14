@@ -17,6 +17,7 @@ import { analyzeDocument } from '../../services/geminiService';
 import { markEmailAsRead } from '../../services/smailGraph';
 import { getTokenForGoogle, getGoogleAccount } from '../../services/smailAuth';
 import type { TriageItem, TriageDocType } from './inboxAutoTriage';
+import { toIsoDateString } from '../lib/isoDate';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -453,11 +454,14 @@ async function saveNewBooking(item: TriageItem, base64: string): Promise<Process
     pol,
     pod,
     equipment: pickStr(parsed, 'equipment'),
-    etd: pickStr(parsed, 'etd'),
-    eta: pickStr(parsed, 'eta'),
-    cargoCutOff: pickStr(parsed, 'cargoCutOff'),
-    vgmCutOff: pickStr(parsed, 'vgmCutOff'),
-    draftCutOff: pickStr(parsed, 'draftCutOff'),
+    // Date columns are text-typed in Supabase so we have to be the ones
+    // to normalize. toIsoDateString trims any embedded time component
+    // and converts US M/D/YYYY into YYYY-MM-DD; returns null on garbage.
+    etd: toIsoDateString(pickStr(parsed, 'etd')),
+    eta: toIsoDateString(pickStr(parsed, 'eta')),
+    cargoCutOff: toIsoDateString(pickStr(parsed, 'cargoCutOff')),
+    vgmCutOff: toIsoDateString(pickStr(parsed, 'vgmCutOff')),
+    draftCutOff: toIsoDateString(pickStr(parsed, 'draftCutOff')),
     freeTime: pickStr(parsed, 'freeTime'),
     terminal: pickStr(parsed, 'terminal'),
     originalDocument: `data:application/pdf;base64,${base64}`,

@@ -18,6 +18,7 @@ import { notificationService } from './notificationService';
 import { workflowEngine } from './workflowEngine';
 import { brainService } from './brainService';
 import type { DocType } from './documentPipelineService';
+import { toIsoDateString } from '../v2/lib/isoDate';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -313,11 +314,14 @@ class DocumentAutoCreateService {
             pol: String(data.POL || ''),
             pod: String(data.POD || ''),
             equipment: String(data.EQUIPMENT || ''),
-            etd: String(data.ETD || ''),
-            eta: String(data.ETA || ''),
-            cargoCutOff: String(data.CARGO_CUT_OFF || ''),
-            vgmCutOff: String(data.VGM_CUT_OFF || ''),
-            draftCutOff: String(data.DRAFT_CUT_OFF || ''),
+            // Date columns are text-typed; normalize so the stored
+            // value is always YYYY-MM-DD regardless of how the upstream
+            // OCR formatted it.
+            etd: toIsoDateString(data.ETD as string | null) ?? '',
+            eta: toIsoDateString(data.ETA as string | null) ?? '',
+            cargoCutOff: toIsoDateString(data.CARGO_CUT_OFF as string | null) ?? '',
+            vgmCutOff: toIsoDateString(data.VGM_CUT_OFF as string | null) ?? '',
+            draftCutOff: toIsoDateString(data.DRAFT_CUT_OFF as string | null) ?? '',
             freeTime: String(data.FREE_TIME || ''),
             terminal: String(data.TERMINAL || ''),
             originalDocument: doc.originalDocument,

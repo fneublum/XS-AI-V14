@@ -17,6 +17,7 @@ import { useBookings, Booking } from '../queries/useBookings';
 import { getSupabaseClient } from '../../services/supabase';
 import { PdfViewerModal } from '../components/PdfViewerModal';
 import { formatDate as fmtDate } from '../lib/formatDate';
+import { toIsoDateString } from '../lib/isoDate';
 import { shortName, tooltipName } from '../lib/formatName';
 import { vividStatusClass, BadgeTone } from '../lib/statusBadge';
 
@@ -237,11 +238,14 @@ function normalizeBookingJson(parsed: Record<string, unknown>): BookingDraft {
     status:        (['AVAILABLE','LOADED','DEPARTED','SHIPPED','CANCELLED'].includes(status)
                      ? status
                      : (status === 'BOOKED' || status === 'CONFIRMED' ? 'AVAILABLE' : 'AVAILABLE')),
-    etd:           str('etd'),
-    eta:           str('eta'),
-    cargoCutOff:   str('cargoCutOff'),
-    vgmCutOff:     str('vgmCutOff'),
-    draftCutOff:   str('draftCutOff'),
+    // Normalize every date field to bare YYYY-MM-DD before it lands in
+    // the draft. Gemini occasionally returns "06/04/2026 16:00:00" or
+    // "04-Jun-2026" — toIsoDateString flattens both to "2026-06-04".
+    etd:           toIsoDateString(str('etd'))         ?? '',
+    eta:           toIsoDateString(str('eta'))         ?? '',
+    cargoCutOff:   toIsoDateString(str('cargoCutOff')) ?? '',
+    vgmCutOff:     toIsoDateString(str('vgmCutOff'))   ?? '',
+    draftCutOff:   toIsoDateString(str('draftCutOff')) ?? '',
   };
 }
 
