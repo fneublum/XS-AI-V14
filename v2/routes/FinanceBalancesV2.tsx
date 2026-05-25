@@ -13,8 +13,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Ban, Calendar, CheckCircle2, Download, FileText, Loader2, Mail,
-  RefreshCw, Scale, Send, User, X as XIcon,
+  AlertCircle, Ban, Calendar, CheckCircle2, Download, EyeOff, FileText, Loader2, Mail,
+  Plus, RefreshCw, Scale, Send, User, X as XIcon,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -145,6 +145,28 @@ const FinanceBalancesV2: React.FC = () => {
   const [allBalances, setAllBalances] = useState<CustomerBalanceRow[] | null>(null);
   const [loadingAll, setLoadingAll]   = useState(false);
   const [allProgress, setAllProgress] = useState({ done: 0, total: 0 });
+
+  // Per-user hide list for the ALL summary. Persists across reloads so a
+  // customer the user dismissed (e.g. an obvious error row, or a
+  // long-tail customer they don't care about) stays out of view next
+  // time. Keyed by customerName (the same value used for QB lookup).
+  const HIDDEN_LS_KEY = 'cb-hidden-customers-v1';
+  const [hiddenCustomers, setHiddenCustomers] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(HIDDEN_LS_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw);
+      return new Set(Array.isArray(parsed) ? parsed : []);
+    } catch { return new Set(); }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(HIDDEN_LS_KEY, JSON.stringify([...hiddenCustomers])); } catch { /* quota / private mode */ }
+  }, [hiddenCustomers]);
+  const hideCustomer    = (name: string) => setHiddenCustomers(prev => new Set([...prev, name]));
+  const unhideCustomer  = (name: string) => setHiddenCustomers(prev => {
+    const next = new Set(prev); next.delete(name); return next;
+  });
+  const clearHidden     = () => setHiddenCustomers(new Set());
 
   // Void-invoice dialog state
   const [voidTarget, setVoidTarget] = useState<QBStatementInvoice | null>(null);
@@ -832,11 +854,42 @@ const FinanceBalancesV2: React.FC = () => {
                 All customers — outstanding balances
               </div>
               <div className="text-[11.5px] text-slate-500 mt-0.5">
-                {allBalances.length} customer{allBalances.length === 1 ? '' : 's'} ·
+                {allBalances.filter(r => !hiddenCustomers.has(r.customerName)).length} visible
+                {hiddenCustomers.size > 0 ? ` · ${hiddenCustomers.size} hidden` : ''} ·
                 period {formatDate(startDate) || '—'} → {formatDate(endDate) || '—'} ·
-                sorted by largest balance · grand total in the footer row
+                grand total in the footer row · click − to hide a row
               </div>
             </div>
+
+            {/* Hidden-customers chip strip — clicking + restores the row. */}
+            {hiddenCustomers.size > 0 && (
+              <div className="mb-3 p-2 rounded-md border border-[#1f1f1f] bg-[#0a0a0a]">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10.5px] uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                    <EyeOff size={11} /> Hidden ({hiddenCustomers.size})
+                  </span>
+                  {[...hiddenCustomers].sort().map(name => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => unhideCustomer(name)}
+                      title={`Restore ${name} to the table`}
+                      className="inline-flex items-center gap-1 h-6 px-2 rounded-md text-[11px] bg-[#141414] hover:bg-[#1a1a1a] text-slate-300 border border-[#1f1f1f] transition-colors"
+                    >
+                      <Plus size={11} className="text-emerald-400" />
+                      <span className="truncate max-w-[160px]">{name}</span>
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={clearHidden}
+                    className="ml-auto text-[10.5px] text-slate-500 hover:text-slate-300 underline-offset-2 hover:underline"
+                  >
+                    Show all
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="rounded-md border border-[#1f1f1f] overflow-hidden">
               <table className="w-full text-[12px]">
                 <thead className="bg-[#0a0a0a] text-slate-500">
@@ -845,39 +898,54 @@ const FinanceBalancesV2: React.FC = () => {
                     <th className="text-right px-3 py-2 font-medium uppercase tracking-wider">Total invoiced</th>
                     <th className="text-right px-3 py-2 font-medium uppercase tracking-wider">Total paid</th>
                     <th className="text-right px-3 py-2 font-medium uppercase tracking-wider">Balance</th>
+                    <th className="w-9"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1a1a1a] bg-[#0f0f0f]">
-                  {allBalances.map(r => {
-                    const owes = r.outstandingBalance > 0.005;
-                    return (
-                      <tr key={r.customerName} className="hover:bg-[#161616]">
-                        <td className="px-3 py-2 text-slate-200">
-                          {r.customerName}
-                          {r.error && (
-                            <span className="ml-2 text-[10.5px] text-rose-400" title={r.error}>error</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums text-slate-300">
-                          {formatCurrency(r.totalInvoiced)}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums text-emerald-300/80">
-                          {formatCurrency(r.totalPaid)}
-                        </td>
-                        <td className={cn(
-                          'px-3 py-2 text-right font-mono tabular-nums font-semibold',
-                          owes ? 'text-amber-300' : 'text-emerald-300/80',
-                        )}>
-                          {formatCurrency(r.outstandingBalance)}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {allBalances
+                    .filter(r => !hiddenCustomers.has(r.customerName))
+                    .map(r => {
+                      const owes = r.outstandingBalance > 0.005;
+                      return (
+                        <tr key={r.customerName} className="hover:bg-[#161616] group">
+                          <td className="px-3 py-2 text-slate-200">
+                            {r.customerName}
+                            {r.error && (
+                              <span className="ml-2 text-[10.5px] text-rose-400" title={r.error}>error</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums text-slate-300">
+                            {formatCurrency(r.totalInvoiced)}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums text-emerald-300/80">
+                            {formatCurrency(r.totalPaid)}
+                          </td>
+                          <td className={cn(
+                            'px-3 py-2 text-right font-mono tabular-nums font-semibold',
+                            owes ? 'text-amber-300' : 'text-emerald-300/80',
+                          )}>
+                            {formatCurrency(r.outstandingBalance)}
+                          </td>
+                          <td className="px-1 py-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => hideCustomer(r.customerName)}
+                              title={`Hide ${r.customerName} from this view (excluded from total)`}
+                              className="inline-flex items-center justify-center w-6 h-6 rounded text-slate-600 hover:text-rose-300 hover:bg-rose-500/10 transition-colors opacity-40 group-hover:opacity-100"
+                            >
+                              <span className="text-[14px] leading-none font-mono">−</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
-                {/* Grand total — sticky footer summing every visible row. */}
+                {/* Grand total — totals only the rows still visible, so
+                    hiding rows immediately drops them from the bottom. */}
                 <tfoot className="bg-[#0a0a0a] border-t-2 border-[#2a2a2a]">
                   {(() => {
-                    const grand = allBalances.reduce(
+                    const visible = allBalances.filter(r => !hiddenCustomers.has(r.customerName));
+                    const grand = visible.reduce(
                       (acc, r) => ({
                         inv: acc.inv + r.totalInvoiced,
                         pay: acc.pay + r.totalPaid,
@@ -889,7 +957,12 @@ const FinanceBalancesV2: React.FC = () => {
                     return (
                       <tr>
                         <td className="px-3 py-2.5 text-slate-100 font-semibold uppercase text-[11px] tracking-wider">
-                          Total · {allBalances.length} customer{allBalances.length === 1 ? '' : 's'}
+                          Total · {visible.length} customer{visible.length === 1 ? '' : 's'}
+                          {hiddenCustomers.size > 0 && (
+                            <span className="ml-2 text-slate-500 font-normal normal-case tracking-normal">
+                              ({hiddenCustomers.size} hidden)
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-100 font-semibold">
                           {formatCurrency(grand.inv)}
@@ -903,6 +976,7 @@ const FinanceBalancesV2: React.FC = () => {
                         )}>
                           {formatCurrency(grand.bal)}
                         </td>
+                        <td></td>
                       </tr>
                     );
                   })()}
