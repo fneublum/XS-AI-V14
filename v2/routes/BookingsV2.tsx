@@ -73,22 +73,11 @@ const columns: DataTableColumn<Booking>[] = [
   { id: 'transit', header: 'Transit', align: 'right', mono: true, sortable: true,
     value: r => r.transitDays ?? 0,
     cell: r => r.transitDays !== null ? `${r.transitDays} d` : '—' },
-  { id: 'etd', header: 'ETD', align: 'right', sortable: true,
-    value: r => r.etd ?? '',
-    cell: r => (
-      <span className="text-slate-500 font-mono tabular-nums text-[11px]">{fmtDate(r.etd)}</span>
-    ) },
-  { id: 'eta', header: 'ETA', align: 'right', sortable: true,
-    value: r => r.eta ?? '',
-    cell: r => (
-      <span className="text-slate-500 font-mono tabular-nums text-[11px]">{fmtDate(r.eta)}</span>
-    ) },
-  // Cargo cut-off is operationally the most actionable of the three
-  // cut-off dates (containers must hit the terminal by this date or the
-  // booking misses the vessel). Surface it inline so users don't have to
-  // open the detail drawer to see it. Amber-tinted when it's within 3
-  // days to flag near-term pressure.
-  { id: 'cargoCutOff', header: 'Cargo cut-off', align: 'right', sortable: true,
+  // Cut-off is the operational deadline (containers must hit the
+  // terminal by this date or the booking misses the vessel) — it
+  // chronologically precedes ETD, so place it to the left of ETD/ETA.
+  // Amber-tinted when ≤ 3 days out, rose when past due.
+  { id: 'cargoCutOff', header: 'Cut off', align: 'right', sortable: true,
     value: r => r.cargoCutOff ?? '',
     cell: r => {
       if (!r.cargoCutOff) return <span className="text-slate-700">—</span>;
@@ -107,6 +96,16 @@ const columns: DataTableColumn<Booking>[] = [
         </span>
       );
     } },
+  { id: 'etd', header: 'ETD', align: 'right', sortable: true,
+    value: r => r.etd ?? '',
+    cell: r => (
+      <span className="text-slate-500 font-mono tabular-nums text-[11px]">{fmtDate(r.etd)}</span>
+    ) },
+  { id: 'eta', header: 'ETA', align: 'right', sortable: true,
+    value: r => r.eta ?? '',
+    cell: r => (
+      <span className="text-slate-500 font-mono tabular-nums text-[11px]">{fmtDate(r.eta)}</span>
+    ) },
 ];
 
 const fields: FieldDef[] = [
