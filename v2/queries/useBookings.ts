@@ -33,6 +33,11 @@ export interface Booking {
   /** Transit time in days, derived from `etd` → `eta` when both are
    *  parseable dates. `null` when either end is missing or unparseable. */
   transitDays: number | null;
+  /** Cargo terminal cut-off — when containers must hit the terminal or
+   *  the booking misses the vessel. Free-text in the DB (mixes bare
+   *  dates and ISO timestamps), so rendering should `slice(0,10)` or
+   *  pass through fmtDate(). */
+  cargoCutOff: string | null;
 }
 
 interface Raw {
@@ -50,6 +55,7 @@ interface Raw {
   createdAt: string | null;
   agentName: string | null;
   freeTime: string | null;
+  cargoCutOff: string | null;
 }
 
 /**
@@ -126,7 +132,7 @@ export function useBookings(search?: string, agentName?: string | string[]) {
       const supabase = getSupabaseClient();
       let q = scopeByCompany(
         supabase.from('bookings')
-          .select('id, bookingNumber, customer, vesselVoyage, pol, pod, equipment, etd, eta, status, salesOrderId, createdAt, agentName, "freeTime"')
+          .select('id, bookingNumber, customer, vesselVoyage, pol, pod, equipment, etd, eta, status, salesOrderId, createdAt, agentName, "freeTime", "cargoCutOff"')
           .order('createdAt', { ascending: false, nullsFirst: false })
           .limit(hasAgent ? 1000 : 200),  // widen the net when we'll filter client-side
         currentCompanyId,
@@ -157,6 +163,7 @@ export function useBookings(search?: string, agentName?: string | string[]) {
         agentName: r.agentName ?? null,
         freeTime: r.freeTime ?? null,
         transitDays: transitDaysBetween(r.etd, r.eta),
+        cargoCutOff: r.cargoCutOff ?? null,
       }));
     },
   );
