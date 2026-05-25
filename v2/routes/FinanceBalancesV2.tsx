@@ -827,41 +827,15 @@ const FinanceBalancesV2: React.FC = () => {
       {selectedCustomer === ALL_SENTINEL && allBalances && allBalances.length > 0 && (
         <Card>
           <CardBody>
-            <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
-              <div>
-                <div className="text-[13px] font-semibold text-slate-100">
-                  All customers — outstanding balances
-                </div>
-                <div className="text-[11.5px] text-slate-500 mt-0.5">
-                  {allBalances.length} customer{allBalances.length === 1 ? '' : 's'} ·
-                  period {formatDate(startDate) || '—'} → {formatDate(endDate) || '—'} ·
-                  sorted by largest balance
-                </div>
+            <div className="mb-3">
+              <div className="text-[13px] font-semibold text-slate-100">
+                All customers — outstanding balances
               </div>
-              {(() => {
-                const grand = allBalances.reduce(
-                  (acc, r) => ({
-                    inv: acc.inv + r.totalInvoiced,
-                    pay: acc.pay + r.totalPaid,
-                    bal: acc.bal + r.outstandingBalance,
-                  }),
-                  { inv: 0, pay: 0, bal: 0 },
-                );
-                return (
-                  <div className="text-right">
-                    <div className="text-[10.5px] uppercase tracking-wider text-slate-500">Grand total balance</div>
-                    <div className={cn(
-                      'text-[15px] font-mono tabular-nums font-semibold',
-                      grand.bal > 0.005 ? 'text-amber-300' : 'text-emerald-300',
-                    )}>
-                      {formatCurrency(grand.bal)}
-                    </div>
-                    <div className="text-[10.5px] text-slate-500 font-mono tabular-nums">
-                      {formatCurrency(grand.inv)} invoiced − {formatCurrency(grand.pay)} paid
-                    </div>
-                  </div>
-                );
-              })()}
+              <div className="text-[11.5px] text-slate-500 mt-0.5">
+                {allBalances.length} customer{allBalances.length === 1 ? '' : 's'} ·
+                period {formatDate(startDate) || '—'} → {formatDate(endDate) || '—'} ·
+                sorted by largest balance · grand total in the footer row
+              </div>
             </div>
             <div className="rounded-md border border-[#1f1f1f] overflow-hidden">
               <table className="w-full text-[12px]">
@@ -900,6 +874,39 @@ const FinanceBalancesV2: React.FC = () => {
                     );
                   })}
                 </tbody>
+                {/* Grand total — sticky footer summing every visible row. */}
+                <tfoot className="bg-[#0a0a0a] border-t-2 border-[#2a2a2a]">
+                  {(() => {
+                    const grand = allBalances.reduce(
+                      (acc, r) => ({
+                        inv: acc.inv + r.totalInvoiced,
+                        pay: acc.pay + r.totalPaid,
+                        bal: acc.bal + r.outstandingBalance,
+                      }),
+                      { inv: 0, pay: 0, bal: 0 },
+                    );
+                    const owes = grand.bal > 0.005;
+                    return (
+                      <tr>
+                        <td className="px-3 py-2.5 text-slate-100 font-semibold uppercase text-[11px] tracking-wider">
+                          Total · {allBalances.length} customer{allBalances.length === 1 ? '' : 's'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-100 font-semibold">
+                          {formatCurrency(grand.inv)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-emerald-300 font-semibold">
+                          {formatCurrency(grand.pay)}
+                        </td>
+                        <td className={cn(
+                          'px-3 py-2.5 text-right font-mono tabular-nums font-bold text-[13px]',
+                          owes ? 'text-amber-300' : 'text-emerald-300',
+                        )}>
+                          {formatCurrency(grand.bal)}
+                        </td>
+                      </tr>
+                    );
+                  })()}
+                </tfoot>
               </table>
             </div>
           </CardBody>
@@ -1075,7 +1082,9 @@ const FinanceBalancesV2: React.FC = () => {
       )}
 
       {/* Pre-generate guidance */}
-      {!hasStatement && connected !== false && (
+      {/* Per-customer empty state — hide it when the ALL summary is in
+          view, otherwise the page shows two competing placeholders. */}
+      {!hasStatement && connected !== false && !(selectedCustomer === ALL_SENTINEL && allBalances && allBalances.length > 0) && (
         <Card>
           <EmptyState
             title="Pick a customer and range"
