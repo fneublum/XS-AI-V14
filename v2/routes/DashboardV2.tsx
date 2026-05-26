@@ -296,7 +296,6 @@ export default function DashboardV2() {
   function mention(agent: string) {
     const at = '@' + agent + ' ';
     setInput(prev => prev.startsWith(at) ? prev : at + prev);
-    // Focus the textarea after the click.
     setTimeout(() => {
       const ta = document.getElementById('chat-composer') as HTMLTextAreaElement | null;
       ta?.focus();
