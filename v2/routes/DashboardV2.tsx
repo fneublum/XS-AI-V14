@@ -45,6 +45,7 @@ interface ChatMessage {
 
 interface Persona {
   display: string;
+  tag?: string;
   role: string;
   voice: string;
 }
@@ -348,7 +349,7 @@ export default function DashboardV2() {
                   </span>
                   <span className="min-w-0">
                     <div className={cn('text-sm font-medium', AGENT_TONE[id])}>{p?.display ?? id}</div>
-                    <div className="truncate text-[11px] text-slate-500">{p?.role ?? ''}</div>
+                    <div className="truncate text-[11px] text-slate-500">{p?.tag ?? ''}</div>
                   </span>
                 </button>
               );
