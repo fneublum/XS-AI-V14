@@ -15,6 +15,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity, Sliders, Wrench, Pencil, ScrollText, Check, X, Trash2, RefreshCw,
+  ChevronDown, ChevronRight, Link as LinkIcon,
 } from 'lucide-react';
 import {
   Card, CardHeader, CardTitle, CardBody,
@@ -114,10 +115,79 @@ function fmtPayload(p: Record<string, any> = {}): string {
   if (p.amount_usd !== undefined) parts.push(`$${p.amount_usd}`);
   if (p.customer_age_days !== undefined) parts.push(`age=${p.customer_age_days}d`);
   for (const [k, v] of Object.entries(p)) {
-    if (['customer_id', 'amount_usd', 'customer_age_days'].includes(k)) continue;
+    if (['customer_id', 'amount_usd', 'customer_age_days', 'summary', 'reason', 'draft'].includes(k)) continue;
     parts.push(`${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`);
   }
   return parts.join(' · ');
+}
+
+function fmtMoney(n: any): string {
+  if (typeof n !== 'number') return String(n ?? '');
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+}
+
+// ── Human renderers ──────────────────────────────────────────────────
+// Each capability gets a template that builds a plain-English one-liner
+// from the payload. If the proposing agent supplied `payload.summary`,
+// that wins — agents can write better context than a static template.
+
+type SummaryFn = (a: Action) => string;
+const SUMMARY_TEMPLATES: Record<string, SummaryFn> = {
+  'ar.send_followup': a => {
+    const ref = a.v14_refs.invoice_id ?? a.payload.invoice_id;
+    const inv = ref ? ` on invoice ${ref}` : '';
+    return `Send a payment follow-up to ${a.payload.customer_id} for ${fmtMoney(a.payload.amount_usd)}${inv}.`;
+  },
+  'ar.send_statement': a =>
+    `Send a current AR statement to ${a.payload.customer_id}.`,
+  'shipment.notify_eta_change': a =>
+    `Notify ${a.payload.customer_id} that the ETA shifted from ${a.payload.old_eta} to ${a.payload.new_eta}.`,
+  'rfq.draft_proforma': a =>
+    `Draft a proforma for ${a.payload.customer_id} — ${a.payload.product ?? ''} ${fmtMoney(a.payload.amount_usd)}.`,
+  'rfq.send_proforma': a =>
+    `Send a proforma to ${a.payload.customer_id} — ${a.payload.product ?? ''} ${fmtMoney(a.payload.amount_usd)}.`,
+  'email.send_reply': a =>
+    `Reply to an email${a.payload.subject ? ` (subject: "${a.payload.subject}")` : ''}.`,
+  'finance.move_money': a =>
+    `Move ${fmtMoney(a.payload.amount_usd)} to ${a.payload.destination ?? '?'}.`,
+};
+
+function humanSummary(a: Action): string {
+  if (typeof a.payload.summary === 'string' && a.payload.summary.trim()) return a.payload.summary;
+  const t = SUMMARY_TEMPLATES[a.capability_id];
+  return t ? t(a) : `${a.agent_id} proposed ${a.capability_id}.`;
+}
+
+function humanReason(a: Action): string | null {
+  if (typeof a.payload.reason === 'string' && a.payload.reason.trim()) return a.payload.reason;
+  return null;
+}
+
+interface Draft { subject?: string; body: string }
+function humanDraft(a: Action): Draft | null {
+  const d = a.payload.draft;
+  if (!d) return null;
+  if (typeof d === 'string') return { body: d };
+  if (typeof d === 'object' && d && typeof d.body === 'string') return d as Draft;
+  return null;
+}
+
+// Chips for V14 cross-references — what entities this action touches.
+function refChips(a: Action): { label: string; value: string }[] {
+  const out: { label: string; value: string }[] = [];
+  const friendly: Record<string, string> = {
+    customer_id: 'Customer',
+    invoice_id:  'Invoice',
+    booking_id:  'Booking',
+    bl_id:       'BL',
+    rfq_id:      'RFQ',
+    so_id:       'SO',
+    po_id:       'PO',
+  };
+  for (const [k, v] of Object.entries(a.v14_refs ?? {})) {
+    out.push({ label: friendly[k] ?? k, value: String(v) });
+  }
+  return out;
 }
 
 type BadgeVariant = 'neutral' | 'success' | 'info' | 'warning' | 'danger';
@@ -235,32 +305,17 @@ function StreamView() {
 
       <Card>
         <CardHeader><CardTitle>Awaiting your decision ({awaiting.length})</CardTitle></CardHeader>
-        <CardBody className="space-y-2">
+        <CardBody className="space-y-3">
           {awaiting.length === 0 ? (
             <EmptyState title="No pending decisions" description="The agents are running clean. ☕" />
           ) : awaiting.map(a => (
-            <div key={a.id} className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <AgentChip id={a.agent_id} />
-                  <TierBadge tier={a.tier_at_propose} />
-                  <code className="text-sm text-slate-200">{a.capability_id}</code>
-                  <span className="text-xs text-slate-500">{fmtAgo(a.proposed_at)}</span>
-                </div>
-                <div className="mt-1 font-mono text-xs text-slate-400">{fmtPayload(a.payload)}</div>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="primary" size="sm" onClick={() => decide(a.id, 'APPROVED')}>
-                  <Check size={14} className="mr-1" /> Approve
-                </Button>
-                <Button variant="danger" size="sm" onClick={() => decide(a.id, 'DENIED')}>
-                  <X size={14} className="mr-1" /> Deny
-                </Button>
-                <Button variant="ghost" onClick={() => cancel(a.id)} title="Cancel — drop from queue">
-                  ⌫
-                </Button>
-              </div>
-            </div>
+            <DecisionCard
+              key={a.id}
+              action={a}
+              onApprove={() => decide(a.id, 'APPROVED')}
+              onDeny={() => decide(a.id, 'DENIED')}
+              onCancel={() => cancel(a.id)}
+            />
           ))}
         </CardBody>
       </Card>
@@ -273,18 +328,17 @@ function StreamView() {
           ) : (
             <div className="space-y-1.5">
               {recent.slice(0, 60).map(a => (
-                <div key={a.id} className="flex items-center gap-3 rounded border border-slate-800 px-3 py-2 text-sm">
+                <div key={a.id} className="flex flex-wrap items-center gap-3 rounded border border-slate-800 px-3 py-2 text-sm">
                   <AgentChip id={a.agent_id} />
-                  <TierBadge tier={a.tier_at_propose} />
-                  <code className="text-xs text-slate-300">{a.capability_id}</code>
                   <Badge variant={
                     a.status === 'EXECUTED' || a.status === 'AUTO_APPROVED' || a.status === 'APPROVED' ? 'success' :
                     a.status === 'DENIED' || a.status === 'EXPIRED' || a.status === 'FAILED' ? 'neutral' : 'info'
                   }>{a.status}</Badge>
-                  <span className="ml-auto font-mono text-xs text-slate-500">{fmtPayload(a.payload)}</span>
+                  <span className="min-w-0 flex-1 truncate text-slate-200">{humanSummary(a)}</span>
+                  <code className="text-[10px] text-slate-500">{a.capability_id}</code>
                   <span className="text-xs text-slate-500">{fmtAgo(a.proposed_at)}</span>
                   {(a.status === 'APPROVED' || a.status === 'AUTO_APPROVED') && (
-                    <Button variant="ghost" onClick={() => markExecuted(a.id)} title="Mark executed (I did it myself)">
+                    <Button variant="ghost" size="sm" onClick={() => markExecuted(a.id)} title="Mark executed (I did it myself)">
                       ✓ executed
                     </Button>
                   )}
@@ -294,6 +348,118 @@ function StreamView() {
           )}
         </CardBody>
       </Card>
+    </div>
+  );
+}
+
+// ─── DecisionCard ──────────────────────────────────────────────────────
+// Human-readable card for a single pending action. Top line is a one-
+// sentence summary the operator can decide on without reading the
+// payload. Optional reason paragraph and draft preview expand below.
+
+function DecisionCard({
+  action, onApprove, onDeny, onCancel,
+}: {
+  action: Action;
+  onApprove: () => void;
+  onDeny: () => void;
+  onCancel: () => void;
+}) {
+  const a = action;
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [rawOpen, setRawOpen] = useState(false);
+
+  const summary = humanSummary(a);
+  const reason = humanReason(a);
+  const draft = humanDraft(a);
+  const refs = refChips(a);
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      {/* Header row */}
+      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <AgentChip id={a.agent_id} />
+        <TierBadge tier={a.tier_at_propose} />
+        <span>·</span>
+        <span>{fmtAgo(a.proposed_at)}</span>
+        <code className="ml-auto text-[10px] text-slate-600">{a.capability_id}</code>
+      </div>
+
+      {/* Plain-English summary — the headline */}
+      <div className="mt-2 text-[15px] leading-snug text-slate-100">
+        {summary}
+      </div>
+
+      {/* Why */}
+      {reason && (
+        <div className="mt-2 flex gap-2 text-sm text-slate-300">
+          <span className="shrink-0 font-medium text-slate-500">Why</span>
+          <span>{reason}</span>
+        </div>
+      )}
+
+      {/* Draft preview (collapsible) */}
+      {draft && (
+        <div className="mt-3">
+          <button
+            onClick={() => setDraftOpen(o => !o)}
+            className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200"
+          >
+            {draftOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {draftOpen ? 'Hide draft' : 'Show draft preview'}
+          </button>
+          {draftOpen && (
+            <div className="mt-2 rounded border border-slate-800 bg-slate-950/60 p-3 text-sm">
+              {draft.subject && (
+                <div className="mb-2 text-slate-300">
+                  <span className="text-xs uppercase tracking-wide text-slate-500">Subject:</span> {draft.subject}
+                </div>
+              )}
+              <div className="whitespace-pre-wrap text-slate-200">{draft.body}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* V14 reference chips */}
+      {refs.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {refs.map(r => (
+            <span key={r.label + r.value} className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-300">
+              <LinkIcon size={10} className="text-slate-500" />
+              <span className="text-slate-500">{r.label}</span>
+              <span className="font-medium text-slate-200">{r.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Raw payload (collapsible) */}
+      <div className="mt-3">
+        <button
+          onClick={() => setRawOpen(o => !o)}
+          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300"
+        >
+          {rawOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          raw payload
+        </button>
+        {rawOpen && (
+          <pre className="mt-2 overflow-x-auto rounded border border-slate-800 bg-slate-950/60 p-2 text-[11px] text-slate-400">{JSON.stringify(a.payload, null, 2)}</pre>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button variant="primary" size="sm" onClick={onApprove}>
+          <Check size={14} className="mr-1" /> Approve
+        </Button>
+        <Button variant="danger" size="sm" onClick={onDeny}>
+          <X size={14} className="mr-1" /> Deny
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onCancel} title="Cancel — drop from queue">
+          <Trash2 size={14} className="mr-1" /> Cancel
+        </Button>
+      </div>
     </div>
   );
 }
