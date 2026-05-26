@@ -573,9 +573,10 @@ const TradingFollowUpV2: React.FC = () => {
       const productNames = Array.from(new Set(
         orderItems(so).map(resolveCatalogName).filter(Boolean),
       )).join(', ') || '—';
-      const isPending = (so.status ?? '').trim().toUpperCase() === 'PENDING';
+      const PRE_BOOKING = new Set(['PENDING', 'APPROVED']);
+      const noBookingYet = PRE_BOOKING.has((so.status ?? '').trim().toUpperCase());
       let etaCell = '—';
-      if (!isPending) {
+      if (!noBookingYet) {
         const { eta, source } = etaForSalesOrder(so);
         etaCell = eta ? `${formatDate(eta)}${source === 'estimated' ? ' (est)' : ''}` : '—';
       }
@@ -1010,11 +1011,15 @@ const TradingFollowUpV2: React.FC = () => {
                       </td>
                       <td className="px-3 py-1.5 text-[11px] text-slate-400 whitespace-nowrap">{formatPod(so.pod)}</td>
                       {(() => {
-                        // PENDING means the user hasn't picked a booking yet —
-                        // showing an estimated ETA here just clutters the view
-                        // with a number the customer shouldn't rely on.
-                        const isPending = (so.status ?? '').trim().toUpperCase() === 'PENDING';
-                        if (isPending) {
+                        // PENDING + APPROVED both mean the user hasn't picked
+                        // a booking yet — showing an estimated ETA here just
+                        // clutters the view with a number the customer
+                        // shouldn't rely on. Only show ETA once status has
+                        // advanced to BOOKED (or beyond) where a booking is
+                        // actually linked.
+                        const PRE_BOOKING = new Set(['PENDING', 'APPROVED']);
+                        const noBookingYet = PRE_BOOKING.has((so.status ?? '').trim().toUpperCase());
+                        if (noBookingYet) {
                           return (
                             <td className="px-3 py-1.5 text-[11px] text-slate-600 italic" title="No booking selected yet">
                               —
