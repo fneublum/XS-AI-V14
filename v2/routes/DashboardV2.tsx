@@ -432,10 +432,6 @@ export default function DashboardV2() {
                 </button>
               );
             })}
-            <div className="px-1 pt-2 text-[10px] text-slate-600">
-              Click a teammate to @-mention them.
-            </div>
-
             {/* Mode buttons sit below the roster. */}
             <div className="mt-4 mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Views</div>
             <button
