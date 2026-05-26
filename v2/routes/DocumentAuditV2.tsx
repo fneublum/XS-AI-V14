@@ -249,6 +249,20 @@ const DocumentAuditV2: React.FC = () => {
       onError: (err) => toast.push({ kind: 'error', title: 'Save failed', description: err.message }),
     });
 
+  /** Manually mark the audit as resolved. Use after verifying everything
+   *  visually or after the carrier has confirmed the fix outside the system. */
+  const onMarkResolved = (row: BlAudit) =>
+    patch.mutate(
+      {
+        bl_number: row.bl_number,
+        patch: { status: 'resolved', resolved_at: new Date().toISOString() } as Partial<BlAudit>,
+      },
+      {
+        onSuccess: () => toast.push({ kind: 'success', title: 'Marked resolved', description: row.bl_number }),
+        onError: (err) => toast.push({ kind: 'error', title: 'Resolve failed', description: err.message }),
+      },
+    );
+
   /**
    * Approve an ERP-suggested CI/PL correction. Appends to
    * bl_audits.applied_corrections (JSONB array) as audit trail. A
@@ -484,6 +498,7 @@ const DocumentAuditV2: React.FC = () => {
         onClose={() => setOpenBl(null)}
         onAuthorize={onAuthorize}
         onDismiss={onDismiss}
+        onMarkResolved={onMarkResolved}
         onSaveBody={saveEditedBody}
         onApplyCorrection={onApplyCorrection}
         busy={patch.isPending}
@@ -586,13 +601,51 @@ Please find our findings on the draft BL below. Two fields need correcting befor
 Thanks.`;
 
 /**
- * If CI or PL has a missing field that's filled on the other doc, suggest
- * cross-filling. Returns null when no auto-suggestion is possible (e.g. a
- * BL-side mismatch — that requires emailing the carrier instead).
+ * Decide which doc (CI or PL) to fix to resolve this issue.
+ *
+ *  - One side missing, other filled  → fill the missing side from the filled one.
+ *  - All three present, majority agrees (2 of 3) → fix the outlier; if the
+ *    outlier is the BL, returns null (must email the carrier instead).
+ *  - Otherwise null (no safe in-house auto-fix; email carrier).
  */
 function suggestionFor(iss: BlAuditIssue): { doc: 'CI' | 'PL'; value: string } | null {
+  // Case A — one side blank, the other filled (existing logic).
   if (!iss.ci && iss.pl) return { doc: 'CI', value: iss.pl };
   if (!iss.pl && iss.ci) return { doc: 'PL', value: iss.ci };
+
+  // Case B — all three values present; look for a 2-of-3 majority.
+  if (iss.ci && iss.pl && iss.bl) {
+    // Compare values: try numeric first (fuzzy ±0.5% or ±2 units to absorb
+    // rounding/unit drift on weights), fall back to normalized string match.
+    const num = (s: string) => {
+      const n = Number(String(s).replace(/[^\d.\-]/g, ''));
+      return Number.isFinite(n) && s.trim() !== '' ? n : null;
+    };
+    const nci = num(iss.ci), npl = num(iss.pl), nbl = num(iss.bl);
+    const numMatch = (a: number, b: number) => {
+      const diff = Math.abs(a - b);
+      const rel = Math.max(Math.abs(a), 1) > 1 ? diff / Math.abs(a) : diff;
+      return rel < 0.005 || diff < 2;
+    };
+    const norm = (v: string) => v.toLowerCase().replace(/\s+/g, ' ').trim();
+    const eq = (a: string, b: string) => {
+      if (nci !== null && nbl !== null && npl !== null) return numMatch(num(a)!, num(b)!);
+      return norm(a) === norm(b);
+    };
+
+    const ciBl = eq(iss.ci, iss.bl);
+    const plBl = eq(iss.pl, iss.bl);
+    const ciPl = eq(iss.ci, iss.pl);
+
+    // CI matches BL → PL is the outlier (we control PL).
+    if (ciBl && !plBl) return { doc: 'PL', value: iss.ci };
+    // PL matches BL → CI is the outlier (we control CI).
+    if (plBl && !ciBl) return { doc: 'CI', value: iss.pl };
+    // CI matches PL → BL is the outlier; only the carrier can fix the BL.
+    // Return null so the UI surfaces the "email carrier" path.
+    if (ciPl && !ciBl) return null;
+  }
+
   return null;
 }
 
@@ -600,15 +653,23 @@ function isApplied(applied: AppliedCorrection[], field: string, doc: 'CI' | 'PL'
   return applied.some(a => a.field === field && a.doc === doc);
 }
 
+/** True when at least one issue in this audit can only be fixed by the
+ *  carrier (no internal CI/PL suggestion possible). When false, the
+ *  outbound email composer is hidden. */
+function hasCarrierActionable(issues: BlAuditIssue[]): boolean {
+  return issues.some(i => i.severity === 'red' && !suggestionFor(i));
+}
+
 const BlAuditModal: React.FC<{
   row: BlAudit | null;
   onClose: () => void;
   onAuthorize: (row: BlAudit, opts?: { editBody?: string }) => void;
   onDismiss: (row: BlAudit) => void;
+  onMarkResolved: (row: BlAudit) => void;
   onSaveBody: (row: BlAudit, body: string) => void;
   onApplyCorrection: (row: BlAudit, correction: AppliedCorrection) => void;
   busy: boolean;
-}> = ({ row, onClose, onAuthorize, onDismiss, onSaveBody, onApplyCorrection, busy }) => {
+}> = ({ row, onClose, onAuthorize, onDismiss, onMarkResolved, onSaveBody, onApplyCorrection, busy }) => {
   const [body, setBody] = useState('');
   const [dirty, setDirty] = useState(false);
 
@@ -623,6 +684,11 @@ const BlAuditModal: React.FC<{
   const canAct = row.status === 'red' && !row.correction_authorized && !row.correction_dismissed;
   const carrier = row.correction_carrier ?? 'carrier';
   const applied = row.applied_corrections ?? [];
+  const needsCarrierEmail = canAct && hasCarrierActionable(row.issues_json);
+  // Show a "Mark resolved" action on any non-green/non-resolved row — useful
+  // for broken_linkage rows the user has verified out-of-band, and for red
+  // rows once all internal corrections have been applied.
+  const canResolve = row.status !== 'green' && row.status !== 'resolved';
 
   return (
     <Modal
@@ -721,7 +787,7 @@ const BlAuditModal: React.FC<{
         </Section>
 
         {/* Inline email draft — only when there are BL-side issues that need carrier action */}
-        {row.status === 'red' && (
+        {row.status === 'red' && hasCarrierActionable(row.issues_json) && (
           <Section title="Email to BL issuer">
             <div className="space-y-2">
               <div className="text-[11.5px] text-slate-500">
@@ -767,15 +833,29 @@ const BlAuditModal: React.FC<{
           Close
         </Button>
         {canAct && (
+          <Button
+            size="sm" variant="secondary"
+            onClick={() => onDismiss(row)}
+            disabled={busy}
+            className="bg-transparent border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+            title="Accept the BL as-is. No carrier email; no source-doc updates."
+          >
+            <XIcon size={13} className="mr-1.5" /> Dismiss
+          </Button>
+        )}
+        {canResolve && (
+          <Button
+            size="sm" variant="secondary"
+            onClick={() => onMarkResolved(row)}
+            disabled={busy}
+            className="bg-transparent border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10"
+            title="Mark this audit as resolved — done verifying / fixing."
+          >
+            <CheckCircle2 size={13} className="mr-1.5" /> Mark resolved
+          </Button>
+        )}
+        {needsCarrierEmail && (
           <>
-            <Button
-              size="sm" variant="secondary"
-              onClick={() => onDismiss(row)}
-              disabled={busy}
-              className="bg-transparent border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
-            >
-              <XIcon size={13} className="mr-1.5" /> Dismiss
-            </Button>
             {dirty && (
               <Button
                 size="sm" variant="secondary"
@@ -851,28 +931,19 @@ const IssueRow: React.FC<{
             <CheckCircle2 size={10} className="mr-1 inline" />Applied to {suggestion?.doc}
           </Badge>
         ) : suggestion ? (
-          <div className="flex items-center gap-1 justify-end">
-            <Button
-              size="sm" variant="secondary"
-              onClick={onApprove}
-              disabled={busy}
-              className="bg-emerald-600/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/25 px-2 py-0.5 text-[11px]"
-              title={`Approve: set ${iss.field} = ${suggestion.value} on ${suggestion.doc}`}
-            >
-              ✓ Approve
-            </Button>
-            <Button
-              size="sm" variant="secondary"
-              onClick={() => { /* reject = no-op for now; suggestion just stays unapplied */ }}
-              disabled={busy}
-              className="bg-transparent border border-[#1f1f1f] text-slate-500 hover:bg-[#161616] px-2 py-0.5 text-[11px]"
-              title="Reject — leave field as-is"
-            >
-              ✗
-            </Button>
-          </div>
+          <Button
+            size="sm" variant="secondary"
+            onClick={onApprove}
+            disabled={busy}
+            className="bg-emerald-600/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/25 px-2 py-0.5 text-[11px]"
+            title={`Approve: set ${iss.field} = ${suggestion.value} on ${suggestion.doc}`}
+          >
+            ✓ Apply to {suggestion.doc}
+          </Button>
         ) : (
-          <span className="text-[10.5px] text-slate-600 italic">email carrier</span>
+          <span className="text-[10.5px] text-slate-600 italic" title="No internal fix possible — issue is on the carrier's BL">
+            email carrier
+          </span>
         )}
       </td>
     </tr>
