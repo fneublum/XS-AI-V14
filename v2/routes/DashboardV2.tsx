@@ -186,44 +186,45 @@ export default function DashboardV2() {
     el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  async function send() {
-    const content = input.trim();
-    if ((!content && attachments.length === 0) || sending) return;
+  // sendText is the single send path; both the composer Send button and
+  // the example-prompt cards call into it. Reads its arguments instead
+  // of React state so callers don't need to setInput first and wait for
+  // the re-render.
+  async function sendText(content: string, atts: Attachment[] = []) {
+    const trimmed = content.trim();
+    if ((!trimmed && atts.length === 0) || sending) return;
     setSending(true);
-    const sentContent = content;
-    const sentAttachments = attachments;
     setInput('');
     setAttachments([]);
-    // Optimistically append the user message so it shows up immediately.
     const optimistic: ChatMessage = {
       id: 'opt-' + Date.now(),
       conversation_id: 'default',
       role: 'user',
       author: 'felipe',
       to_agent: null,
-      content: sentContent || `(sent ${sentAttachments.length} attachment${sentAttachments.length === 1 ? '' : 's'})`,
-      meta: sentAttachments.length > 0 ? { attachments: sentAttachments } : {},
+      content: trimmed || `(sent ${atts.length} attachment${atts.length === 1 ? '' : 's'})`,
+      meta: atts.length > 0 ? { attachments: atts } : {},
       created_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
     };
     setMessages(m => [...m, optimistic]);
     try {
       await api('POST', '/chat/message', {
         conversation_id: 'default',
-        content: sentContent,
-        attachments: sentAttachments,
+        content: trimmed,
+        attachments: atts,
       });
       await refresh();
     } catch (err: any) {
       toast.push({ kind: 'error', title: err.message ?? 'send failed' });
-      // Roll back the optimistic message; refresh will re-pull truth.
       setMessages(m => m.filter(x => x.id !== optimistic.id));
-      // Restore the composer so the user doesn't lose work.
-      setInput(sentContent);
-      setAttachments(sentAttachments);
+      setInput(trimmed);
+      setAttachments(atts);
     } finally {
       setSending(false);
     }
   }
+
+  function send() { return sendText(input, attachments); }
 
   // ── Attachment intake ────────────────────────────────────────────────
 
@@ -397,7 +398,7 @@ export default function DashboardV2() {
           {/* Messages */}
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
             {messages.length === 0 && connected !== false && (
-              <EmptyChatHint personas={personas} onMention={mention} />
+              <EmptyChatHint personas={personas} onSend={sendText} />
             )}
             {connected === false && (
               <div className="rounded border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-300">
@@ -577,7 +578,7 @@ function AttachmentDisplay({ a }: { a: Attachment }) {
   );
 }
 
-function EmptyChatHint({ personas, onMention }: { personas: Personas; onMention: (id: string) => void }) {
+function EmptyChatHint({ personas, onSend }: { personas: Personas; onSend: (text: string) => void }) {
   const examples = [
     { agent: 'max', text: 'what is the status across the team?' },
     { agent: 'matt', text: 'anything overdue in AR right now?' },
@@ -588,23 +589,22 @@ function EmptyChatHint({ personas, onMention }: { personas: Personas; onMention:
     <div className="rounded border border-[#1f1f1f] bg-[#0f0f0f] p-6">
       <div className="text-[15px] font-medium text-slate-100">Start a conversation with the team.</div>
       <div className="mt-1 text-sm text-slate-400">
-        Six agents are listening. Mention one with <code>@name</code> or send without and Max routes it.
+        Six agents are listening. Mention one with <code>@name</code> or send without and Max routes it. Click a prompt below to send it.
       </div>
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {examples.map(e => (
-          <button
-            key={e.text}
-            onClick={() => {
-              onMention(e.agent);
-              const ta = document.getElementById('chat-composer') as HTMLTextAreaElement | null;
-              if (ta) { ta.value = `@${e.agent} ${e.text}`; ta.dispatchEvent(new Event('input', { bubbles: true })); }
-            }}
-            className="rounded border border-[#1f1f1f] bg-[#141414] px-3 py-2 text-left text-sm text-slate-300 hover:border-[#2a2a2a] hover:text-slate-100"
-          >
-            <span className={cn('mr-1.5 font-medium', AGENT_TONE[e.agent])}>@{e.agent}</span>
-            {e.text}
-          </button>
-        ))}
+        {examples.map(e => {
+          const full = `@${e.agent} ${e.text}`;
+          return (
+            <button
+              key={e.text}
+              onClick={() => onSend(full)}
+              className="rounded border border-[#1f1f1f] bg-[#141414] px-3 py-2 text-left text-sm text-slate-300 hover:border-[#2a2a2a] hover:text-slate-100"
+            >
+              <span className={cn('mr-1.5 font-medium', AGENT_TONE[e.agent])}>@{e.agent}</span>
+              {e.text}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
