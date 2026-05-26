@@ -11,7 +11,7 @@
 // the old layout is needed back; this file replaces it entirely.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, RefreshCw } from 'lucide-react';
+import { MessageSquare, Send, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, UploadCloud } from 'lucide-react';
 import { Card, CardBody, Button } from '../primitives';
 import { useToast } from '../primitives/Toast';
 import { cn } from '../primitives/utils';
@@ -25,6 +25,13 @@ const CONTROL_PLANE_URL =
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
+interface Attachment {
+  name: string;
+  type: string;
+  size: number;
+  data_url: string | null;
+}
+
 interface ChatMessage {
   id: string;
   conversation_id: string;
@@ -32,7 +39,7 @@ interface ChatMessage {
   author: string;
   to_agent: string | null;
   content: string;
-  meta: Record<string, any>;
+  meta: Record<string, any> & { attachments?: Attachment[] };
   created_at: string;
 }
 
@@ -96,6 +103,36 @@ function fmtTime(s: string | undefined | null): string {
   return d.toLocaleString();
 }
 
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+
+function readAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error ?? new Error('read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+async function fileToAttachment(file: File): Promise<Attachment> {
+  // Refuse files over the cap — UI surfaces the error via toast.
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`"${file.name}" is ${fmtBytes(file.size)} — over the 2 MB attachment cap.`);
+  }
+  return {
+    name: file.name || 'file',
+    type: file.type || '',
+    size: file.size,
+    data_url: await readAsDataURL(file),
+  };
+}
+
 // Markup @mentions in user messages so they stand out.
 function renderContent(content: string, role: 'user' | 'agent' | 'system') {
   if (role !== 'user') return content;
@@ -116,9 +153,13 @@ export default function DashboardV2() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [personas, setPersonas] = useState<Personas>({});
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -146,9 +187,12 @@ export default function DashboardV2() {
 
   async function send() {
     const content = input.trim();
-    if (!content || sending) return;
+    if ((!content && attachments.length === 0) || sending) return;
     setSending(true);
+    const sentContent = content;
+    const sentAttachments = attachments;
     setInput('');
+    setAttachments([]);
     // Optimistically append the user message so it shows up immediately.
     const optimistic: ChatMessage = {
       id: 'opt-' + Date.now(),
@@ -156,20 +200,66 @@ export default function DashboardV2() {
       role: 'user',
       author: 'felipe',
       to_agent: null,
-      content,
-      meta: {},
+      content: sentContent || `(sent ${sentAttachments.length} attachment${sentAttachments.length === 1 ? '' : 's'})`,
+      meta: sentAttachments.length > 0 ? { attachments: sentAttachments } : {},
       created_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
     };
     setMessages(m => [...m, optimistic]);
     try {
-      await api('POST', '/chat/message', { conversation_id: 'default', content });
+      await api('POST', '/chat/message', {
+        conversation_id: 'default',
+        content: sentContent,
+        attachments: sentAttachments,
+      });
       await refresh();
     } catch (err: any) {
       toast.push({ kind: 'error', title: err.message ?? 'send failed' });
       // Roll back the optimistic message; refresh will re-pull truth.
       setMessages(m => m.filter(x => x.id !== optimistic.id));
+      // Restore the composer so the user doesn't lose work.
+      setInput(sentContent);
+      setAttachments(sentAttachments);
     } finally {
       setSending(false);
+    }
+  }
+
+  // ── Attachment intake ────────────────────────────────────────────────
+
+  async function addFiles(files: File[] | FileList | null) {
+    if (!files) return;
+    const arr = Array.from(files);
+    if (arr.length === 0) return;
+    const slots = Math.max(0, 8 - attachments.length);
+    const accepted = arr.slice(0, slots);
+    if (arr.length > slots) {
+      toast.push({ kind: 'warning', title: `Only 8 attachments per message; dropped ${arr.length - slots}.` });
+    }
+    const next: Attachment[] = [];
+    for (const f of accepted) {
+      try { next.push(await fileToAttachment(f)); }
+      catch (err: any) { toast.push({ kind: 'error', title: err.message ?? 'attach failed' }); }
+    }
+    if (next.length > 0) setAttachments(prev => [...prev, ...next]);
+  }
+
+  function removeAttachment(idx: number) {
+    setAttachments(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const it of Array.from(items)) {
+      if (it.kind === 'file') {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      addFiles(files);
     }
   }
 
@@ -178,6 +268,28 @@ export default function DashboardV2() {
       e.preventDefault();
       send();
     }
+  }
+
+  // ── Whole-pane drag overlay ──────────────────────────────────────────
+
+  function onDragEnter(e: React.DragEvent) {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    dragDepth.current += 1;
+    setDragActive(true);
+  }
+  function onDragLeave() {
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragActive(false);
+  }
+  function onDragOver(e: React.DragEvent) {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+  }
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragActive(false);
+    if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
   }
 
   function mention(agent: string) {
@@ -248,7 +360,23 @@ export default function DashboardV2() {
         </Card>
 
         {/* Chat column */}
-        <Card className="flex min-h-0 flex-col">
+        <Card
+          className="relative flex min-h-0 flex-col"
+          onDragEnter={onDragEnter}
+          onDragLeave={onDragLeave}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+        >
+          {/* Drag overlay */}
+          {dragActive && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-emerald-500/60 bg-emerald-500/10 backdrop-blur-sm">
+              <div className="flex items-center gap-3 text-emerald-300">
+                <UploadCloud size={28} />
+                <span className="text-sm font-medium">Drop files to attach to your next message</span>
+              </div>
+            </div>
+          )}
+
           {/* Messages */}
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
             {messages.length === 0 && connected !== false && (
@@ -272,32 +400,55 @@ export default function DashboardV2() {
           {/* Composer */}
           <div className="border-t border-[#1f1f1f] p-3">
             <div className="rounded border border-[#1f1f1f] bg-[#0f0f0f] focus-within:border-[#2a2a2a]">
+              {/* Attachment chips */}
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 border-b border-[#1f1f1f] p-2">
+                  {attachments.map((a, i) => (
+                    <AttachmentChip
+                      key={i}
+                      a={a}
+                      onRemove={() => removeAttachment(i)}
+                    />
+                  ))}
+                </div>
+              )}
               <textarea
                 id="chat-composer"
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
-                placeholder={"Message the team… '@matt anything overdue?'  ·  Enter to send, Shift+Enter for new line"}
+                onPaste={onPaste}
+                placeholder={"Message the team… '@matt anything overdue?'  ·  Paste, drop, or attach files  ·  Enter to send"}
                 rows={2}
                 className="w-full resize-none bg-transparent p-3 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none"
               />
-              <div className="flex items-center justify-between border-t border-[#1f1f1f] px-3 py-2 text-[11px] text-slate-500">
-                <span>
-                  Tip: prefix with{' '}
-                  {agentOrder.slice(0, 3).map(id => (
-                    <button
-                      key={id}
-                      onClick={() => mention(id)}
-                      className={cn('mx-0.5 rounded bg-[#141414] px-1.5 py-0.5 font-medium', AGENT_TONE[id])}
-                    >@{id}</button>
-                  ))}
-                  to route to a teammate, or send without and Max takes it.
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={e => { addFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+              />
+              <div className="flex items-center justify-between gap-2 border-t border-[#1f1f1f] px-3 py-2 text-[11px] text-slate-500">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-slate-400 hover:bg-[#141414] hover:text-slate-200"
+                  title="Attach file"
+                >
+                  <Paperclip size={14} />
+                  attach
+                </button>
+                <span className="min-w-0 flex-1 truncate">
+                  Drop, paste, or attach files (up to 2 MB each, 8 per message). Files routed to{' '}
+                  <button onClick={() => mention('lara')} className={cn('rounded bg-[#141414] px-1.5 py-0.5 font-medium', AGENT_TONE.lara)}>@lara</button>
+                  {' '}by default for OCR + ERP ingestion.
                 </span>
                 <Button
                   variant="primary"
                   size="sm"
                   onClick={send}
-                  disabled={sending || !input.trim()}
+                  disabled={sending || (!input.trim() && attachments.length === 0)}
                 >
                   <Send size={14} className="mr-1" /> Send
                 </Button>
@@ -316,6 +467,7 @@ function MessageBubble({ m, personas }: { m: ChatMessage; personas: Personas }) 
   const isUser = m.role === 'user';
   const author = m.author;
   const display = isUser ? 'You' : (personas[author]?.display ?? author);
+  const atts = Array.isArray(m.meta?.attachments) ? m.meta.attachments : [];
   return (
     <div className={cn('flex gap-3', isUser ? 'flex-row-reverse' : 'flex-row')}>
       <span className={cn(
@@ -339,10 +491,72 @@ function MessageBubble({ m, personas }: { m: ChatMessage; personas: Personas }) 
             ? 'border-emerald-500/30 bg-emerald-500/5 text-slate-100'
             : 'border-[#1f1f1f] bg-[#141414] text-slate-200',
         )}>
+          {atts.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {atts.map((a, i) => <AttachmentDisplay key={i} a={a} />)}
+            </div>
+          )}
           {renderContent(m.content, m.role)}
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Attachment chips (composer + message body) ────────────────────────
+
+function AttachmentChip({ a, onRemove }: { a: Attachment; onRemove: () => void }) {
+  const isImg = /^image\//i.test(a.type);
+  return (
+    <div className="inline-flex items-center gap-2 rounded border border-[#1f1f1f] bg-[#141414] py-1 pl-1 pr-2">
+      {isImg && a.data_url
+        ? <img src={a.data_url} alt={a.name} className="h-9 w-9 rounded object-cover" />
+        : <span className="flex h-9 w-9 items-center justify-center rounded bg-[#0f0f0f] text-slate-400">
+            {isImg ? <ImageIcon size={16} /> : <FileText size={16} />}
+          </span>}
+      <span className="min-w-0">
+        <div className="max-w-[160px] truncate text-xs font-medium text-slate-200">{a.name}</div>
+        <div className="text-[10px] text-slate-500">{fmtBytes(a.size)}</div>
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="ml-1 rounded p-0.5 text-slate-500 hover:bg-[#0f0f0f] hover:text-slate-200"
+        title="Remove"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
+function AttachmentDisplay({ a }: { a: Attachment }) {
+  const isImg = /^image\//i.test(a.type);
+  if (isImg && a.data_url) {
+    return (
+      <a href={a.data_url} target="_blank" rel="noreferrer" className="block">
+        <img
+          src={a.data_url}
+          alt={a.name}
+          className="max-h-48 max-w-[280px] rounded border border-[#1f1f1f] object-contain"
+        />
+        <div className="mt-0.5 text-[11px] text-slate-500">{a.name} · {fmtBytes(a.size)}</div>
+      </a>
+    );
+  }
+  return (
+    <a
+      href={a.data_url ?? '#'}
+      target="_blank"
+      rel="noreferrer"
+      download={a.name}
+      className="inline-flex items-center gap-2 rounded border border-[#1f1f1f] bg-[#0f0f0f] px-2 py-1.5 text-xs text-slate-300 hover:border-[#2a2a2a]"
+    >
+      <FileText size={14} className="text-slate-500" />
+      <span className="max-w-[180px] truncate">{a.name}</span>
+      <span className="text-slate-600">·</span>
+      <span className="text-slate-500">{fmtBytes(a.size)}</span>
+    </a>
   );
 }
 
