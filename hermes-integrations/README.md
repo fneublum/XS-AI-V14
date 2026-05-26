@@ -1,113 +1,141 @@
 # HERMES ↔ XS-AI ERP Integrations
 
-Three integrations that connect the HERMES messaging gateway to the ERP's Supabase database.
-
-## 1. Supabase MCP (`supabase_mcp_config.yaml`)
-
-Gives Max, Lara, Matt, and all other HERMES agents **live read access** to the ERP database directly from WhatsApp conversations.
-
-**Install on Mac mini:**
-```bash
-# Requires Node.js
-npm install -g @supabase/mcp-server-supabase
-
-# Add to your HERMES MCP config (see supabase_mcp_config.yaml)
-# Set env var:
-export SUPABASE_SERVICE_ROLE_KEY=<your service role key from Supabase dashboard>
-```
-
-**What agents can answer after this:**
-- "What's the cut-off for booking 271230293?"
-- "Show me EC4's outstanding balance"
-- "Which bookings have ETD this week?"
-- "Is invoice INV-2026-xxx paid?"
+Three integrations that connect the HERMES messaging gateway (Mac mini) to the ERP's Supabase database. All deployed and verified live on 2026-05-25.
 
 ---
 
-## 2. WhatsApp PDF → Booking OCR (`whatsapp_pdf_booking_handler.py`)
+## 1. `erp` MCP Server (one server, six tools)
 
-Forward any booking confirmation PDF to WhatsApp → booking automatically saved to ERP.
+Drop-in MCP server installed at `/Users/maxsmart/mcp-servers/erp-mcp/server.mjs`. Gives every HERMES agent (Max, Lara, Matt, Logan, Sal, Beth) direct access to ERP data.
 
-**Install on Mac mini:**
+### Tools exposed
+
+| Tool | Purpose |
+|---|---|
+| `list_bookings(status?, customer?, limit?)` | List bookings with optional status/customer filters |
+| `lookup_booking(bookingNumber)` | Full details for one booking |
+| `bookings_with_cutoff_in_days(days)` | Split AVAILABLE bookings into overdue and upcoming buckets — used by the daily briefing cron |
+| `customer_outstanding(customerName)` | Open (unpaid) invoices + total USD for one customer |
+| `recent_invoices(customerName?, limit?)` | Recent invoices, optional customer filter |
+| `ocr_and_save_booking(pdf_base64, source?)` | Gemini OCR a booking PDF and insert as new AVAILABLE row — auto-attaches if booking# already exists |
+
+### Files
+
+- **Source**: `hermes-integrations/erp-mcp/server.mjs` (this repo)
+- **Deployed**: `/Users/maxsmart/mcp-servers/erp-mcp/server.mjs` on Mac mini
+- **Credentials**: `/Users/maxsmart/mcp-credentials/erp-credentials.json` (chmod 600)
+- **Registered in**: all 6 profile configs (`~/.hermes/profiles/{max,lara,matt,logan,sal,beth}/config.yaml`)
+
+### Verification
+
 ```bash
-pip install httpx
-cp whatsapp_pdf_booking_handler.py ~/.hermes/hermes-agent/hermes_integrations/
+hermes mcp test erp
+# ✓ Connected (136ms)
+# ✓ Tools discovered: 6
 ```
 
-**Wire into `gateway/run.py`:**
-```python
-from hermes_integrations.whatsapp_pdf_booking_handler import handle_pdf_attachment
+### Re-deploy after editing
 
-# Inside your inbound message handler:
-if message.has_attachment and message.attachment.mime == "application/pdf":
-    caption = (message.caption or message.attachment.filename or "").lower()
-    if "booking" in caption or "confirmation" in caption:
-        reply = handle_pdf_attachment(message.attachment.data, message.attachment.filename)
-        await send_whatsapp(message.from_number, reply)
-```
-
-**Environment variables needed:**
 ```bash
-VITE_SUPABASE_URL=https://qfskvevighylzzmyiwre.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon key>
-GEMINI_API_KEY=<gemini key>
+scp hermes-integrations/erp-mcp/server.mjs maxsmart@100.114.73.44:/Users/maxsmart/mcp-servers/erp-mcp/server.mjs
+# No restart needed — MCP servers spawn per-call.
 ```
 
 ---
 
-## 3. Daily Cut-off Briefing (`daily_cutoff_briefing.py`)
+## 2. Daily Cargo Cut-off Briefing (cron)
 
-Sends a WhatsApp summary of upcoming cargo cut-offs every morning at 08:00.
+Scheduled HERMES job that runs daily at 08:00 local. Calls `erp.bookings_with_cutoff_in_days(7)` and sends Felipe a WhatsApp summary.
 
-**Install on Mac mini:**
+### Job details
+
+- **ID**: `4a611a649b53`
+- **Schedule**: `0 8 * * *`
+- **Profile**: `max`
+- **Delivery**: `whatsapp:19044399343@s.whatsapp.net`
+- **Stored at**: `~/.hermes/profiles/max/cron/jobs.json`
+- **Outputs**: `~/.hermes/profiles/max/cron/output/4a611a649b53/<timestamp>.md`
+
+### Sample output
+
+```
+📋 CUT-OFF BRIEFING — May 26, 2026
+
+⚠️ OVERDUE (4 bookings)
+WARN #270999154 · EC4 ENTERPRISES LLC · USHOU→BRMAO · Cargo cut-off: May 21
+WARN #270650706 · EC4 ENTERPRISES LLC · USHOU→BRMAO · Cargo cut-off: May 22
+...
+
+✅ UPCOMING (3 bookings, next 7 days)
+UPCOMING #271230293 · EC4 ENTERPRISES LLC · USHOU→BRMAO · Cargo cut-off: June 1 (ETD: June 6)
+...
+
+Overdue: 4 · Upcoming 7d: 3
+```
+
+### Manage
+
 ```bash
-pip install httpx
-cp daily_cutoff_briefing.py ~/.hermes/hermes-agent/hermes_integrations/
-```
+# Trigger an immediate run (for testing)
+hermes cron run 4a611a649b53
 
-**Register in HERMES cron config:**
-```yaml
-cron:
-  - name: daily_cutoff_briefing
-    schedule: "0 8 * * *"
-    handler: hermes_integrations.daily_cutoff_briefing:run
-    args:
-      to: "+19044399343"
-```
+# Show schedule and last/next runs
+hermes cron list
 
-**Test manually:**
-```bash
-cd ~/.hermes/hermes-agent
-python -m hermes_integrations.daily_cutoff_briefing
-```
+# Edit delivery target, schedule, name, etc.
+hermes cron edit 4a611a649b53 --deliver whatsapp:<jid>
 
-**Sample output:**
-```
-☀️ Cut-off briefing — 25 May 2026
-
-⚠️ OVERDUE CUT-OFFS
-  • #271051138 · EC4 ENTERPRISES LLC
-    USCHS→BRPEC · 3 x 40 DRY
-    Cut-off: 2026-05-22  ⚠️ 3d overdue
-
-📅 UPCOMING (next 7 days)
-  • #271230293 · EC4 ENTERPRISES LLC
-    USHOU→BRMAO · ETD 2026-06-06
-    Cut-off: 2026-06-01  🟢 7d
-
-Total AVAILABLE: 9
+# Pause/resume
+hermes cron pause 4a611a649b53
+hermes cron resume 4a611a649b53
 ```
 
 ---
 
-## Environment Setup (Mac mini)
+## 3. WhatsApp PDF → Booking (no extra wiring needed)
 
-Add to `~/.hermes/.env` or HERMES config:
+The `ocr_and_save_booking` tool in the `erp` MCP is what powers this. When Felipe forwards a booking PDF via WhatsApp:
 
-```bash
-VITE_SUPABASE_URL=https://qfskvevighylzzmyiwre.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-GEMINI_API_KEY=<your key from .env.local on M5>
-FELIPE_WHATSAPP=+19044399343
-HERMES_SEND_URL=http://localhost:9119/send   # adjust to your gateway send endpoint
+1. The HERMES gateway delivers the message + PDF to the active agent (Logan handles shipments).
+2. The agent sees the PDF attachment and the description of `ocr_and_save_booking` in the tool list.
+3. The agent calls `erp.ocr_and_save_booking(pdf_base64=...)`.
+4. The tool: runs Gemini 2.5 Flash OCR, normalizes dates via `toIsoDateString()`, looks up POL/POD against `ports`, inserts the row, and returns `{action: "inserted", bookingNumber, summary}`.
+5. The agent replies with a confirmation, e.g. *"✅ Booking 271230293 saved — EC4, USHOU→BRMAO, ETD 2026-06-06, cut-off 2026-06-01."*
+
+**No additional setup — this works the moment the `erp` MCP is registered.**
+
+---
+
+## Profile config layout (FYI)
+
 ```
+~/.hermes/
+  active_profile         # current profile name
+  config.yaml            # default profile config
+  profiles/
+    max/config.yaml      # has its own mcp_servers, platforms, cron
+    lara/config.yaml
+    matt/config.yaml
+    logan/config.yaml
+    sal/config.yaml
+    beth/config.yaml
+```
+
+The `erp` MCP entry was inserted into every profile's `mcp_servers` block.
+
+---
+
+## Credentials file format
+
+`/Users/maxsmart/mcp-credentials/erp-credentials.json` (chmod 600):
+
+```json
+{
+  "SUPABASE_URL":      "https://qfskvevighylzzmyiwre.supabase.co",
+  "SUPABASE_ANON_KEY": "<anon key>",
+  "GEMINI_API_KEY":    "<gemini key>",
+  "FELIPE_WHATSAPP":   "+19044399343"
+}
+```
+
+To rotate, just edit this file — no restart needed (MCP server reads it on each spawn).
