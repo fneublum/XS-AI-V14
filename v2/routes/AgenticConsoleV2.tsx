@@ -207,6 +207,7 @@ const AGENT_TONE: Record<string, string> = {
   logan:  'text-sky-300',
   sal:    'text-amber-300',
   beth:   'text-rose-300',
+  gem:    'text-indigo-300',
   felipe: 'text-emerald-400',
   system: 'text-slate-400',
 };

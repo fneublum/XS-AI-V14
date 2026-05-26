@@ -100,6 +100,7 @@ const AGENT_TONE: Record<string, string> = {
   logan:  'text-sky-300',
   sal:    'text-amber-300',
   beth:   'text-rose-300',
+  gem:    'text-indigo-300',
   felipe: 'text-emerald-400',
   system: 'text-slate-400',
 };
@@ -111,6 +112,7 @@ const AGENT_RING: Record<string, string> = {
   logan:  'ring-sky-500/40 bg-sky-500/10',
   sal:    'ring-amber-500/40 bg-amber-500/10',
   beth:   'ring-rose-500/40 bg-rose-500/10',
+  gem:    'ring-indigo-500/40 bg-indigo-500/10',
   felipe: 'ring-emerald-500/40 bg-emerald-500/15',
   system: 'ring-slate-500/40 bg-slate-500/10',
 };
@@ -162,9 +164,9 @@ async function fileToAttachment(file: File): Promise<Attachment> {
 // Markup @mentions in user messages so they stand out.
 function renderContent(content: string, role: 'user' | 'agent' | 'system') {
   if (role !== 'user') return content;
-  const parts = content.split(/(@(?:max|lara|matt|logan|sal|beth))\b/i);
+  const parts = content.split(/(@(?:max|lara|matt|logan|sal|beth|gem))\b/i);
   return parts.map((p, i) => {
-    if (/^@(max|lara|matt|logan|sal|beth)$/i.test(p)) {
+    if (/^@(max|lara|matt|logan|sal|beth|gem)$/i.test(p)) {
       const agent = p.slice(1).toLowerCase();
       return <span key={i} className={cn('rounded px-1 font-medium', AGENT_TONE[agent])}>{p}</span>;
     }
@@ -341,7 +343,7 @@ export default function DashboardV2() {
     }, 0);
   }
 
-  const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'beth'];
+  const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'beth', 'gem'];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -571,7 +573,7 @@ function OverviewPanel({
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  const agentOrder = ['max','lara','matt','logan','sal','beth'];
+  const agentOrder = ['max','lara','matt','logan','sal','beth','gem'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
@@ -665,7 +667,7 @@ function PromptsPanel({
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  const agentOrder = ['max','lara','matt','logan','sal','beth'];
+  const agentOrder = ['max','lara','matt','logan','sal','beth','gem'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
@@ -834,7 +836,7 @@ function EmptyChatHint({ personas, onSend }: { personas: Personas; onSend: (text
     <div className="rounded border border-[#1f1f1f] bg-[#0f0f0f] p-6">
       <div className="text-[15px] font-medium text-slate-100">Start a conversation with the team.</div>
       <div className="mt-1 text-sm text-slate-400">
-        Six agents are listening. Mention one with <code>@name</code> or send without and Max routes it. Click a prompt below to send it.
+        Seven agents are listening. Mention one with <code>@name</code> or send without and Max routes it. Click a prompt below to send it.
       </div>
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {examples.map(e => {
