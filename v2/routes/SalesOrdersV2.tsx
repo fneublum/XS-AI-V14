@@ -321,17 +321,17 @@ const SalesOrdersV2: React.FC = () => {
 
   const handleSaveBookingLink = async (bookingNumber: string | null) => {
     if (!bookingLinkOrder) return;
-    // When a booking is linked, also advance the SO status to BOOKING.
+    // When a booking is linked, also advance the SO status to BOOKED.
     // When the link is cleared, leave the status alone (user can edit
     // manually if they want to roll it back to PENDING / APPROVED).
     const patch: Record<string, unknown> = { id: bookingLinkOrder.id, bookingNumber };
-    if (bookingNumber) patch.status = 'BOOKING';
+    if (bookingNumber) patch.status = 'BOOKED';
     await new Promise<void>((resolve, reject) =>
       update.mutate(patch as never, {
         onSuccess: () => {
           toast.push({
             kind: 'success',
-            title: bookingNumber ? 'Booking linked · status BOOKING' : 'Booking unlinked',
+            title: bookingNumber ? 'Booking linked · status BOOKED' : 'Booking unlinked',
             description: bookingNumber
               ? `${bookingLinkOrder.orderNumber || bookingLinkOrder.id} → #${bookingNumber}`
               : `${bookingLinkOrder.orderNumber || bookingLinkOrder.id} link cleared`,

@@ -18,7 +18,7 @@ import { SupabaseSelectField } from './SupabaseSelectField';
 import { nextSONumber } from '../lib/soNumber';
 import type { EditorMode } from '../providers/EditorProvider';
 
-const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'BOOKING', 'BOOKED', 'REJECTED', 'FULFILLED'];
+const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'BOOKED', 'REJECTED', 'FULFILLED'];
 const ORDER_TYPES = ['SPOT', 'CONTRACT'];
 const SALE_TYPES = ['LOCAL', 'EXPORT'];
 const INCOTERMS = ['FOB', 'CFR', 'CIF', 'EXW', 'DAP', 'DDP', 'FCA', 'CPT', 'CIP', 'FAS'];
