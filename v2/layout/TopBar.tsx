@@ -93,8 +93,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         <button
           type="button"
           onClick={onOpenConnections}
-          title="Agent Queue"
-          aria-label="Agent Queue"
+          title="Agent log"
+          aria-label="Agent log"
           className="p-1.5 rounded-md text-slate-500 hover:text-slate-200 hover:bg-[#161616] transition-colors"
         >
           <Plug size={15} />

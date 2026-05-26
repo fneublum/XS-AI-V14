@@ -238,7 +238,7 @@ const AiInboxV2: React.FC = () => {
       <div className="shrink-0 flex items-center gap-3 px-3 py-2 rounded-md border border-[#1f1f1f] bg-[#0f0f0f] mb-3">
         <div className="flex items-center gap-1.5 text-[12px] font-medium text-slate-100">
           <Inbox size={14} className="text-indigo-300" />
-          Agent Queue
+          Agent email
         </div>
         <StatusPill
           label="Outlook"
@@ -382,7 +382,7 @@ const StatusPill: React.FC<{ label: string; connected: boolean; email?: string }
   >
     {connected ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
     {label}
-    {email && <span className="text-slate-400 truncate max-w-[120px]">· {email.split('@')[0]}</span>}
+    {email && <span className="text-slate-400 truncate max-w-[260px]">· {email}</span>}
   </span>
 );
 

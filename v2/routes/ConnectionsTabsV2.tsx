@@ -12,21 +12,23 @@ import { cn } from '../primitives/utils';
 import AiInboxV2 from './AiInboxV2';
 import AgentTasksV2 from './AgentTasksV2';
 
-type TabId = 'review' | 'tasks';
+type TabId = 'email' | 'tasks';
 const STORAGE_KEY = 'xs_v2_connections_tab';
 
 const TABS: Array<{ id: TabId; label: string; icon: React.ElementType; color: string }> = [
-  { id: 'review', label: 'Review',      icon: Inbox,    color: 'text-indigo-300' },
-  { id: 'tasks',  label: 'Agent Tasks', icon: Sparkles, color: 'text-emerald-300' },
+  { id: 'email', label: 'Email',       icon: Inbox,    color: 'text-indigo-300' },
+  { id: 'tasks', label: 'Agent Tasks', icon: Sparkles, color: 'text-emerald-300' },
 ];
 
 const readStoredTab = (): TabId => {
-  if (typeof window === 'undefined') return 'review';
+  if (typeof window === 'undefined') return 'email';
   try {
     const v = sessionStorage.getItem(STORAGE_KEY);
-    if (v === 'review' || v === 'tasks') return v;
+    if (v === 'email' || v === 'tasks') return v;
+    // Legacy values from earlier versions
+    if (v === 'review') return 'email';
   } catch { /* noop */ }
-  return 'review';
+  return 'email';
 };
 
 const ConnectionsTabsV2: React.FC = () => {
@@ -63,8 +65,8 @@ const ConnectionsTabsV2: React.FC = () => {
 
       {/* Panels */}
       <div className="flex-1 min-h-0">
-        {activeTab === 'review' && <AiInboxV2 />}
-        {activeTab === 'tasks'  && <AgentTasksV2 />}
+        {activeTab === 'email' && <AiInboxV2 />}
+        {activeTab === 'tasks' && <AgentTasksV2 />}
       </div>
     </div>
   );

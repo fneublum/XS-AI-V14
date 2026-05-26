@@ -126,7 +126,7 @@ const buildSections = (
       // (connect / disconnect / scope) lives under Settings →
       // Connections. The legacy v1 bridge is still reachable at
       // `connections-hub` for deep links.
-      { id: 'connections-tabs', label: 'Agent Queue',    icon: Plug },
+      { id: 'connections-tabs', label: 'Agent log',    icon: Plug },
       { id: 'ai-sales',         label: 'AI Sales Agent', icon: Sparkles },
     ],
   },
@@ -201,8 +201,8 @@ const routeTitles: Record<string, string> = {
   'ai-upload':       'AI Upload',
   'ai-sales':        'AI Sales Agent',
   'ai-inbox':        'AI Inbox',
-  'connections-tabs': 'Agent Queue',
-  'connections-hub': 'Agent Queue',
+  'connections-tabs': 'Agent log',
+  'connections-hub': 'Agent log',
   'ai-logistics':    'AI Logistics',
   // Trading
   'purchase-orders': 'Purchase & cost',
