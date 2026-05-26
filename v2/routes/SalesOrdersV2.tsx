@@ -28,6 +28,7 @@ type BadgeTone = 'success' | 'info' | 'warning' | 'neutral' | 'danger';
 const statusTone = (status: string): BadgeTone => {
   const s = status.toUpperCase();
   if (s.includes('FULFIL') || s.includes('SHIP') || s.includes('COMPLETE')) return 'success';
+  if (s.includes('BOOK'))                                                   return 'info';
   if (s.includes('APPROV'))                                                  return 'info';
   if (s.includes('PEND') || s.includes('HOLD'))                              return 'warning';
   if (s.includes('CANCEL') || s.includes('REJECT'))                          return 'danger';
@@ -320,12 +321,17 @@ const SalesOrdersV2: React.FC = () => {
 
   const handleSaveBookingLink = async (bookingNumber: string | null) => {
     if (!bookingLinkOrder) return;
+    // When a booking is linked, also advance the SO status to BOOKING.
+    // When the link is cleared, leave the status alone (user can edit
+    // manually if they want to roll it back to PENDING / APPROVED).
+    const patch: Record<string, unknown> = { id: bookingLinkOrder.id, bookingNumber };
+    if (bookingNumber) patch.status = 'BOOKING';
     await new Promise<void>((resolve, reject) =>
-      update.mutate({ id: bookingLinkOrder.id, bookingNumber } as never, {
+      update.mutate(patch as never, {
         onSuccess: () => {
           toast.push({
             kind: 'success',
-            title: bookingNumber ? 'Booking linked' : 'Booking unlinked',
+            title: bookingNumber ? 'Booking linked · status BOOKING' : 'Booking unlinked',
             description: bookingNumber
               ? `${bookingLinkOrder.orderNumber || bookingLinkOrder.id} → #${bookingNumber}`
               : `${bookingLinkOrder.orderNumber || bookingLinkOrder.id} link cleared`,
