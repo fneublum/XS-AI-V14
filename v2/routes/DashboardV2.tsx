@@ -563,7 +563,71 @@ export default function DashboardV2() {
   );
 }
 
-// ─── Overview panel — kanban-ish per-agent dashboard ────────────────────
+// ─── Overview panel — team-standup view ────────────────────────────────
+//
+// One card per agent, written as if reporting at a stand-up:
+// either "Waiting on you for X" / "Worked through Y" / "Quiet right
+// now". The technical chips (status enum, capability_id) are gone;
+// what's left is the actual work in plain English from payload.summary,
+// with status conveyed only via colored leading icon.
+
+// Friendly fallback name for a capability when payload.summary is absent.
+const CAPABILITY_LABEL: Record<string, string> = {
+  'ar.send_followup':        'payment follow-up email',
+  'ar.send_statement':       'AR statement',
+  'shipment.notify_eta_change': 'shipment ETA notice',
+  'rfq.draft_proforma':      'proforma draft',
+  'rfq.send_proforma':       'proforma to customer',
+  'email.send_reply':        'email reply',
+  'finance.move_money':      'funds movement',
+  'customer.create':         'new customer',
+  'customer.update':         'customer update',
+  'product.create':          'new product',
+  'product.update':          'product update',
+  'supplier.create':         'new supplier',
+  'supplier.update':         'supplier update',
+};
+
+function describeCard(c: OverviewCard): string {
+  const s = c.payload?.summary;
+  if (typeof s === 'string' && s.trim()) return s.trim();
+  return CAPABILITY_LABEL[c.capability_id] ?? c.capability_id;
+}
+
+// Decide what the card actually says today.
+function agentReport(a: OverviewAgent): {
+  headline: string;
+  tone: 'amber' | 'emerald' | 'slate';
+  cards: OverviewCard[];
+  cta?: { label: string; prompt: string };
+} {
+  const awaiting = a.open_cards.filter(c => c.status === 'AWAITING_APPROVAL');
+  const done = a.open_cards
+    .filter(c => ['APPROVED','AUTO_APPROVED','EXECUTED'].includes(c.status))
+    .slice(0, 3);
+
+  if (awaiting.length > 0) {
+    const n = awaiting.length;
+    return {
+      headline: n === 1 ? 'Waiting on your call for 1 thing.' : `Waiting on your call for ${n} things.`,
+      tone: 'amber',
+      cards: awaiting.slice(0, 3),
+    };
+  }
+  if (done.length > 0) {
+    const n = done.length;
+    return {
+      headline: n === 1 ? 'Handled 1 thing recently.' : `Handled ${n} things recently.`,
+      tone: 'emerald',
+      cards: done,
+    };
+  }
+  return {
+    headline: 'Quiet right now.',
+    tone: 'slate',
+    cards: [],
+  };
+}
 
 function OverviewPanel({
   data, personas, onBack, onSend,
@@ -573,15 +637,13 @@ function OverviewPanel({
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  // Beth (Ana Paula's personal assistant) is intentionally omitted from
-  // the team Overview — her work isn't business operational.
   const agentOrder = ['max','lara','matt','logan','sal','gem'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
         <LayoutGrid size={16} className="text-emerald-400" />
         <h2 className="text-sm font-semibold text-slate-100">Team overview</h2>
-        <span className="text-xs text-slate-500">live action queue grouped by agent</span>
+        <span className="text-xs text-slate-500">what each teammate is doing right now</span>
         <Button variant="ghost" size="sm" className="ml-auto" onClick={onBack}>
           <ArrowLeft size={14} className="mr-1" />back to chat
         </Button>
@@ -595,58 +657,67 @@ function OverviewPanel({
               const p = personas[id];
               const a = data[id];
               if (!a) return null;
-              const open = a.open_cards.filter(c =>
-                ['PROPOSED','AWAITING_APPROVAL','APPROVED','AUTO_APPROVED'].includes(c.status));
-              const awaiting = open.filter(c => c.status === 'AWAITING_APPROVAL').length;
+              const report = agentReport(a);
+              const toneRing =
+                report.tone === 'amber'   ? 'border-amber-500/30'   :
+                report.tone === 'emerald' ? 'border-emerald-500/20' :
+                                            'border-[#1f1f1f]';
+              const headlineTone =
+                report.tone === 'amber'   ? 'text-amber-300'   :
+                report.tone === 'emerald' ? 'text-emerald-300' :
+                                            'text-slate-400';
+              const bulletDot =
+                report.tone === 'amber'   ? 'bg-amber-400'    :
+                report.tone === 'emerald' ? 'bg-emerald-400'  :
+                                            'bg-slate-500';
+              const awaitingN = a.open_cards.filter(c => c.status === 'AWAITING_APPROVAL').length;
+
               return (
-                <div key={id} className="flex min-h-[180px] flex-col rounded border border-[#1f1f1f] bg-[#0f0f0f] p-3">
-                  <div className="mb-2 flex items-center gap-2">
+                <div key={id} className={cn(
+                  'flex flex-col rounded border bg-[#0f0f0f] p-4 transition-colors',
+                  toneRing,
+                )}>
+                  {/* Identity */}
+                  <div className="flex items-center gap-2">
                     <span className={cn(
-                      'flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ring-1',
+                      'flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ring-1',
                       AGENT_RING[id] ?? AGENT_RING.system,
                       AGENT_TONE[id] ?? AGENT_TONE.system,
                     )}>
                       {initials(p?.display ?? id)}
                     </span>
-                    <span className={cn('text-sm font-semibold', AGENT_TONE[id])}>{p?.display ?? id}</span>
-                    <span className="text-xs text-slate-500">{p?.tag ?? ''}</span>
-                    <span className="ml-auto text-xs text-slate-500">{open.length} open</span>
+                    <div className="min-w-0">
+                      <div className={cn('text-sm font-semibold', AGENT_TONE[id])}>{p?.display ?? id}</div>
+                      <div className="text-[11px] text-slate-500">{p?.tag ?? ''}</div>
+                    </div>
                   </div>
-                  <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">
-                    {Object.entries(a.counts).filter(([, n]) => n > 0).map(([s, n]) => (
-                      <span key={s} className={cn(
-                        'rounded px-1.5 py-0.5 font-mono',
-                        s === 'AWAITING_APPROVAL' ? 'bg-amber-500/15 text-amber-300' :
-                        s === 'EXECUTED' || s === 'AUTO_APPROVED' || s === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-300' :
-                        'bg-[#141414] text-slate-400',
-                      )}>{s.toLowerCase().replace('_',' ')} {n}</span>
-                    ))}
+
+                  {/* Headline — the team-standup sentence */}
+                  <div className={cn('mt-3 text-sm font-medium', headlineTone)}>
+                    {report.headline}
                   </div>
-                  <div className="space-y-1.5">
-                    {open.length === 0
-                      ? <div className="text-xs text-slate-500">No open work.</div>
-                      : open.slice(0, 4).map(c => (
-                          <div key={c.id} className="rounded border border-[#1f1f1f] bg-[#141414] p-2 text-xs">
-                            <div className="truncate text-slate-200">
-                              {c.payload?.summary ?? c.capability_id}
-                            </div>
-                            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
-                              <code>{c.capability_id}</code>
-                              <span>·</span>
-                              <span className={cn(
-                                c.status === 'AWAITING_APPROVAL' ? 'text-amber-400' :
-                                'text-slate-400'
-                              )}>{c.status}</span>
-                            </div>
-                          </div>
-                        ))}
-                  </div>
-                  {awaiting > 0 && (
-                    <div className="mt-auto pt-2">
+
+                  {/* Bulleted summaries — what they're actually working on */}
+                  {report.cards.length > 0 && (
+                    <ul className="mt-2 space-y-1.5">
+                      {report.cards.map(c => (
+                        <li key={c.id} className="flex items-start gap-2 text-sm text-slate-300">
+                          <span className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', bulletDot)} />
+                          <span className="leading-snug">{describeCard(c)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {/* CTA when something needs the human */}
+                  {awaitingN > 0 && (
+                    <div className="mt-auto pt-3">
                       <button
-                        onClick={() => onSend(`@${id} walk me through your pending items`)}
-                        className="text-[11px] text-emerald-400 hover:text-emerald-300"
-                      >Ask @{id} about the {awaiting} awaiting →</button>
+                        onClick={() => onSend(`@${id} walk me through what's waiting for me.`)}
+                        className="text-[12px] text-emerald-400 hover:text-emerald-300"
+                      >
+                        Ask {p?.display ?? id} to walk me through →
+                      </button>
                     </div>
                   )}
                 </div>
