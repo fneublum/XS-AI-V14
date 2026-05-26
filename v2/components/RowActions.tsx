@@ -5,7 +5,7 @@
 // Pass `undefined` for any handler to hide that icon.
 
 import React from 'react';
-import { Eye, Pencil, Trash2, Mail, FileText, Copy, FileDown, ArrowRight, X as XIcon, CloudUpload, Loader2, PackageCheck } from 'lucide-react';
+import { Eye, Pencil, Trash2, Mail, FileText, Copy, FileDown, ArrowRight, X as XIcon, CloudUpload, Loader2, PackageCheck, Ship } from 'lucide-react';
 
 interface Props {
   onView?: () => void;
@@ -40,6 +40,13 @@ interface Props {
   /** Reject action — counterpart to onApprove. */
   onReject?: () => void;
   rejectLabel?: string;
+  /** Link to a booking — used on Sales Orders to associate an AVAILABLE
+   *  booking with the SO. Opens a modal for the user to pick. */
+  onLinkBooking?: () => void;
+  /** Custom tooltip; default shows whether a booking is already linked. */
+  linkBookingLabel?: string;
+  /** When true, render the ship icon in active (linked) state. */
+  bookingLinked?: boolean;
   disabled?: boolean;
 }
 
@@ -67,6 +74,7 @@ export const RowActions: React.FC<Props> = ({
   onFill, fillLabel = 'Fill / Fulfill',
   onApprove, approveLabel = 'Approve',
   onReject,  rejectLabel  = 'Reject',
+  onLinkBooking, linkBookingLabel, bookingLinked = false,
   disabled,
 }) => (
   <div className="flex items-center justify-end gap-0.5">
@@ -164,6 +172,23 @@ export const RowActions: React.FC<Props> = ({
         className="p-1 rounded-sm text-indigo-300 hover:text-indigo-200 hover:bg-indigo-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
       >
         <PackageCheck size={14} />
+      </button>
+    )}
+    {onLinkBooking && (
+      <button
+        type="button"
+        onClick={stop(onLinkBooking)}
+        disabled={disabled}
+        title={linkBookingLabel ?? (bookingLinked ? 'Booking linked — change' : 'Link to booking')}
+        aria-label={linkBookingLabel ?? (bookingLinked ? 'Booking linked' : 'Link to booking')}
+        className={
+          'p-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-1 focus-visible:ring-sky-500 ' +
+          (bookingLinked
+            ? 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
+            : 'text-slate-500 hover:text-sky-300 hover:bg-sky-500/10')
+        }
+      >
+        <Ship size={14} />
       </button>
     )}
     {onApprove && (

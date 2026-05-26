@@ -14,6 +14,7 @@ import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { ProformaDocsModal } from '../components/ProformaDocsModal';
 import { useSalesOrders, SalesOrder } from '../queries/useSalesOrders';
 import { useEntityInsert, useEntityUpdate } from '../queries/useEntityMutations';
+import BookingLinkModal from '../components/BookingLinkModal';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
 import { cn } from '../primitives/utils';
@@ -195,6 +196,7 @@ const SalesOrdersV2: React.FC = () => {
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
   const [proformaViewOrder, setProformaViewOrder]       = useState<SalesOrder | null>(null);
   const [proformaEmailOrder, setProformaEmailOrder]     = useState<SalesOrder | null>(null);
+  const [bookingLinkOrder, setBookingLinkOrder]         = useState<SalesOrder | null>(null);
   const { openSalesOrder, openSalesOrderCreate } = useEditor();
   const insert = useEntityInsert<Record<string, unknown>>({
     table: 'sales_orders',
@@ -309,9 +311,34 @@ const SalesOrdersV2: React.FC = () => {
       onDuplicate={() => duplicateOrder(row)}
       onFill={() => fillFromSO(row)}
       fillLabel="Mark FULFILLED + open Packing List & Invoice"
+      onLinkBooking={() => setBookingLinkOrder(row)}
+      bookingLinked={!!row.bookingNumber}
+      linkBookingLabel={row.bookingNumber ? `Booking linked: #${row.bookingNumber}` : 'Link to AVAILABLE booking'}
       onDelete={() => confirmDelete(row)}
     />
   );
+
+  const handleSaveBookingLink = async (bookingNumber: string | null) => {
+    if (!bookingLinkOrder) return;
+    await new Promise<void>((resolve, reject) =>
+      update.mutate({ id: bookingLinkOrder.id, bookingNumber } as never, {
+        onSuccess: () => {
+          toast.push({
+            kind: 'success',
+            title: bookingNumber ? 'Booking linked' : 'Booking unlinked',
+            description: bookingNumber
+              ? `${bookingLinkOrder.orderNumber || bookingLinkOrder.id} → #${bookingNumber}`
+              : `${bookingLinkOrder.orderNumber || bookingLinkOrder.id} link cleared`,
+          });
+          resolve();
+        },
+        onError: (err) => {
+          toast.push({ kind: 'error', title: 'Link failed', description: err.message });
+          reject(err);
+        },
+      }),
+    );
+  };
 
   return (
     <div className="max-w-6xl">
@@ -453,6 +480,15 @@ const SalesOrdersV2: React.FC = () => {
         order={proformaEmailOrder}
         autoAction="email"
         onOpenChange={(o) => !o && setProformaEmailOrder(null)}
+      />
+      <BookingLinkModal
+        open={!!bookingLinkOrder}
+        onClose={() => setBookingLinkOrder(null)}
+        soPoa={bookingLinkOrder?.poa ?? null}
+        soPod={bookingLinkOrder?.pod ?? null}
+        soLabel={bookingLinkOrder ? (bookingLinkOrder.orderNumber || bookingLinkOrder.id) : undefined}
+        currentBookingNumber={bookingLinkOrder?.bookingNumber ?? null}
+        onSave={handleSaveBookingLink}
       />
       {aiUploadOpen && (
         <AiUploadModal<SODraft>
