@@ -361,7 +361,10 @@ export default function DashboardV2() {
     }, 0);
   }
 
-  const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'beth', 'gem'];
+  // Beth (Ana Paula's personal assistant) is intentionally omitted from
+  // the TEAM roster on this Dashboard — she remains @-mentionable but
+  // doesn't surface as a business teammate here.
+  const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'gem'];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -891,8 +894,12 @@ function CronsPanel({
   personas: Personas;
   onBack: () => void;
 }) {
-  const interval = data?.crons.filter(c => c.kind === 'interval') ?? [];
-  const daily    = data?.crons.filter(c => c.kind === 'daily') ?? [];
+  // Filter out Beth's crons — same scope rule as the roster: business
+  // ops only on this Dashboard surface.
+  const businessCrons = (data?.crons ?? []).filter(c => c.agent !== 'beth');
+  const interval = businessCrons.filter(c => c.kind === 'interval');
+  const daily    = businessCrons.filter(c => c.kind === 'daily');
+  const visibleCount = businessCrons.length;
 
   return (
     <Card className="flex min-h-0 flex-col">
@@ -900,7 +907,7 @@ function CronsPanel({
         <Clock size={16} className="text-emerald-400" />
         <h2 className="text-sm font-semibold text-slate-100">HERMES schedules</h2>
         <span className="text-xs text-slate-500">
-          {data ? `${data.counts.total} active on ${data.host}` : 'launchd, Mac mini'}
+          {data ? `${visibleCount} active on ${data.host}` : 'launchd, Mac mini'}
         </span>
         <Button variant="ghost" size="sm" className="ml-auto" onClick={onBack}>
           <ArrowLeft size={14} className="mr-1" />back to chat
