@@ -114,6 +114,23 @@ export const RowActions: React.FC<Props> = ({
         <Pencil size={14} />
       </button>
     )}
+    {onLinkBooking && (
+      <button
+        type="button"
+        onClick={stop(onLinkBooking)}
+        disabled={disabled}
+        title={linkBookingLabel ?? (bookingLinked ? 'Booking linked — change' : 'Link to booking')}
+        aria-label={linkBookingLabel ?? (bookingLinked ? 'Booking linked' : 'Link to booking')}
+        className={
+          'p-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-1 focus-visible:ring-sky-500 ' +
+          (bookingLinked
+            ? 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
+            : 'text-slate-500 hover:text-sky-300 hover:bg-sky-500/10')
+        }
+      >
+        <Ship size={14} />
+      </button>
+    )}
     {onPdf && (
       <button
         type="button"
@@ -172,23 +189,6 @@ export const RowActions: React.FC<Props> = ({
         className="p-1 rounded-sm text-indigo-300 hover:text-indigo-200 hover:bg-indigo-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
       >
         <PackageCheck size={14} />
-      </button>
-    )}
-    {onLinkBooking && (
-      <button
-        type="button"
-        onClick={stop(onLinkBooking)}
-        disabled={disabled}
-        title={linkBookingLabel ?? (bookingLinked ? 'Booking linked — change' : 'Link to booking')}
-        aria-label={linkBookingLabel ?? (bookingLinked ? 'Booking linked' : 'Link to booking')}
-        className={
-          'p-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-1 focus-visible:ring-sky-500 ' +
-          (bookingLinked
-            ? 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
-            : 'text-slate-500 hover:text-sky-300 hover:bg-sky-500/10')
-        }
-      >
-        <Ship size={14} />
       </button>
     )}
     {onApprove && (
