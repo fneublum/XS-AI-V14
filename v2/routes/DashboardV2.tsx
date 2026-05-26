@@ -116,6 +116,7 @@ const AGENT_TONE: Record<string, string> = {
   sal:    'text-amber-300',
   beth:   'text-rose-300',
   gem:    'text-indigo-300',
+  hermes: 'text-orange-300',
   felipe: 'text-emerald-400',
   system: 'text-slate-400',
 };
@@ -128,6 +129,7 @@ const AGENT_RING: Record<string, string> = {
   sal:    'ring-amber-500/40 bg-amber-500/10',
   beth:   'ring-rose-500/40 bg-rose-500/10',
   gem:    'ring-indigo-500/40 bg-indigo-500/10',
+  hermes: 'ring-orange-500/40 bg-orange-500/10',
   felipe: 'ring-emerald-500/40 bg-emerald-500/15',
   system: 'ring-slate-500/40 bg-slate-500/10',
 };
@@ -179,9 +181,9 @@ async function fileToAttachment(file: File): Promise<Attachment> {
 // Markup @mentions in user messages so they stand out.
 function renderContent(content: string, role: 'user' | 'agent' | 'system') {
   if (role !== 'user') return content;
-  const parts = content.split(/(@(?:max|lara|matt|logan|sal|beth|gem))\b/i);
+  const parts = content.split(/(@(?:max|lara|matt|logan|sal|beth|gem|hermes))\b/i);
   return parts.map((p, i) => {
-    if (/^@(max|lara|matt|logan|sal|beth|gem)$/i.test(p)) {
+    if (/^@(max|lara|matt|logan|sal|beth|gem|hermes)$/i.test(p)) {
       const agent = p.slice(1).toLowerCase();
       return <span key={i} className={cn('rounded px-1 font-medium', AGENT_TONE[agent])}>{p}</span>;
     }
@@ -364,7 +366,7 @@ export default function DashboardV2() {
   // Beth (Ana Paula's personal assistant) is intentionally omitted from
   // the TEAM roster on this Dashboard — she remains @-mentionable but
   // doesn't surface as a business teammate here.
-  const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'gem'];
+  const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'gem', 'hermes'];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -674,7 +676,7 @@ function OverviewPanel({
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  const agentOrder = ['max','lara','matt','logan','sal','gem'];
+  const agentOrder = ['max','lara','matt','logan','sal','gem','hermes'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
@@ -779,7 +781,7 @@ function PromptsPanel({
 }) {
   // Beth is intentionally omitted from Prompts too — same rationale as
   // Overview: her domain isn't business operational.
-  const agentOrder = ['max','lara','matt','logan','sal','gem'];
+  const agentOrder = ['max','lara','matt','logan','sal','gem','hermes'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
