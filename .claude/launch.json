@@ -4,7 +4,7 @@
     {
       "name": "dev",
       "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "npx vite --host --port $PORT --strictPort"],
+      "runtimeArgs": ["-c", "cd /Users/felipeneublum/Desktop/XS-AI-V14 && exec npx --prefix /Users/felipeneublum/Desktop/XS-AI-V14 vite --root /Users/felipeneublum/Desktop/XS-AI-V14 --host --port $PORT --strictPort"],
       "port": 3000,
       "autoPort": true
     }

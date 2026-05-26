@@ -34,7 +34,7 @@ export interface DockEntry {
 
 const CATALOG: DockEntry[] = [
   { id: 'dashboard',        label: 'Dashboard',         icon: LayoutDashboard, color: 'indigo' },
-  { id: 'connections-hub',  label: 'Connections',       icon: Plug,            color: 'rose' },
+  { id: 'connections-hub',  label: 'Agent Queue',       icon: Plug,            color: 'rose' },
   { id: 'ai-sales',         label: 'AI Sales Agent',    icon: Sparkles,        color: 'violet' },
   { id: 'ai-dashboard',     label: 'AI Dashboard',      icon: CircuitBoard,    color: 'sky' },
   { id: 'ai-upload',        label: 'AI Upload',         icon: Upload,          color: 'indigo' },

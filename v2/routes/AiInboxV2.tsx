@@ -11,7 +11,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Inbox, FileText, Paperclip, Send, SendHorizontal, Clock, RefreshCw, Play, Pause,
+  Inbox, FileText, Paperclip, Send, SendHorizontal, Clock, Play, Pause,
   CheckCircle2, XCircle, AlertCircle, ExternalLink, Check, Trash2, X,
   Sparkles, FileStack, Wrench, ArrowRight,
 } from 'lucide-react';
@@ -24,7 +24,6 @@ import {
   InboxLogEntry, InboxQueue,
 } from '../services/inboxLog';
 import {
-  triggerInboxScanNow,
   TRIAGE_UPDATE_EVENT, BOOKING_ALERTS_EVENT, EMAIL_PROCESSED_EVENT, REPLY_DRAFTED_EVENT,
 } from '../hooks/useBackgroundJobs';
 import { sendDraft } from '../services/replyDrafter';
@@ -123,7 +122,6 @@ const AiInboxV2: React.FC = () => {
   const [activeQueue, setActiveQueue] = useState<InboxQueue>('corrections');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [scanBusy, setScanBusy] = useState(false);
   const [conn, setConn] = useState<ConnState>(() => readConnState());
   const [, force] = useState(0);
   const refresh = () => force(n => n + 1);
@@ -152,16 +150,8 @@ const AiInboxV2: React.FC = () => {
   );
   const selected = visible.find(e => e.id === selectedId) ?? null;
 
-  const scanNow = async () => {
-    setScanBusy(true);
-    try {
-      await triggerInboxScanNow();
-      toast.push({ kind: 'info', title: 'Scan complete', description: 'Queues refreshed' });
-      refresh();
-    } finally {
-      setScanBusy(false);
-    }
-  };
+  // In-browser scanning was removed in v14.16 — HERMES agents on the Mac
+  // mini own all triage 24/7. See hermes-integrations/ORCHESTRATION.md.
 
   // ── Detail-pane actions ────────────────────────────────────────
 
@@ -248,7 +238,7 @@ const AiInboxV2: React.FC = () => {
       <div className="shrink-0 flex items-center gap-3 px-3 py-2 rounded-md border border-[#1f1f1f] bg-[#0f0f0f] mb-3">
         <div className="flex items-center gap-1.5 text-[12px] font-medium text-slate-100">
           <Inbox size={14} className="text-indigo-300" />
-          AI Inbox
+          Agent Queue
         </div>
         <StatusPill
           label="Outlook"
@@ -261,14 +251,13 @@ const AiInboxV2: React.FC = () => {
           email={conn.gmail.email}
         />
         <div className="ml-auto flex items-center gap-2">
-          <Button
-            size="sm" variant="secondary"
-            onClick={scanNow}
-            disabled={scanBusy}
-            className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616]"
+          <div
+            className="flex items-center gap-1.5 text-[11.5px] text-emerald-300/90 bg-emerald-500/[0.07] border border-emerald-500/20 rounded-md px-2 py-1"
+            title="Lara (HERMES agent on Mac mini) auto-scans Outlook + Gmail every hour. No manual scan needed."
           >
-            <RefreshCw size={12} className={scanBusy ? 'animate-spin' : ''} /> Scan now
-          </Button>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            🤖 Lara · auto-scan every hour
+          </div>
         </div>
       </div>
 

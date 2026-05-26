@@ -9,7 +9,7 @@
 // when the user closes the tab, scanning pauses, which is fine since
 // they can't act on alerts offline anyway.
 
-import { useEffect, useRef } from 'react';
+// React imports removed — useBackgroundJobs is now a no-op since HERMES owns scanning.
 import { scanInbox, TriageItem } from '../services/inboxAutoTriage';
 import { processTriageItems, ProcessResult } from '../services/inboxProcessor';
 import { runReplyDrafter, ReplyResult } from '../services/replyDrafter';
@@ -169,32 +169,16 @@ async function runBookingPass() {
 
 let jobsMounted = 0;
 
-/** Mount once at the app shell. Idempotent — multiple mounts share
- *  the same timers via a refcount so StrictMode double-invocation
- *  doesn't double the Gemini spend. */
+/** Mount once at the app shell.
+ *
+ *  As of v14.16 the in-browser scanner is DISABLED — HERMES agents on the
+ *  Mac mini own all inbox triage + ERP ingestion 24/7. Running it from the
+ *  browser too would double-OCR every attachment and double the Gemini
+ *  spend. The manual `Scan now` button (triggerInboxScanNow below) is also
+ *  unwired so users land on the agent-managed review queue instead.
+ */
 export function useBackgroundJobs() {
-  const inboxTimerRef = useRef<number | null>(null);
-  const bookingTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    jobsMounted += 1;
-    if (jobsMounted > 1) return () => { jobsMounted -= 1; };
-
-    // Kick both jobs right away, then schedule.
-    void runInboxPass().then(() => runBookingPass());
-
-    inboxTimerRef.current = window.setInterval(() => { void runInboxPass(); }, INBOX_INTERVAL_MS);
-    bookingTimerRef.current = window.setInterval(() => { void runBookingPass(); }, BOOKING_INTERVAL_MS);
-
-    return () => {
-      jobsMounted -= 1;
-      if (jobsMounted > 0) return;
-      if (inboxTimerRef.current) window.clearInterval(inboxTimerRef.current);
-      if (bookingTimerRef.current) window.clearInterval(bookingTimerRef.current);
-      inboxTimerRef.current = null;
-      bookingTimerRef.current = null;
-    };
-  }, []);
+  // No-op: HERMES owns the scanning loop. See hermes-integrations/ORCHESTRATION.md.
 }
 
 /** Manual trigger — wired to the banner's "Scan now" button. */

@@ -16,7 +16,7 @@ export const navigationConfig = {
         items: []
     },
     CONNECTIONS: {
-        label: 'Connections',
+        label: 'Agent Queue',
         icon: Mail,
         items: []
     },
