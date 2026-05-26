@@ -115,19 +115,6 @@ const buildSections = (
   }
   return [
   {
-    id: 'agents',
-    label: 'Agents',
-    accent: 'emerald',
-    icon: Bot,
-    items: [
-      { id: 'agentic-stream',       label: 'Stream',       icon: Activity },
-      { id: 'agentic-autonomy',     label: 'Autonomy',     icon: Sliders },
-      { id: 'agentic-capabilities', label: 'Capabilities', icon: Wrench },
-      { id: 'agentic-manual',       label: 'Manual action', icon: Pencil },
-      { id: 'agentic-audit',        label: 'Audit',        icon: ScrollText },
-    ],
-  },
-  {
     id: 'workspace',
     label: 'Workspace',
     accent: 'indigo',
@@ -192,6 +179,19 @@ const buildSections = (
       { id: 'payables',          label: 'Payables',          icon: ArrowUpRight },
       { id: 'receivables',       label: 'Receivables',       icon: ArrowDownLeft },
       { id: 'customer-balances', label: 'Customer Balances', icon: Wallet },
+    ],
+  },
+  {
+    id: 'agents',
+    label: 'Agents',
+    accent: 'emerald',
+    icon: Bot,
+    items: [
+      { id: 'agentic-stream',       label: 'Stream',        icon: Activity },
+      { id: 'agentic-autonomy',     label: 'Autonomy',      icon: Sliders },
+      { id: 'agentic-capabilities', label: 'Capabilities',  icon: Wrench },
+      { id: 'agentic-manual',       label: 'Manual action', icon: Pencil },
+      { id: 'agentic-audit',        label: 'Audit',         icon: ScrollText },
     ],
   },
   {
