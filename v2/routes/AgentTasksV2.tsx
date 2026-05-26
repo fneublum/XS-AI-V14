@@ -110,7 +110,7 @@ const AgentTasksV2: React.FC = () => {
         </button>
       </div>
 
-      {/* Feed */}
+      {/* Compact feed — 1 row per record */}
       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar rounded-md border border-[#1f1f1f] bg-[#0f0f0f]">
         {isLoading && (
           <div className="p-6 text-center text-[13px] text-slate-500">Loading agent activity…</div>
@@ -122,8 +122,7 @@ const AgentTasksV2: React.FC = () => {
         )}
         {!isLoading && !error && filtered.length === 0 && (
           <div className="p-6 text-center text-[13px] text-slate-500">
-            No agent activity yet for this filter. HERMES agents will populate this feed
-            as they ingest documents, audit BLs, and apply corrections.
+            No agent activity yet for this filter.
           </div>
         )}
 
@@ -137,33 +136,46 @@ const AgentTasksV2: React.FC = () => {
                 key={t.id}
                 onClick={clickable ? () => handleOpen(t.id, t.entityTable, t.entityId) : undefined}
                 className={cn(
-                  'px-3 py-2.5 flex items-start gap-3 transition-colors',
+                  'px-3 py-1.5 flex items-center gap-2.5 text-[12.5px] transition-colors',
                   clickable && 'hover:bg-[#161616] cursor-pointer',
                 )}
               >
-                <span className={cn('mt-0.5 w-7 h-7 rounded-md border flex items-center justify-center shrink-0', meta.tone)}>
-                  <Icon size={14} />
+                {/* Kind icon */}
+                <span className={cn('w-5 h-5 rounded border flex items-center justify-center shrink-0', meta.tone)}>
+                  <Icon size={11} />
                 </span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <div className="text-[13px] text-slate-100 font-medium truncate">{t.title}</div>
-                    <div className="text-[11.5px] text-slate-500 shrink-0">{relative(t.timestamp)}</div>
-                  </div>
-                  {t.subtitle && (
-                    <div className="text-[12px] text-slate-400 truncate">{t.subtitle}</div>
-                  )}
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10.5px] uppercase tracking-wider text-slate-500">{meta.label}</span>
-                    <span className="text-[10.5px] text-slate-600">·</span>
-                    <span className="text-[10.5px] text-slate-500">🤖 {t.agent}</span>
-                    {t.status && (
-                      <>
-                        <span className="text-[10.5px] text-slate-600">·</span>
-                        <span className="text-[10.5px] text-slate-500">{t.status}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
+
+                {/* Time */}
+                <span className="text-[11.5px] text-slate-500 w-[60px] shrink-0 tabular-nums">
+                  {relative(t.timestamp)}
+                </span>
+
+                {/* Agent */}
+                <span className="text-[11.5px] text-slate-300 w-[58px] shrink-0">
+                  🤖 {t.agent}
+                </span>
+
+                {/* Action */}
+                <span className="text-[11.5px] text-slate-500 w-[110px] shrink-0">
+                  {meta.label}
+                </span>
+
+                {/* Entity title */}
+                <span className="text-slate-100 font-medium shrink-0 max-w-[160px] truncate">
+                  {t.title}
+                </span>
+
+                {/* Subtitle (fills remaining) */}
+                {t.subtitle && (
+                  <span className="text-slate-400 truncate min-w-0 flex-1">· {t.subtitle}</span>
+                )}
+
+                {/* Status badge */}
+                {t.status && (
+                  <span className="text-[10.5px] uppercase tracking-wider text-slate-500 px-1.5 py-0.5 rounded border border-[#2a2a2a] bg-[#0a0a0a] shrink-0">
+                    {t.status}
+                  </span>
+                )}
               </li>
             );
           })}

@@ -128,14 +128,19 @@ export function useAgentTasks(limit = 60) {
 
       const tasks: AgentTask[] = [];
 
+      // Agent ownership is inferred from which HERMES profile most
+      // commonly originates each kind of write (see ORCHESTRATION.md).
+      // Once we add an explicit agent_audit_log table we'll read this
+      // from there instead of guessing.
+
       for (const r of (bookings.data ?? []) as BookingRow[]) {
         if (!r.createdAt) continue;
         tasks.push({
           id: `bookings:${r.id}`,
           timestamp: r.createdAt,
           kind: 'booking_ingested',
-          agent: 'Lara/Logan',
-          title: `Booking #${r.bookingNumber}`,
+          agent: 'Lara',
+          title: `#${r.bookingNumber}`,
           subtitle: [r.customer, [r.pol, r.pod].filter(Boolean).join('→')].filter(Boolean).join(' · '),
           entityTable: 'bookings',
           entityId: r.id,
@@ -151,8 +156,8 @@ export function useAgentTasks(limit = 60) {
           id: `invoices:${r.id}`,
           timestamp: ts,
           kind: 'invoice_ingested',
-          agent: 'Lara/Matt',
-          title: `Invoice ${r.invoiceNumber}`,
+          agent: 'Lara',
+          title: r.invoiceNumber,
           subtitle: [r.supplier ?? r.soldTo, amt].filter(Boolean).join(' · '),
           entityTable: 'invoices',
           entityId: r.id,
@@ -167,8 +172,8 @@ export function useAgentTasks(limit = 60) {
           id: `packing_lists:${r.id}`,
           timestamp: ts,
           kind: 'packing_list_ingested',
-          agent: 'Lara/Logan',
-          title: `Packing List ${r.plNumber}`,
+          agent: 'Lara',
+          title: r.plNumber,
           subtitle: [r.shipper, r.consignee].filter(Boolean).join(' → '),
           entityTable: 'packing_lists',
           entityId: r.id,
@@ -182,8 +187,8 @@ export function useAgentTasks(limit = 60) {
           id: `bill_landings:${r.id}`,
           timestamp: r.createdAt,
           kind: 'bl_ingested',
-          agent: 'Lara/Logan',
-          title: `BL ${r.blNumber}`,
+          agent: 'Logan',
+          title: r.blNumber,
           subtitle: [r.shipper, [r.portLoading, r.portDischarge].filter(Boolean).join('→')].filter(Boolean).join(' · '),
           entityTable: 'bill_landings',
           entityId: r.id,
@@ -203,7 +208,7 @@ export function useAgentTasks(limit = 60) {
             timestamp: r.audited_at ?? new Date().toISOString(),
             kind: 'correction_applied',
             agent: 'Logan',
-            title: `Correction applied · BL ${r.bl_number}`,
+            title: r.bl_number,
             subtitle: [r.deal_name, `${r.applied_corrections!.length} field(s)`].filter(Boolean).join(' · '),
             entityTable: 'bl_audits',
             entityId: r.bl_number,
@@ -215,7 +220,7 @@ export function useAgentTasks(limit = 60) {
             timestamp: r.correction_email_sent_at!,
             kind: 'correction_emailed',
             agent: 'Logan',
-            title: `Correction emailed · BL ${r.bl_number}`,
+            title: r.bl_number,
             subtitle: r.deal_name ?? '',
             entityTable: 'bl_audits',
             entityId: r.bl_number,
@@ -228,7 +233,7 @@ export function useAgentTasks(limit = 60) {
             timestamp: r.audited_at!,
             kind: 'bl_audited',
             agent: 'Logan',
-            title: `BL audited · ${r.bl_number}`,
+            title: r.bl_number,
             subtitle: [r.deal_name, issues ? `${issues} issue(s)` : 'no issues'].filter(Boolean).join(' · '),
             entityTable: 'bl_audits',
             entityId: r.bl_number,
