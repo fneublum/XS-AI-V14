@@ -5,10 +5,13 @@
 .gitignore
 .DS_Store
 
-# Build caches — Cloud Build will run `npm install` + `npm run build`
-# from scratch inside the Docker image, so we don't upload local artifacts.
+# node_modules excluded — Cloud Build / App Engine reinstalls on the server.
 node_modules/
-dist/
+
+# NOTE: dist/ is NOT excluded. App Engine standard nodejs22 no longer
+# auto-runs `npm run build`, so the upload must contain prebuilt assets
+# for the static_files handlers in app.yaml. Run `npm run build` locally
+# before `gcloud app deploy`.
 
 # Local-only env — secrets travel via Cloud Build substitutions, not
 # files in the image.
