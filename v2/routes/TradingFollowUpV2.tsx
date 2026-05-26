@@ -279,6 +279,23 @@ const TradingFollowUpV2: React.FC = () => {
     [bookingEtaByNumber, inferEtaFromPodAndDate],
   );
 
+  // ETA for a sales order (used in the To Ship table). Mirrors etaForInvoice
+  // but reads from so.bookingNumber and so.orderDate.
+  const etaForSalesOrder = useCallback(
+    (so: { bookingNumber: string | null; pod: string | null; orderDate: string | null }):
+      { eta: string | null; source: 'booking' | 'estimated' | 'none' } => {
+      const bn = (so.bookingNumber ?? '').trim();
+      if (bn) {
+        const fromBooking = bookingEtaByNumber.get(bn);
+        if (fromBooking) return { eta: fromBooking, source: 'booking' };
+      }
+      const est = inferEtaFromPodAndDate(so.pod, so.orderDate);
+      if (est) return { eta: est, source: 'estimated' };
+      return { eta: null, source: 'none' };
+    },
+    [bookingEtaByNumber, inferEtaFromPodAndDate],
+  );
+
   // Render POD as "Name (CODE)" when the ports catalog has the
   // code; fall back to the raw value (which may already be a name
   // or "Name (CODE)" from prior data entry).
@@ -549,13 +566,15 @@ const TradingFollowUpV2: React.FC = () => {
 
     // ── To Ship ─────────────────────────────────────────────────
     const toShipHeader = [
-      'Date', 'Type', 'Reference', 'Details', 'Product', 'POD',
+      'Date', 'Type', 'Reference', 'Details', 'Product', 'POD', 'ETA',
       'Qty Pending (LBS)', 'Qty Pending (KGS)', 'Pending $',
     ];
     const toShipBody = toShipRows.map(({ so, pendingQty, pendingAmount }) => {
       const productNames = Array.from(new Set(
         orderItems(so).map(resolveCatalogName).filter(Boolean),
       )).join(', ') || '—';
+      const { eta, source } = etaForSalesOrder(so);
+      const etaCell = eta ? `${formatDate(eta)}${source === 'estimated' ? ' (est)' : ''}` : '—';
       return [
         formatDate(so.orderDate) || '',
         'To Ship',
@@ -563,13 +582,14 @@ const TradingFollowUpV2: React.FC = () => {
         so.status || '—',
         productNames,
         formatPod(so.pod),
+        etaCell,
         formatQty(pendingQty, 'LBS'),
         formatQty(pendingQty, 'KGS'),
         formatCurrency(pendingAmount, so.currency),
       ];
     });
     const toShipTotalsRow = [
-      '', '', '', '', '', 'TOTAL',
+      '', '', '', '', '', '', 'TOTAL',
       formatQty(toShipTotals.qty, 'LBS'),
       formatQty(toShipTotals.qty, 'KGS'),
       formatCurrency(toShipTotals.amount),
@@ -579,7 +599,7 @@ const TradingFollowUpV2: React.FC = () => {
       shipped:  { header: shippedHeader, body: shippedBody, totals: shippedTotals },
       toShip:   { header: toShipHeader,   body: toShipBody,   totals: toShipTotalsRow },
     };
-  }, [entries, toShipRows, resolveCatalogName, formatPod, etaForInvoice, totals.qtyShipped, totals.totalShipped, toShipTotals.qty, toShipTotals.amount]);
+  }, [entries, toShipRows, resolveCatalogName, formatPod, etaForInvoice, etaForSalesOrder, totals.qtyShipped, totals.totalShipped, toShipTotals.qty, toShipTotals.amount]);
 
   const exportFilename = useCallback((ext: 'pdf' | 'xlsx') => {
     const cname = (selectedCustomer?.name || 'customer').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -959,6 +979,7 @@ const TradingFollowUpV2: React.FC = () => {
                   <th className="px-3 py-2 font-medium">Details</th>
                   <th className="px-3 py-2 font-medium">Product</th>
                   <th className="px-3 py-2 font-medium">POD</th>
+                  <th className="px-3 py-2 font-medium">ETA</th>
                   <th className="px-3 py-2 font-medium text-right">Qty Pending (LBS)</th>
                   <th className="px-3 py-2 font-medium text-right">Qty Pending (KGS)</th>
                   <th className="px-3 py-2 font-medium text-right">Pending $</th>
@@ -984,6 +1005,22 @@ const TradingFollowUpV2: React.FC = () => {
                         <div className="line-clamp-2 leading-tight">{joinProductNames(productNames.map(productName => ({ productName })))}</div>
                       </td>
                       <td className="px-3 py-1.5 text-[11px] text-slate-400 whitespace-nowrap">{formatPod(so.pod)}</td>
+                      {(() => {
+                        const { eta, source } = etaForSalesOrder(so);
+                        return (
+                          <td className="px-3 py-1.5 whitespace-nowrap text-[11px] font-mono tabular-nums text-slate-400"
+                            title={
+                              source === 'booking' ? `From booking ${so.bookingNumber}`
+                              : source === 'estimated' ? `Estimated from POD + order date`
+                              : 'Not enough info to compute'
+                            }>
+                            {eta ? formatDate(eta) : '—'}
+                            {source === 'estimated' && eta && (
+                              <span className="ml-1 text-[9px] text-amber-400 align-top">est</span>
+                            )}
+                          </td>
+                        );
+                      })()}
                       <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{formatQty(pendingQty, 'LBS')}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{formatQty(pendingQty, 'KGS')}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-amber-300">{formatCurrency(pendingAmount, so.currency)}</td>
@@ -993,7 +1030,7 @@ const TradingFollowUpV2: React.FC = () => {
               </tbody>
               <tfoot className="bg-[#0f0f0f] border-t border-[#1f1f1f]">
                 <tr className="text-[11px] uppercase tracking-wider text-slate-400">
-                  <td colSpan={6} className="px-3 py-2 text-right font-medium">Total</td>
+                  <td colSpan={7} className="px-3 py-2 text-right font-medium">Total</td>
                   <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">{formatQty(toShipTotals.qty, 'LBS')}</td>
                   <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-100">{formatQty(toShipTotals.qty, 'KGS')}</td>
                   <td className="px-3 py-2 text-right tabular-nums font-semibold text-amber-300">{formatCurrency(toShipTotals.amount)}</td>
