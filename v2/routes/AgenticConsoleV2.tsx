@@ -228,7 +228,7 @@ function TierBadge({ tier }: { tier: Tier }) {
 function ConnectionBanner({ error }: { error?: string }) {
   if (!error) return null;
   return (
-    <Card className="border-red-700/40 bg-red-900/10">
+    <Card className="border-red-500/30 bg-red-500/5">
       <CardBody className="text-sm text-red-300">
         XS-agentic control-plane unreachable at <code className="text-red-200">{CONTROL_PLANE_URL}</code>.
         Start it with <code className="text-red-200">cd ~/Desktop/XS-agentic/services/control-plane && PORT=7878 npm start</code>.
@@ -287,14 +287,16 @@ function StreamView() {
   return (
     <div className="space-y-6">
       <ConnectionBanner error={error} />
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         {(['pending', 'today', 'all'] as const).map(k => (
           <button
             key={k}
             onClick={() => setFilter(k)}
             className={cn(
-              'rounded-full px-3 py-1 text-xs font-medium transition-colors',
-              filter === k ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-400 hover:text-slate-200',
+              'rounded px-3 py-1 text-xs font-medium border transition-colors',
+              filter === k
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                : 'border-[#1f1f1f] bg-[#0f0f0f] text-slate-400 hover:text-slate-200 hover:border-[#2a2a2a]',
             )}
           >{k}</button>
         ))}
@@ -328,7 +330,7 @@ function StreamView() {
           ) : (
             <div className="space-y-1.5">
               {recent.slice(0, 60).map(a => (
-                <div key={a.id} className="flex flex-wrap items-center gap-3 rounded border border-slate-800 px-3 py-2 text-sm">
+                <div key={a.id} className="flex flex-wrap items-center gap-3 rounded border border-[#1f1f1f] bg-[#0f0f0f] px-3 py-2 text-sm">
                   <AgentChip id={a.agent_id} />
                   <Badge variant={
                     a.status === 'EXECUTED' || a.status === 'AUTO_APPROVED' || a.status === 'APPROVED' ? 'success' :
@@ -375,25 +377,25 @@ function DecisionCard({
   const refs = refChips(a);
 
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+    <div className="rounded-md border border-[#1f1f1f] bg-[#0f0f0f] p-4 transition-colors hover:border-[#2a2a2a]">
       {/* Header row */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
         <AgentChip id={a.agent_id} />
         <TierBadge tier={a.tier_at_propose} />
-        <span>·</span>
+        <span className="text-slate-700">·</span>
         <span>{fmtAgo(a.proposed_at)}</span>
         <code className="ml-auto text-[10px] text-slate-600">{a.capability_id}</code>
       </div>
 
       {/* Plain-English summary — the headline */}
-      <div className="mt-2 text-[15px] leading-snug text-slate-100">
+      <div className="mt-2.5 text-[15px] leading-snug text-slate-100">
         {summary}
       </div>
 
       {/* Why */}
       {reason && (
-        <div className="mt-2 flex gap-2 text-sm text-slate-300">
-          <span className="shrink-0 font-medium text-slate-500">Why</span>
+        <div className="mt-2.5 flex gap-2 text-sm text-slate-300">
+          <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-500">Why</span>
           <span>{reason}</span>
         </div>
       )}
@@ -409,13 +411,14 @@ function DecisionCard({
             {draftOpen ? 'Hide draft' : 'Show draft preview'}
           </button>
           {draftOpen && (
-            <div className="mt-2 rounded border border-slate-800 bg-slate-950/60 p-3 text-sm">
+            <div className="mt-2 rounded border border-[#1f1f1f] bg-[#141414] p-3 text-sm">
               {draft.subject && (
-                <div className="mb-2 text-slate-300">
-                  <span className="text-xs uppercase tracking-wide text-slate-500">Subject:</span> {draft.subject}
+                <div className="mb-2 pb-2 border-b border-[#1f1f1f] text-slate-200">
+                  <span className="mr-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Subject</span>
+                  {draft.subject}
                 </div>
               )}
-              <div className="whitespace-pre-wrap text-slate-200">{draft.body}</div>
+              <div className="whitespace-pre-wrap text-slate-300">{draft.body}</div>
             </div>
           )}
         </div>
@@ -425,8 +428,8 @@ function DecisionCard({
       {refs.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">
           {refs.map(r => (
-            <span key={r.label + r.value} className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-300">
-              <LinkIcon size={10} className="text-slate-500" />
+            <span key={r.label + r.value} className="inline-flex items-center gap-1.5 rounded border border-[#1f1f1f] bg-[#141414] px-2 py-0.5 text-xs">
+              <LinkIcon size={10} className="text-slate-600" />
               <span className="text-slate-500">{r.label}</span>
               <span className="font-medium text-slate-200">{r.value}</span>
             </span>
@@ -444,12 +447,12 @@ function DecisionCard({
           raw payload
         </button>
         {rawOpen && (
-          <pre className="mt-2 overflow-x-auto rounded border border-slate-800 bg-slate-950/60 p-2 text-[11px] text-slate-400">{JSON.stringify(a.payload, null, 2)}</pre>
+          <pre className="mt-2 overflow-x-auto rounded border border-[#1f1f1f] bg-[#141414] p-2 text-[11px] text-slate-400">{JSON.stringify(a.payload, null, 2)}</pre>
         )}
       </div>
 
       {/* Actions */}
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-[#1f1f1f] pt-3">
         <Button variant="primary" size="sm" onClick={onApprove}>
           <Check size={14} className="mr-1" /> Approve
         </Button>
@@ -564,7 +567,7 @@ function ThresholdTile({
   useEffect(() => { setRaw(JSON.stringify(t.constraints, null, 2)); }, [t.constraints]);
 
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+    <div className="rounded-lg border border-[#1f1f1f] bg-[#141414] p-3">
       <div className="flex items-center justify-between gap-2">
         <code className="text-sm text-slate-200">{t.capability_id}</code>
         {t.destructive && <Badge variant="danger">DESTRUCTIVE</Badge>}
@@ -581,7 +584,7 @@ function ThresholdTile({
                   tier === 'QUEUE_LOW' ? 'bg-sky-500 text-sky-950' :
                   tier === 'QUEUE_HIGH' ? 'bg-amber-500 text-amber-950' :
                   'bg-red-500 text-red-950'
-                : 'bg-slate-800 text-slate-400 hover:text-slate-200',
+                : 'bg-[#0f0f0f] border border-[#1f1f1f] text-slate-400 hover:text-slate-200 hover:border-[#2a2a2a]',
             )}
           >{tier}</button>
         ))}
@@ -591,7 +594,7 @@ function ThresholdTile({
         value={raw}
         onChange={e => setRaw(e.target.value)}
         rows={3}
-        className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-200"
+        className="mt-1 w-full rounded border border-[#1f1f1f] bg-[#141414] px-2 py-1 font-mono text-xs text-slate-200"
       />
       <div className="mt-2 flex gap-2">
         <Button variant="secondary" size="sm" onClick={() => onSave(t, raw)}>save constraints</Button>
@@ -746,7 +749,7 @@ function ManualView() {
               <select
                 value={form.capability_id}
                 onChange={e => setForm({ ...form, capability_id: e.target.value })}
-                className="rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-200"
+                className="rounded border border-[#1f1f1f] bg-[#141414] px-2 py-1.5 text-slate-200"
               >
                 <option value="">— select —</option>
                 {caps.map(c => <option key={c.id} value={c.id}>{c.id} — {c.description}</option>)}
@@ -803,7 +806,7 @@ function AuditView() {
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-slate-400">actor</span>
               <select value={actor} onChange={e => setActor(e.target.value)}
-                className="rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-200">
+                className="rounded border border-[#1f1f1f] bg-[#141414] px-2 py-1.5 text-slate-200">
                 <option value="">(any)</option>
                 {['felipe','system','max','lara','matt','logan','sal','beth'].map(x =>
                   <option key={x} value={x}>{x}</option>)}
@@ -812,7 +815,7 @@ function AuditView() {
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-slate-400">action</span>
               <select value={action} onChange={e => setAction(e.target.value)}
-                className="rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-200">
+                className="rounded border border-[#1f1f1f] bg-[#141414] px-2 py-1.5 text-slate-200">
                 <option value="">(any)</option>
                 {[
                   'proposed','awaiting','auto_approved','approved','denied','executed','manually_executed',
@@ -833,7 +836,7 @@ function AuditView() {
           ) : (
             <div className="divide-y divide-slate-800">
               {rows.map(r => (
-                <div key={r.id} className="grid grid-cols-12 gap-3 px-4 py-2 font-mono text-xs hover:bg-slate-900/40">
+                <div key={r.id} className="grid grid-cols-12 gap-3 px-4 py-2 font-mono text-xs hover:bg-[#141414]">
                   <span className="col-span-3 text-slate-500">{r.ts}</span>
                   <span className="col-span-2"><AgentChip id={r.actor} /></span>
                   <span className="col-span-2 text-emerald-300">{r.action}</span>
