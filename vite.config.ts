@@ -21,6 +21,17 @@ export default defineConfig(() => {
     server: {
       port: 3000,
       host: '0.0.0.0',
+      // Dev-only proxy so the browser can reach the XS-agentic control-plane
+      // without CORS or network-isolation issues (sandboxed preview browsers
+      // can't open arbitrary localhost ports). Override the upstream with
+      // VITE_AGENTIC_PROXY_TARGET if running control-plane elsewhere.
+      proxy: {
+        '/xs-agentic': {
+          target: process.env.VITE_AGENTIC_PROXY_TARGET || 'http://localhost:7878',
+          changeOrigin: true,
+          rewrite: (p: string) => p.replace(/^\/xs-agentic/, ''),
+        },
+      },
     },
     plugins: [react()],
     // Polyfill process.env to empty object so legacy code reading

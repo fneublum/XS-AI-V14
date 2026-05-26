@@ -19,6 +19,7 @@ import {
   Database, Settings as SettingsIcon,
   Building2, Compass, Handshake, Truck, Banknote, Wrench,
   ShieldAlert,
+  Bot, Activity, Sliders, ScrollText, Pencil,
 } from 'lucide-react';
 import { CompanySwitcher } from './layout/CompanySwitcher';
 import { CommandPalette, PaletteCommand, PaletteDataProvider } from './layout/CommandPalette';
@@ -88,6 +89,7 @@ const CostProfitAIV2        = lazy(() => import('./routes/CostProfitAIV2'));
 const LoginV2               = lazy(() => import('./routes/LoginV2'));
 const PaymentTermsV2        = lazy(() => import('./routes/PaymentTermsV2'));
 const AgentPortalV2         = lazy(() => import('./routes/AgentPortalV2'));
+const AgenticConsoleV2      = lazy(() => import('./routes/AgenticConsoleV2'));
 
 // Sidebar layout — matches the 2026-04-18 spec. Workspace holds the
 // overview + AI surfaces, Trading / Agent Sales / Logistics / Finance
@@ -112,6 +114,19 @@ const buildSections = (
     }];
   }
   return [
+  {
+    id: 'agents',
+    label: 'Agents',
+    accent: 'emerald',
+    icon: Bot,
+    items: [
+      { id: 'agentic-stream',       label: 'Stream',       icon: Activity },
+      { id: 'agentic-autonomy',     label: 'Autonomy',     icon: Sliders },
+      { id: 'agentic-capabilities', label: 'Capabilities', icon: Wrench },
+      { id: 'agentic-manual',       label: 'Manual action', icon: Pencil },
+      { id: 'agentic-audit',        label: 'Audit',        icon: ScrollText },
+    ],
+  },
   {
     id: 'workspace',
     label: 'Workspace',
@@ -253,6 +268,12 @@ const routeTitles: Record<string, string> = {
   'email-agent':     'Email Agent',
   'agent-portal-quotes':   'Freight Quotes',
   'agent-portal-bookings': 'Bookings',
+  // Agentic (XS-agentic)
+  'agentic-stream':       'Agents · Stream',
+  'agentic-autonomy':     'Agents · Autonomy',
+  'agentic-capabilities': 'Agents · Capabilities',
+  'agentic-manual':       'Agents · Manual action',
+  'agentic-audit':        'Agents · Audit',
 };
 
 // Single-letter hotkeys removed per user preference — navigation goes
@@ -700,6 +721,11 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'agent-followup'     && <AgentFollowUpV2 navigate={navigate} />}
           {activeId === 'agent-portal-quotes'   && <AgentPortalV2 view="quotes" />}
           {activeId === 'agent-portal-bookings' && <AgentPortalV2 view="bookings" />}
+          {activeId === 'agentic-stream'        && <AgenticConsoleV2 view="stream" />}
+          {activeId === 'agentic-autonomy'      && <AgenticConsoleV2 view="autonomy" />}
+          {activeId === 'agentic-capabilities'  && <AgenticConsoleV2 view="capabilities" />}
+          {activeId === 'agentic-manual'        && <AgenticConsoleV2 view="manual" />}
+          {activeId === 'agentic-audit'         && <AgenticConsoleV2 view="audit" />}
         </Suspense>
       </AppShell>
 
