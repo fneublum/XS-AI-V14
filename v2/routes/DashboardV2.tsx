@@ -901,32 +901,12 @@ function AttachmentDisplay({ a }: { a: Attachment }) {
 }
 
 function EmptyChatHint({ personas, onSend }: { personas: Personas; onSend: (text: string) => void }) {
-  const examples = [
-    { agent: 'max', text: 'what is the status across the team?' },
-    { agent: 'matt', text: 'anything overdue in AR right now?' },
-    { agent: 'logan', text: 'any shipments at risk this week?' },
-    { agent: 'sal', text: 'is the FIBERTEX proforma ready to send?' },
-  ];
+  void personas; void onSend;
   return (
     <div className="rounded border border-[#1f1f1f] bg-[#0f0f0f] p-6">
       <div className="text-[15px] font-medium text-slate-100">Start a conversation with the team.</div>
       <div className="mt-1 text-sm text-slate-400">
-        Seven agents are listening. Mention one with <code>@name</code> or send without and Max routes it. Click a prompt below to send it.
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {examples.map(e => {
-          const full = `@${e.agent} ${e.text}`;
-          return (
-            <button
-              key={e.text}
-              onClick={() => onSend(full)}
-              className="rounded border border-[#1f1f1f] bg-[#141414] px-3 py-2 text-left text-sm text-slate-300 hover:border-[#2a2a2a] hover:text-slate-100"
-            >
-              <span className={cn('mr-1.5 font-medium', AGENT_TONE[e.agent])}>@{e.agent}</span>
-              {e.text}
-            </button>
-          );
-        })}
+        Seven agents are listening. Mention one with <code>@name</code> or send without and Max routes it. Open the Prompts panel for ideas grounded in recent activity.
       </div>
     </div>
   );
