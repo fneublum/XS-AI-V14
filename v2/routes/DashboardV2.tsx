@@ -11,7 +11,7 @@
 // the old layout is needed back; this file replaces it entirely.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, UploadCloud, Trash2, LayoutGrid, Sparkles, ArrowLeft } from 'lucide-react';
+import { MessageSquare, Send, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, UploadCloud, Trash2, LayoutGrid, Sparkles, ArrowLeft, Clock } from 'lucide-react';
 import { Card, CardBody, Button } from '../primitives';
 import { useToast } from '../primitives/Toast';
 import { cn } from '../primitives/utils';
@@ -74,7 +74,22 @@ interface Suggestions {
   };
 }
 
-type Mode = 'chat' | 'overview' | 'prompts';
+interface Cron {
+  id: string;
+  agent: string;
+  kind: 'interval' | 'daily';
+  cadence: string;
+  job: string;
+}
+interface CronsPayload {
+  source: string;
+  host: string;
+  weekdays_only_daily: boolean;
+  crons: Cron[];
+  counts: { total: number; interval: number; daily: number };
+}
+
+type Mode = 'chat' | 'overview' | 'prompts' | 'crons';
 
 // ─── API ───────────────────────────────────────────────────────────────
 
@@ -188,6 +203,7 @@ export default function DashboardV2() {
   const [mode, setMode] = useState<Mode>('chat');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
+  const [crons, setCrons] = useState<CronsPayload | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -216,6 +232,8 @@ export default function DashboardV2() {
       api<Overview>('GET', '/chat/overview').then(setOverview).catch(() => setOverview(null));
     } else if (mode === 'prompts') {
       api<Suggestions>('GET', '/chat/suggestions').then(setSuggestions).catch(() => setSuggestions(null));
+    } else if (mode === 'crons') {
+      api<CronsPayload>('GET', '/chat/crons').then(setCrons).catch(() => setCrons(null));
     }
   }, [mode]);
 
@@ -410,6 +428,18 @@ export default function DashboardV2() {
               <Sparkles size={14} />
               <span className="text-sm font-medium">Prompts</span>
             </button>
+            <button
+              onClick={() => setMode(mode === 'crons' ? 'chat' : 'crons')}
+              className={cn(
+                'flex w-full items-center gap-2 rounded border p-2 text-left transition-colors',
+                mode === 'crons'
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : 'border-[#1f1f1f] bg-[#0f0f0f] text-slate-300 hover:border-[#2a2a2a]',
+              )}
+            >
+              <Clock size={14} />
+              <span className="text-sm font-medium">Crons</span>
+            </button>
 
             <div className="mb-2 mt-3 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Team</div>
             {agentOrder.map(id => {
@@ -458,6 +488,13 @@ export default function DashboardV2() {
             personas={personas}
             onBack={() => setMode('chat')}
             onSend={(t) => { setMode('chat'); sendText(t); }}
+          />
+        )}
+        {mode === 'crons' && (
+          <CronsPanel
+            data={crons}
+            personas={personas}
+            onBack={() => setMode('chat')}
           />
         )}
         {mode === 'chat' && (
@@ -844,6 +881,91 @@ function MessageBubble({ m, personas }: { m: ChatMessage; personas: Personas }) 
 }
 
 // ─── Attachment chips (composer + message body) ────────────────────────
+
+// ─── Crons panel — HERMES launchd schedule on the Mac mini ─────────────
+
+function CronsPanel({
+  data, personas, onBack,
+}: {
+  data: CronsPayload | null;
+  personas: Personas;
+  onBack: () => void;
+}) {
+  const interval = data?.crons.filter(c => c.kind === 'interval') ?? [];
+  const daily    = data?.crons.filter(c => c.kind === 'daily') ?? [];
+
+  return (
+    <Card className="flex min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
+        <Clock size={16} className="text-emerald-400" />
+        <h2 className="text-sm font-semibold text-slate-100">HERMES schedules</h2>
+        <span className="text-xs text-slate-500">
+          {data ? `${data.counts.total} active on ${data.host}` : 'launchd, Mac mini'}
+        </span>
+        <Button variant="ghost" size="sm" className="ml-auto" onClick={onBack}>
+          <ArrowLeft size={14} className="mr-1" />back to chat
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-6">
+        {!data ? (
+          <div className="text-sm text-slate-500">loading…</div>
+        ) : (
+          <>
+            <CronSection title="Real-time loops" subtitle="run continuously" rows={interval} personas={personas} />
+            <CronSection title="Daily timeline" subtitle="weekday schedule (Mon–Fri)" rows={daily} personas={personas} />
+            <div className="text-[11px] text-slate-600">
+              Source: <code>{data.source}</code> · host <code>{data.host}</code>. Live <code>launchctl</code> readout will replace this list when wired.
+            </div>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function CronSection({
+  title, subtitle, rows, personas,
+}: {
+  title: string;
+  subtitle: string;
+  rows: Cron[];
+  personas: Personas;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <section>
+      <div className="mb-2 flex items-baseline gap-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{title}</h3>
+        <span className="text-[11px] text-slate-600">{subtitle}</span>
+        <span className="ml-auto text-[11px] text-slate-600">{rows.length}</span>
+      </div>
+      <div className="overflow-hidden rounded border border-[#1f1f1f]">
+        {rows.map((c, i) => {
+          const p = personas[c.agent];
+          const agentLabel = p?.display ?? (c.agent === 'system' ? 'System' : c.agent);
+          return (
+            <div
+              key={c.id}
+              className={cn(
+                'grid grid-cols-[110px_120px_1fr] items-center gap-3 px-3 py-2 text-sm',
+                i !== 0 && 'border-t border-[#1f1f1f]',
+              )}
+            >
+              <span className="font-mono text-xs text-slate-400">{c.cadence}</span>
+              <span className="flex items-center gap-1.5">
+                <span className={cn('h-1.5 w-1.5 rounded-full', AGENT_RING[c.agent] ?? AGENT_RING.system)} />
+                <span className={cn('text-xs font-medium', AGENT_TONE[c.agent] ?? AGENT_TONE.system)}>
+                  {agentLabel}
+                </span>
+              </span>
+              <span className="text-slate-200">{c.job}</span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
 function AttachmentChip({ a, onRemove }: { a: Attachment; onRemove: () => void }) {
   const isImg = /^image\//i.test(a.type);
