@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<false/>
+	<key>Label</key>
+	<string>ai.hermes.cutoff-briefing</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/zsh</string>
+		<string>-c</string>
+		<string>/Users/maxsmart/.hermes/scripts/cutoff-briefing.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/maxsmart/Library/Logs/hermes-cutoff-briefing.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/maxsmart/Library/Logs/hermes-cutoff-briefing.out.log</string>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Hour</key><integer>8</integer><key>Minute</key><integer>5</integer>
+			<key>Weekday</key><integer>1</integer>
+		</dict>
+		<dict>
+			<key>Hour</key><integer>8</integer><key>Minute</key><integer>5</integer>
+			<key>Weekday</key><integer>2</integer>
+		</dict>
+		<dict>
+			<key>Hour</key><integer>8</integer><key>Minute</key><integer>5</integer>
+			<key>Weekday</key><integer>3</integer>
+		</dict>
+		<dict>
+			<key>Hour</key><integer>8</integer><key>Minute</key><integer>5</integer>
+			<key>Weekday</key><integer>4</integer>
+		</dict>
+		<dict>
+			<key>Hour</key><integer>8</integer><key>Minute</key><integer>5</integer>
+			<key>Weekday</key><integer>5</integer>
+		</dict>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/maxsmart</string>
+</dict>
+</plist>

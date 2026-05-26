@@ -76,7 +76,20 @@ const PROMPT_BOOKING = `Extract Booking Confirmation fields as JSON:
 For pol and pod return ONLY the 5-letter UN/LOCODE (uppercase), never the city name.
 Return ONLY valid JSON.`;
 
-async function geminiOcr(base64) {
+const PROMPT_INVOICE = `Extract commercial invoice fields as JSON:
+{"invoiceNumber": string|null, "invoiceDate": string|null, "supplier": string|null, "soldTo": string|null, "billToName": string|null, "shipper": string|null, "consignee": string|null, "soNumber": string|null, "customerPo": string|null, "bookingNumber": string|null, "incoterm": string|null, "paymentTerms": string|null, "currency": string|null, "totalAmount": number|null, "subtotal": number|null, "grossWeight": number|null, "netWeight": number|null, "carrier": string|null, "pod": string|null, "containers": string|null}
+Return ONLY valid JSON.`;
+
+const PROMPT_BL = `Extract Bill of Lading fields as JSON:
+{"blNumber": string|null, "shipper": string|null, "consignee": string|null, "notifyParty": string|null, "vesselVoyage": string|null, "portLoading": string|null, "portDischarge": string|null, "placeReceipt": string|null, "placeDelivery": string|null, "shippedDate": string|null, "container": string|null, "seal": string|null, "description": string|null, "grossWeight": string|null, "measurement": string|null, "packages": string|null, "freightPayable": string|null, "agentName": string|null}
+For portLoading and portDischarge return the 5-letter UN/LOCODE when possible.
+Return ONLY valid JSON.`;
+
+const PROMPT_PL = `Extract Packing List fields as JSON:
+{"plNumber": string|null, "blNumber": string|null, "shipper": string|null, "consignee": string|null, "shippingPoint": string|null, "destination": string|null, "date": string|null, "carrier": string|null, "containerNumber": string|null, "sealNumber": string|null, "vesselVoyage": string|null, "productDescription": string|null, "grossWeight": string|null, "netWeight": string|null, "poNumber": string|null, "soNumber": string|null, "supplier": string|null}
+Return ONLY valid JSON.`;
+
+async function geminiOcr(base64, prompt = PROMPT_BOOKING) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
   const res = await fetch(url, {
     method: 'POST',
@@ -86,7 +99,7 @@ async function geminiOcr(base64) {
         role: 'user',
         parts: [
           { inline_data: { mime_type: 'application/pdf', data: base64 } },
-          { text: PROMPT_BOOKING },
+          { text: prompt },
         ],
       }],
     }),
@@ -97,6 +110,15 @@ async function geminiOcr(base64) {
   const m = text.match(/\{[\s\S]*\}/);
   if (!m) return null;
   try { return JSON.parse(m[0]); } catch { return null; }
+}
+
+function pickNum(v) {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/[^\d.\-]/g, ''));
+    if (Number.isFinite(n) && v.trim() !== '') return n;
+  }
+  return null;
 }
 
 // ── Tool implementations ─────────────────────────────────────────────────────
@@ -174,7 +196,7 @@ async function ocrAndSaveBooking({ pdf_base64, source = 'whatsapp' }) {
   if (!pdf_base64 || pdf_base64.length < 200) {
     return { error: 'pdf_base64 missing or too small' };
   }
-  const parsed = await geminiOcr(pdf_base64);
+  const parsed = await geminiOcr(pdf_base64, PROMPT_BOOKING);
   if (!parsed) return { error: 'OCR returned no parseable JSON' };
 
   const bookingNumber = (parsed.bookingNumber || '').trim() || `BK-${Date.now()}`;
@@ -240,6 +262,181 @@ async function ocrAndSaveBooking({ pdf_base64, source = 'whatsapp' }) {
   };
 }
 
+// ── Generic insert helpers used by Lara/Logan/Matt ────────────────────────────
+//
+// Pattern:
+//  1. OCR pdf with type-specific prompt
+//  2. Look up by natural key (invoiceNumber / blNumber / plNumber)
+//  3. If exists → attach PDF + tag ai_source_email_id; return attached_to_existing
+//  4. If new   → insert row, return inserted with summary
+//
+// All three set `ai_status='EXTRACTED'`, `ai_extracted_by='hermes'`,
+// `ai_extracted_at=now`, and (when provided) `ai_source_email_id`. That
+// lets the React app's Document Audit view distinguish hermes-auto rows.
+
+async function ocrAndSaveInvoice({ pdf_base64, source = 'whatsapp', ai_source_email_id = null }) {
+  if (!pdf_base64 || pdf_base64.length < 200) return { error: 'pdf_base64 missing or too small' };
+  const parsed = await geminiOcr(pdf_base64, PROMPT_INVOICE);
+  if (!parsed) return { error: 'OCR returned no parseable JSON' };
+
+  const invoiceNumber = (parsed.invoiceNumber || '').trim() || `INV-${Date.now()}`;
+  const existing = await sbSelect(`invoices?invoiceNumber=eq.${encodeURIComponent(invoiceNumber)}&select=id&limit=1`);
+  if (existing.length > 0) {
+    const id = existing[0].id;
+    await sbUpdate('invoices', `id=eq.${id}`, {
+      originalDocument: `data:application/pdf;base64,${pdf_base64}`,
+      ai_source_email_id, ai_extracted_at: new Date().toISOString(),
+    });
+    return { action: 'attached_to_existing', invoiceNumber, id };
+  }
+
+  const row = {
+    id: `INV${Date.now()}`,
+    companyId:        null,
+    invoiceNumber,
+    supplier:         parsed.supplier || null,
+    soldTo:           parsed.soldTo || null,
+    billToName:       parsed.billToName || null,
+    shipper:          parsed.shipper || null,
+    consignee:        parsed.consignee || null,
+    invoiceDate:      toIsoDate(parsed.invoiceDate),
+    date:             toIsoDate(parsed.invoiceDate),
+    soNumber:         parsed.soNumber || null,
+    customerPo:       parsed.customerPo || null,
+    bookingNumber:    parsed.bookingNumber || null,
+    incoterm:         parsed.incoterm || null,
+    paymentTerms:     parsed.paymentTerms || null,
+    currency:         parsed.currency || 'USD',
+    totalAmount:      pickNum(parsed.totalAmount),
+    subtotal:         pickNum(parsed.subtotal),
+    grossWeight:      pickNum(parsed.grossWeight),
+    netWeight:        pickNum(parsed.netWeight),
+    carrier:          parsed.carrier || null,
+    pod:              parsed.pod || null,
+    containers:       parsed.containers || null,
+    originalDocument: `data:application/pdf;base64,${pdf_base64}`,
+    status:           'DRAFT',
+    ai_status:        'EXTRACTED',
+    ai_extracted_by:  'hermes',
+    ai_extracted_at:  new Date().toISOString(),
+    ai_source_email_id,
+    createdAt:        new Date().toISOString(),
+  };
+  await sbInsert('invoices', row);
+  return {
+    action: 'inserted',
+    invoiceNumber,
+    id: row.id,
+    summary: { supplier: row.supplier, soldTo: row.soldTo, total: row.totalAmount, currency: row.currency },
+    source,
+  };
+}
+
+async function ocrAndSaveBl({ pdf_base64, source = 'whatsapp', ai_source_email_id = null }) {
+  if (!pdf_base64 || pdf_base64.length < 200) return { error: 'pdf_base64 missing or too small' };
+  const parsed = await geminiOcr(pdf_base64, PROMPT_BL);
+  if (!parsed) return { error: 'OCR returned no parseable JSON' };
+
+  const blNumber = (parsed.blNumber || '').trim() || `BL-${Date.now()}`;
+  const existing = await sbSelect(`bill_landings?blNumber=eq.${encodeURIComponent(blNumber)}&select=id&limit=1`);
+  if (existing.length > 0) {
+    const id = existing[0].id;
+    await sbUpdate('bill_landings', `id=eq.${id}`, {
+      originalDocument: `data:application/pdf;base64,${pdf_base64}`,
+      ai_source_email_id,
+    });
+    return { action: 'attached_to_existing', blNumber, id };
+  }
+
+  const row = {
+    id: `BL${Date.now()}`,
+    companyId:        null,
+    blNumber,
+    shipper:          parsed.shipper || null,
+    consignee:        parsed.consignee || null,
+    notifyParty:      parsed.notifyParty || null,
+    vesselVoyage:     parsed.vesselVoyage || null,
+    portLoading:      parsed.portLoading || null,
+    portDischarge:    parsed.portDischarge || null,
+    placeReceipt:     parsed.placeReceipt || null,
+    placeDelivery:    parsed.placeDelivery || null,
+    shippedDate:      toIsoDate(parsed.shippedDate),
+    container:        parsed.container || null,
+    seal:             parsed.seal || null,
+    description:      parsed.description || null,
+    grossWeight:      parsed.grossWeight || null,
+    measurement:      parsed.measurement || null,
+    packages:         parsed.packages || null,
+    freightPayable:   parsed.freightPayable || null,
+    agentName:        parsed.agentName || null,
+    originalDocument: `data:application/pdf;base64,${pdf_base64}`,
+    status:           'DRAFT',
+    createdAt:        new Date().toISOString(),
+  };
+  await sbInsert('bill_landings', row);
+  return {
+    action: 'inserted',
+    blNumber,
+    id: row.id,
+    summary: { shipper: row.shipper, consignee: row.consignee, vessel: row.vesselVoyage, route: `${row.portLoading || '?'}→${row.portDischarge || '?'}` },
+    source,
+  };
+}
+
+async function ocrAndSavePackingList({ pdf_base64, source = 'whatsapp', ai_source_email_id = null }) {
+  if (!pdf_base64 || pdf_base64.length < 200) return { error: 'pdf_base64 missing or too small' };
+  const parsed = await geminiOcr(pdf_base64, PROMPT_PL);
+  if (!parsed) return { error: 'OCR returned no parseable JSON' };
+
+  const plNumber = (parsed.plNumber || '').trim() || `PL-${Date.now()}`;
+  const existing = await sbSelect(`packing_lists?plNumber=eq.${encodeURIComponent(plNumber)}&select=id&limit=1`);
+  if (existing.length > 0) {
+    const id = existing[0].id;
+    await sbUpdate('packing_lists', `id=eq.${id}`, {
+      originalDocument: `data:application/pdf;base64,${pdf_base64}`,
+      ai_source_email_id, ai_extracted_at: new Date().toISOString(),
+    });
+    return { action: 'attached_to_existing', plNumber, id };
+  }
+
+  const row = {
+    id: `PL${Date.now()}`,
+    companyId:        null,
+    plNumber,
+    blNumber:         parsed.blNumber || null,
+    shipper:          parsed.shipper || null,
+    consignee:        parsed.consignee || null,
+    shippingPoint:    parsed.shippingPoint || null,
+    destination:      parsed.destination || null,
+    date:             toIsoDate(parsed.date),
+    carrier:          parsed.carrier || null,
+    containerNumber:  parsed.containerNumber || null,
+    sealNumber:       parsed.sealNumber || null,
+    vesselVoyage:     parsed.vesselVoyage || null,
+    productDescription: parsed.productDescription || null,
+    grossWeight:      parsed.grossWeight || null,
+    netWeight:        parsed.netWeight || null,
+    poNumber:         parsed.poNumber || null,
+    soNumber:         parsed.soNumber || null,
+    supplier:         parsed.supplier || null,
+    originalDocument: `data:application/pdf;base64,${pdf_base64}`,
+    status:           'DRAFT',
+    ai_status:        'EXTRACTED',
+    ai_extracted_by:  'hermes',
+    ai_extracted_at:  new Date().toISOString(),
+    ai_source_email_id,
+    createdAt:        new Date().toISOString(),
+  };
+  await sbInsert('packing_lists', row);
+  return {
+    action: 'inserted',
+    plNumber,
+    id: row.id,
+    summary: { shipper: row.shipper, consignee: row.consignee, container: row.containerNumber, vessel: row.vesselVoyage },
+    source,
+  };
+}
+
 // ── MCP wiring ───────────────────────────────────────────────────────────────
 const tools = [
   {
@@ -293,12 +490,52 @@ const tools = [
   },
   {
     name: 'ocr_and_save_booking',
-    description: 'OCR a booking confirmation PDF (base64-encoded) via Gemini 2.5 Flash and insert as a new AVAILABLE row in bookings. If the bookingNumber already exists, only the PDF is attached. Use this when Felipe forwards a booking PDF via WhatsApp.',
+    description: 'OCR a booking confirmation PDF (base64) via Gemini 2.5 Flash and insert as a new AVAILABLE row in bookings. If the bookingNumber already exists, only the PDF is re-attached. Use whenever a booking PDF arrives via WhatsApp or email.',
     inputSchema: {
       type: 'object',
       properties: {
-        pdf_base64: { type: 'string', description: 'Raw base64 of the PDF (no data: prefix)' },
-        source:     { type: 'string', description: 'Optional source tag e.g. whatsapp/email' },
+        pdf_base64:          { type: 'string', description: 'Raw base64 of the PDF (no data: prefix)' },
+        source:              { type: 'string', description: 'Optional source tag (whatsapp/email/etc)' },
+        ai_source_email_id:  { type: 'string', description: 'Optional source email message-id for audit trail' },
+      },
+      required: ['pdf_base64'],
+    },
+  },
+  {
+    name: 'ocr_and_save_invoice',
+    description: 'OCR a commercial invoice PDF (base64) and insert as a new DRAFT row in invoices. Deduplicated by invoiceNumber — re-attaches PDF if already present. Use when Lara classifies an attachment as INVOICE.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pdf_base64:         { type: 'string' },
+        source:             { type: 'string' },
+        ai_source_email_id: { type: 'string' },
+      },
+      required: ['pdf_base64'],
+    },
+  },
+  {
+    name: 'ocr_and_save_bl',
+    description: 'OCR a Bill of Lading PDF (base64) and insert as a new DRAFT row in bill_landings. Deduplicated by blNumber. Use when Lara/Logan see a BL attachment.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pdf_base64:         { type: 'string' },
+        source:             { type: 'string' },
+        ai_source_email_id: { type: 'string' },
+      },
+      required: ['pdf_base64'],
+    },
+  },
+  {
+    name: 'ocr_and_save_packing_list',
+    description: 'OCR a Packing List PDF (base64) and insert as a new DRAFT row in packing_lists. Deduplicated by plNumber. Use when Lara/Logan see a packing-list attachment.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pdf_base64:         { type: 'string' },
+        source:             { type: 'string' },
+        ai_source_email_id: { type: 'string' },
       },
       required: ['pdf_base64'],
     },
@@ -323,6 +560,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case 'customer_outstanding':          result = await customerOutstanding(args); break;
       case 'recent_invoices':               result = await recentInvoices(args || {}); break;
       case 'ocr_and_save_booking':          result = await ocrAndSaveBooking(args); break;
+      case 'ocr_and_save_invoice':          result = await ocrAndSaveInvoice(args); break;
+      case 'ocr_and_save_bl':               result = await ocrAndSaveBl(args); break;
+      case 'ocr_and_save_packing_list':     result = await ocrAndSavePackingList(args); break;
       default: throw new Error(`Unknown tool: ${name}`);
     }
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
