@@ -573,8 +573,12 @@ const TradingFollowUpV2: React.FC = () => {
       const productNames = Array.from(new Set(
         orderItems(so).map(resolveCatalogName).filter(Boolean),
       )).join(', ') || '—';
-      const { eta, source } = etaForSalesOrder(so);
-      const etaCell = eta ? `${formatDate(eta)}${source === 'estimated' ? ' (est)' : ''}` : '—';
+      const isPending = (so.status ?? '').trim().toUpperCase() === 'PENDING';
+      let etaCell = '—';
+      if (!isPending) {
+        const { eta, source } = etaForSalesOrder(so);
+        etaCell = eta ? `${formatDate(eta)}${source === 'estimated' ? ' (est)' : ''}` : '—';
+      }
       return [
         formatDate(so.orderDate) || '',
         'To Ship',
@@ -976,7 +980,7 @@ const TradingFollowUpV2: React.FC = () => {
                   <th className="px-3 py-2 font-medium">Date</th>
                   <th className="px-3 py-2 font-medium">Type</th>
                   <th className="px-3 py-2 font-medium">Reference</th>
-                  <th className="px-3 py-2 font-medium">Details</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium">Product</th>
                   <th className="px-3 py-2 font-medium">POD</th>
                   <th className="px-3 py-2 font-medium">ETA</th>
@@ -1006,6 +1010,17 @@ const TradingFollowUpV2: React.FC = () => {
                       </td>
                       <td className="px-3 py-1.5 text-[11px] text-slate-400 whitespace-nowrap">{formatPod(so.pod)}</td>
                       {(() => {
+                        // PENDING means the user hasn't picked a booking yet —
+                        // showing an estimated ETA here just clutters the view
+                        // with a number the customer shouldn't rely on.
+                        const isPending = (so.status ?? '').trim().toUpperCase() === 'PENDING';
+                        if (isPending) {
+                          return (
+                            <td className="px-3 py-1.5 text-[11px] text-slate-600 italic" title="No booking selected yet">
+                              —
+                            </td>
+                          );
+                        }
                         const { eta, source } = etaForSalesOrder(so);
                         return (
                           <td className="px-3 py-1.5 whitespace-nowrap text-[11px] font-mono tabular-nums text-slate-400"
