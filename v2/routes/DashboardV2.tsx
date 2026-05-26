@@ -403,10 +403,41 @@ export default function DashboardV2() {
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-[154px_1fr] gap-3">
-        {/* Left column: mode buttons + roster */}
+        {/* Left column: roster first, mode buttons below */}
         <Card className="flex flex-col">
           <CardBody className="space-y-1">
-            {/* Mode buttons sit above the TEAM roster. */}
+            <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Team</div>
+            {agentOrder.map(id => {
+              const p = personas[id];
+              return (
+                <button
+                  key={id}
+                  onClick={() => { setMode('chat'); mention(id); }}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded p-2 text-left transition-colors',
+                    'border border-transparent hover:border-[#2a2a2a] hover:bg-[#141414]',
+                  )}
+                  title={p?.role ?? id}
+                >
+                  <span className={cn(
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-1',
+                    AGENT_RING[id], AGENT_TONE[id],
+                  )}>
+                    {initials(p?.display ?? id)}
+                  </span>
+                  <span className="min-w-0">
+                    <div className={cn('text-sm font-medium', AGENT_TONE[id])}>{p?.display ?? id}</div>
+                    <div className="truncate text-[11px] text-slate-500">{p?.tag ?? ''}</div>
+                  </span>
+                </button>
+              );
+            })}
+            <div className="px-1 pt-2 text-[10px] text-slate-600">
+              Click a teammate to @-mention them.
+            </div>
+
+            {/* Mode buttons sit below the roster. */}
+            <div className="mt-4 mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Views</div>
             <button
               onClick={() => setMode(mode === 'overview' ? 'chat' : 'overview')}
               className={cn(
@@ -443,36 +474,6 @@ export default function DashboardV2() {
               <Clock size={14} />
               <span className="text-sm font-medium">Crons</span>
             </button>
-
-            <div className="mb-2 mt-3 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Team</div>
-            {agentOrder.map(id => {
-              const p = personas[id];
-              return (
-                <button
-                  key={id}
-                  onClick={() => { setMode('chat'); mention(id); }}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded p-2 text-left transition-colors',
-                    'border border-transparent hover:border-[#2a2a2a] hover:bg-[#141414]',
-                  )}
-                  title={p?.role ?? id}
-                >
-                  <span className={cn(
-                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-1',
-                    AGENT_RING[id], AGENT_TONE[id],
-                  )}>
-                    {initials(p?.display ?? id)}
-                  </span>
-                  <span className="min-w-0">
-                    <div className={cn('text-sm font-medium', AGENT_TONE[id])}>{p?.display ?? id}</div>
-                    <div className="truncate text-[11px] text-slate-500">{p?.tag ?? ''}</div>
-                  </span>
-                </button>
-              );
-            })}
-            <div className="pt-3 text-[10px] text-slate-600">
-              Click a teammate to @-mention them in the composer.
-            </div>
           </CardBody>
         </Card>
 
