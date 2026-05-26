@@ -181,9 +181,9 @@ async function fileToAttachment(file: File): Promise<Attachment> {
 // Markup @mentions in user messages so they stand out.
 function renderContent(content: string, role: 'user' | 'agent' | 'system') {
   if (role !== 'user') return content;
-  const parts = content.split(/(@(?:max|lara|matt|logan|sal|beth|gem|hermes))\b/i);
+  const parts = content.split(/(@(?:max|lara|logan|beth|gem|hermes))\b/i);
   return parts.map((p, i) => {
-    if (/^@(max|lara|matt|logan|sal|beth|gem|hermes)$/i.test(p)) {
+    if (/^@(max|lara|logan|beth|gem|hermes)$/i.test(p)) {
       const agent = p.slice(1).toLowerCase();
       return <span key={i} className={cn('rounded px-1 font-medium', AGENT_TONE[agent])}>{p}</span>;
     }
@@ -366,7 +366,10 @@ export default function DashboardV2() {
   // Beth (Ana Paula's personal assistant) is intentionally omitted from
   // the TEAM roster on this Dashboard — she remains @-mentionable but
   // doesn't surface as a business teammate here.
-  const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'gem', 'hermes'];
+  // Matt and Sal removed — they were ORCHESTRATION.md personas with no
+  // real launchd job on HERMES. Beth omitted from this Dashboard
+  // (personal scope; she still has a real launchd job).
+  const agentOrder = ['max', 'lara', 'logan', 'gem', 'hermes'];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -676,7 +679,7 @@ function OverviewPanel({
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  const agentOrder = ['max','lara','matt','logan','sal','gem','hermes'];
+  const agentOrder = ['max','lara','logan','gem','hermes'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
@@ -781,7 +784,7 @@ function PromptsPanel({
 }) {
   // Beth is intentionally omitted from Prompts too — same rationale as
   // Overview: her domain isn't business operational.
-  const agentOrder = ['max','lara','matt','logan','sal','gem','hermes'];
+  const agentOrder = ['max','lara','logan','gem','hermes'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
