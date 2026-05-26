@@ -19,7 +19,7 @@ import {
   Database, Settings as SettingsIcon,
   Building2, Compass, Handshake, Truck, Banknote, Wrench,
   ShieldAlert,
-  Bot, Activity, Sliders, ScrollText, Pencil,
+  Bot, Activity, Sliders, ScrollText,
 } from 'lucide-react';
 import { CompanySwitcher } from './layout/CompanySwitcher';
 import { CommandPalette, PaletteCommand, PaletteDataProvider } from './layout/CommandPalette';
@@ -121,14 +121,6 @@ const buildSections = (
     icon: Building2,
     items: [
       { id: 'dashboard',        label: 'Dashboard',     icon: LayoutDashboard },
-      // `connections-tabs` wraps Email / WhatsApp / Briefing. The Email
-      // tab is now the v2-native AI Inbox (autonomous processor) so
-      // the old separate "AI Inbox" menu item was removed — one place
-      // for all email activity. Account management
-      // (connect / disconnect / scope) lives under Settings →
-      // Connections. The legacy v1 bridge is still reachable at
-      // `connections-hub` for deep links.
-      { id: 'connections-tabs', label: 'Agent log',    icon: Plug },
       { id: 'ai-sales',         label: 'AI Sales Agent', icon: Sparkles },
     ],
   },
@@ -189,8 +181,8 @@ const buildSections = (
     items: [
       { id: 'agentic-stream',       label: 'Stream',        icon: Activity },
       { id: 'agentic-autonomy',     label: 'Autonomy',      icon: Sliders },
+      { id: 'connections-tabs',     label: 'Agent log',     icon: Plug },
       { id: 'agentic-capabilities', label: 'Capabilities',  icon: Wrench },
-      { id: 'agentic-manual',       label: 'Manual action', icon: Pencil },
       { id: 'agentic-audit',        label: 'Audit',         icon: ScrollText },
     ],
   },
@@ -272,7 +264,6 @@ const routeTitles: Record<string, string> = {
   'agentic-stream':       'Agents · Stream',
   'agentic-autonomy':     'Agents · Autonomy',
   'agentic-capabilities': 'Agents · Capabilities',
-  'agentic-manual':       'Agents · Manual action',
   'agentic-audit':        'Agents · Audit',
 };
 
@@ -724,7 +715,6 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'agentic-stream'        && <AgenticConsoleV2 view="stream" />}
           {activeId === 'agentic-autonomy'      && <AgenticConsoleV2 view="autonomy" />}
           {activeId === 'agentic-capabilities'  && <AgenticConsoleV2 view="capabilities" />}
-          {activeId === 'agentic-manual'        && <AgenticConsoleV2 view="manual" />}
           {activeId === 'agentic-audit'         && <AgenticConsoleV2 view="audit" />}
         </Suspense>
       </AppShell>
