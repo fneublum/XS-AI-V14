@@ -573,7 +573,9 @@ function OverviewPanel({
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  const agentOrder = ['max','lara','matt','logan','sal','beth','gem'];
+  // Beth (Ana Paula's personal assistant) is intentionally omitted from
+  // the team Overview — her work isn't business operational.
+  const agentOrder = ['max','lara','matt','logan','sal','gem'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
@@ -667,7 +669,9 @@ function PromptsPanel({
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  const agentOrder = ['max','lara','matt','logan','sal','beth','gem'];
+  // Beth is intentionally omitted from Prompts too — same rationale as
+  // Overview: her domain isn't business operational.
+  const agentOrder = ['max','lara','matt','logan','sal','gem'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
