@@ -11,7 +11,7 @@
 // the old layout is needed back; this file replaces it entirely.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, UploadCloud, Trash2 } from 'lucide-react';
+import { MessageSquare, Send, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, UploadCloud, Trash2, LayoutGrid, Sparkles, ArrowLeft } from 'lucide-react';
 import { Card, CardBody, Button } from '../primitives';
 import { useToast } from '../primitives/Toast';
 import { cn } from '../primitives/utils';
@@ -50,6 +50,31 @@ interface Persona {
   voice: string;
 }
 type Personas = Record<string, Persona>;
+
+interface OverviewCard {
+  id: string;
+  agent_id: string;
+  capability_id: string;
+  payload: Record<string, any>;
+  status: string;
+  tier_at_propose: string;
+  proposed_at: string;
+}
+interface OverviewAgent {
+  counts: Record<string, number>;
+  open_cards: OverviewCard[];
+}
+type Overview = Record<string, OverviewAgent>;
+
+interface Suggestions {
+  [agent: string]: {
+    activity: string;
+    action_count_30d: number;
+    prompts: string[];
+  };
+}
+
+type Mode = 'chat' | 'overview' | 'prompts';
 
 // ─── API ───────────────────────────────────────────────────────────────
 
@@ -158,6 +183,9 @@ export default function DashboardV2() {
   const [sending, setSending] = useState(false);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [mode, setMode] = useState<Mode>('chat');
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -178,6 +206,16 @@ export default function DashboardV2() {
     const t = setInterval(refresh, 4000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  // Lazy-load Overview / Suggestions on first switch into those modes,
+  // and refresh whenever the user re-enters that mode.
+  useEffect(() => {
+    if (mode === 'overview') {
+      api<Overview>('GET', '/chat/overview').then(setOverview).catch(() => setOverview(null));
+    } else if (mode === 'prompts') {
+      api<Suggestions>('GET', '/chat/suggestions').then(setSuggestions).catch(() => setSuggestions(null));
+    }
+  }, [mode]);
 
   // Auto-scroll to bottom on new messages.
   useEffect(() => {
@@ -342,16 +380,42 @@ export default function DashboardV2() {
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-[154px_1fr] gap-3">
-        {/* Roster */}
+        {/* Left column: mode buttons + roster */}
         <Card className="flex flex-col">
           <CardBody className="space-y-1">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Team</div>
+            {/* Mode buttons sit above the TEAM roster. */}
+            <button
+              onClick={() => setMode(mode === 'overview' ? 'chat' : 'overview')}
+              className={cn(
+                'flex w-full items-center gap-2 rounded border p-2 text-left transition-colors',
+                mode === 'overview'
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : 'border-[#1f1f1f] bg-[#0f0f0f] text-slate-300 hover:border-[#2a2a2a]',
+              )}
+            >
+              <LayoutGrid size={14} />
+              <span className="text-sm font-medium">Overview</span>
+            </button>
+            <button
+              onClick={() => setMode(mode === 'prompts' ? 'chat' : 'prompts')}
+              className={cn(
+                'flex w-full items-center gap-2 rounded border p-2 text-left transition-colors',
+                mode === 'prompts'
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : 'border-[#1f1f1f] bg-[#0f0f0f] text-slate-300 hover:border-[#2a2a2a]',
+              )}
+            >
+              <Sparkles size={14} />
+              <span className="text-sm font-medium">Prompts</span>
+            </button>
+
+            <div className="mb-2 mt-3 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Team</div>
             {agentOrder.map(id => {
               const p = personas[id];
               return (
                 <button
                   key={id}
-                  onClick={() => mention(id)}
+                  onClick={() => { setMode('chat'); mention(id); }}
                   className={cn(
                     'flex w-full items-center gap-2 rounded p-2 text-left transition-colors',
                     'border border-transparent hover:border-[#2a2a2a] hover:bg-[#141414]',
@@ -377,7 +441,24 @@ export default function DashboardV2() {
           </CardBody>
         </Card>
 
-        {/* Chat column */}
+        {/* Right column — chat OR overview OR prompts */}
+        {mode === 'overview' && (
+          <OverviewPanel
+            data={overview}
+            personas={personas}
+            onBack={() => setMode('chat')}
+            onSend={(t) => { setMode('chat'); sendText(t); }}
+          />
+        )}
+        {mode === 'prompts' && (
+          <PromptsPanel
+            data={suggestions}
+            personas={personas}
+            onBack={() => setMode('chat')}
+            onSend={(t) => { setMode('chat'); sendText(t); }}
+          />
+        )}
+        {mode === 'chat' && (
         <Card
           className="relative flex min-h-0 flex-col"
           onDragEnter={onDragEnter}
@@ -474,8 +555,172 @@ export default function DashboardV2() {
             </div>
           </div>
         </Card>
+        )}
       </div>
     </div>
+  );
+}
+
+// ─── Overview panel — kanban-ish per-agent dashboard ────────────────────
+
+function OverviewPanel({
+  data, personas, onBack, onSend,
+}: {
+  data: Overview | null;
+  personas: Personas;
+  onBack: () => void;
+  onSend: (text: string) => void;
+}) {
+  const agentOrder = ['max','lara','matt','logan','sal','beth'];
+  return (
+    <Card className="flex min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
+        <LayoutGrid size={16} className="text-emerald-400" />
+        <h2 className="text-sm font-semibold text-slate-100">Team overview</h2>
+        <span className="text-xs text-slate-500">live action queue grouped by agent</span>
+        <Button variant="ghost" size="sm" className="ml-auto" onClick={onBack}>
+          <ArrowLeft size={14} className="mr-1" />back to chat
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {!data ? (
+          <div className="text-sm text-slate-500">loading…</div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {agentOrder.map(id => {
+              const p = personas[id];
+              const a = data[id];
+              if (!a) return null;
+              const open = a.open_cards.filter(c =>
+                ['PROPOSED','AWAITING_APPROVAL','APPROVED','AUTO_APPROVED'].includes(c.status));
+              const awaiting = open.filter(c => c.status === 'AWAITING_APPROVAL').length;
+              return (
+                <div key={id} className="flex min-h-[180px] flex-col rounded border border-[#1f1f1f] bg-[#0f0f0f] p-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className={cn(
+                      'flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ring-1',
+                      AGENT_RING[id] ?? AGENT_RING.system,
+                      AGENT_TONE[id] ?? AGENT_TONE.system,
+                    )}>
+                      {initials(p?.display ?? id)}
+                    </span>
+                    <span className={cn('text-sm font-semibold', AGENT_TONE[id])}>{p?.display ?? id}</span>
+                    <span className="text-xs text-slate-500">{p?.tag ?? ''}</span>
+                    <span className="ml-auto text-xs text-slate-500">{open.length} open</span>
+                  </div>
+                  <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">
+                    {Object.entries(a.counts).filter(([, n]) => n > 0).map(([s, n]) => (
+                      <span key={s} className={cn(
+                        'rounded px-1.5 py-0.5 font-mono',
+                        s === 'AWAITING_APPROVAL' ? 'bg-amber-500/15 text-amber-300' :
+                        s === 'EXECUTED' || s === 'AUTO_APPROVED' || s === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-300' :
+                        'bg-[#141414] text-slate-400',
+                      )}>{s.toLowerCase().replace('_',' ')} {n}</span>
+                    ))}
+                  </div>
+                  <div className="space-y-1.5">
+                    {open.length === 0
+                      ? <div className="text-xs text-slate-500">No open work.</div>
+                      : open.slice(0, 4).map(c => (
+                          <div key={c.id} className="rounded border border-[#1f1f1f] bg-[#141414] p-2 text-xs">
+                            <div className="truncate text-slate-200">
+                              {c.payload?.summary ?? c.capability_id}
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
+                              <code>{c.capability_id}</code>
+                              <span>·</span>
+                              <span className={cn(
+                                c.status === 'AWAITING_APPROVAL' ? 'text-amber-400' :
+                                'text-slate-400'
+                              )}>{c.status}</span>
+                            </div>
+                          </div>
+                        ))}
+                  </div>
+                  {awaiting > 0 && (
+                    <div className="mt-auto pt-2">
+                      <button
+                        onClick={() => onSend(`@${id} walk me through your pending items`)}
+                        className="text-[11px] text-emerald-400 hover:text-emerald-300"
+                      >Ask @{id} about the {awaiting} awaiting →</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ─── Prompts panel — suggested prompts per agent ────────────────────────
+
+function PromptsPanel({
+  data, personas, onBack, onSend,
+}: {
+  data: Suggestions | null;
+  personas: Personas;
+  onBack: () => void;
+  onSend: (text: string) => void;
+}) {
+  const agentOrder = ['max','lara','matt','logan','sal','beth'];
+  return (
+    <Card className="flex min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
+        <Sparkles size={16} className="text-emerald-400" />
+        <h2 className="text-sm font-semibold text-slate-100">Prompts</h2>
+        <span className="text-xs text-slate-500">grounded in each agent's recent activity · click to send</span>
+        <Button variant="ghost" size="sm" className="ml-auto" onClick={onBack}>
+          <ArrowLeft size={14} className="mr-1" />back to chat
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {!data ? (
+          <div className="text-sm text-slate-500">loading…</div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {agentOrder.map(id => {
+              const p = personas[id];
+              const s = data[id];
+              if (!s) return null;
+              return (
+                <div key={id} className="rounded border border-[#1f1f1f] bg-[#0f0f0f] p-3">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className={cn(
+                      'flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ring-1',
+                      AGENT_RING[id] ?? AGENT_RING.system,
+                      AGENT_TONE[id] ?? AGENT_TONE.system,
+                    )}>
+                      {initials(p?.display ?? id)}
+                    </span>
+                    <span className={cn('text-sm font-semibold', AGENT_TONE[id])}>{p?.display ?? id}</span>
+                    <span className="text-xs text-slate-500">{p?.tag ?? ''}</span>
+                  </div>
+                  <div className="mb-3 text-[11px] text-slate-500">{s.activity}</div>
+                  <div className="space-y-1.5">
+                    {s.prompts.map(text => (
+                      <button
+                        key={text}
+                        onClick={() => onSend(text)}
+                        className="block w-full rounded border border-[#1f1f1f] bg-[#141414] px-2.5 py-1.5 text-left text-xs text-slate-200 hover:border-[#2a2a2a] hover:text-slate-100"
+                      >
+                        {text.split(/(@\w+)/).map((part, i) =>
+                          /^@\w+$/.test(part)
+                            ? <span key={i} className={cn('font-medium', AGENT_TONE[part.slice(1).toLowerCase()])}>{part}</span>
+                            : <React.Fragment key={i}>{part}</React.Fragment>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
