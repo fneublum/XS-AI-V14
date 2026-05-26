@@ -324,7 +324,7 @@ export default function DashboardV2() {
         <Button variant="ghost" onClick={refresh}><RefreshCw size={14} className="mr-1" />refresh</Button>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] gap-3">
+      <div className="grid min-h-0 flex-1 grid-cols-[140px_1fr] gap-3">
         {/* Roster */}
         <Card className="flex flex-col">
           <CardBody className="space-y-1">
