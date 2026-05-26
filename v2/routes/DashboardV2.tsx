@@ -11,7 +11,7 @@
 // the old layout is needed back; this file replaces it entirely.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, UploadCloud } from 'lucide-react';
+import { MessageSquare, Send, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, UploadCloud, Trash2 } from 'lucide-react';
 import { Card, CardBody, Button } from '../primitives';
 import { useToast } from '../primitives/Toast';
 import { cn } from '../primitives/utils';
@@ -322,6 +322,23 @@ export default function DashboardV2() {
         </span>
         <span className="ml-auto" />
         <Button variant="ghost" onClick={refresh}><RefreshCw size={14} className="mr-1" />refresh</Button>
+        <Button
+          variant="ghost"
+          onClick={async () => {
+            if (!window.confirm('Clear all chat messages in this conversation? Agent actions, audit log, and the action queue are NOT affected.')) return;
+            try {
+              await api('DELETE', '/chat/messages?conversation=default');
+              setMessages([]);
+              setInput('');
+              setAttachments([]);
+              toast.push({ kind: 'success', title: 'Chat cleared' });
+            } catch (err: any) {
+              toast.push({ kind: 'error', title: err.message ?? 'clear failed' });
+            }
+          }}
+        >
+          <Trash2 size={14} className="mr-1" />clear
+        </Button>
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-[140px_1fr] gap-3">
