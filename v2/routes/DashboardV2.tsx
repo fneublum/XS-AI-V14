@@ -341,7 +341,7 @@ export default function DashboardV2() {
         </Button>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[140px_1fr] gap-3">
+      <div className="grid min-h-0 flex-1 grid-cols-[154px_1fr] gap-3">
         {/* Roster */}
         <Card className="flex flex-col">
           <CardBody className="space-y-1">
