@@ -50,58 +50,87 @@ export default function CapabilitiesView() {
     <div className="space-y-6">
       <ConnectionBanner error={error} />
 
-      <Card>
-        <CardHeader><CardTitle>Capability registry</CardTitle></CardHeader>
-        <CardBody className="p-0">
-          <Table>
-            <THead>
-              <TR>
-                <TH>ID</TH><TH>Domain</TH><TH>Description</TH>
-                <TH>Destructive</TH><TH className="text-right">Actions</TH>
-              </TR>
-            </THead>
-            <TBody>
-              {caps.map(c => (
-                <TR key={c.id}>
-                  <TD><code className="text-sm">{c.id}</code></TD>
-                  <TD>{c.domain}</TD>
-                  <TD className="text-slate-300">{c.description}</TD>
-                  <TD>{c.destructive ? <Badge variant="danger">YES</Badge> : <Badge variant="neutral">no</Badge>}</TD>
-                  <TD className="text-right">
-                    <div className="inline-flex gap-1">
-                      <Button variant="ghost" onClick={() => editDescription(c)}>
-                        <Pencil size={14} />
-                      </Button>
-                      <Button variant="ghost" onClick={() => toggleDestructive(c)}>
-                        toggle destructive
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => remove(c)}>
-                        <Trash2 size={14} />
-                      </Button>
-                    </div>
-                  </TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Add capability</CardTitle></CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-            <Input placeholder="domain.verb" value={form.id} onChange={e => setForm({ ...form, id: e.target.value })} />
-            <Input placeholder="domain" value={form.domain} onChange={e => setForm({ ...form, domain: e.target.value })} />
-            <Input placeholder="description" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input type="checkbox" checked={form.destructive} onChange={e => setForm({ ...form, destructive: e.target.checked })} />
-              destructive
-            </label>
+      {/* Capability registry */}
+      <div className="rounded-[14px] border overflow-hidden"
+           style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}>
+        <div className="flex items-baseline gap-2 px-5 py-3.5 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
+          <h2 className="b-display text-[15px] font-semibold" style={{ color: 'var(--b-text)' }}>Capability registry</h2>
+          <span className="text-[11.5px]" style={{ color: 'var(--b-text-mute)' }}>{caps.length} {caps.length === 1 ? 'capability' : 'capabilities'}</span>
+        </div>
+        {caps.length === 0 ? (
+          <div className="m-4 rounded-[10px] border-2 border-dashed p-8 text-center"
+               style={{ borderColor: 'var(--b-line)', background: 'var(--b-surface-2)' }}>
+            <div className="text-[13px]" style={{ color: 'var(--b-text-mute)' }}>No capabilities yet — add one below.</div>
           </div>
-          <div className="mt-3"><Button variant="primary" onClick={create}>Add capability</Button></div>
-        </CardBody>
-      </Card>
+        ) : (
+          <div>
+            {caps.map((c, i) => (
+              <div
+                key={c.id}
+                className="grid items-center gap-3 px-5 py-3"
+                style={{
+                  gridTemplateColumns: 'minmax(160px, 200px) 110px 1fr auto auto',
+                  borderTop: i > 0 ? '1px solid var(--b-line-soft)' : 'none',
+                }}
+              >
+                <code className="b-mono text-[12.5px]" style={{ color: 'var(--b-teal-2)' }}>{c.id}</code>
+                <span className="text-[12px] b-mono" style={{ color: 'var(--b-text-mute)' }}>{c.domain}</span>
+                <span className="text-[13px] truncate" style={{ color: 'var(--b-text)' }}>{c.description}</span>
+                {c.destructive ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium b-mono"
+                        style={{ background: 'var(--b-rose-soft)', color: 'var(--b-rose)' }}>
+                    DESTRUCTIVE
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium b-mono"
+                        style={{ background: 'var(--b-surface-2)', color: 'var(--b-text-mute)' }}>
+                    safe
+                  </span>
+                )}
+                <div className="inline-flex gap-1">
+                  <button onClick={() => editDescription(c)} title="Edit description"
+                          className="w-7 h-7 rounded-md flex items-center justify-center"
+                          style={{ color: 'var(--b-text-mute)' }}>
+                    <Pencil size={13} />
+                  </button>
+                  <button onClick={() => toggleDestructive(c)}
+                          className="text-[11px] px-2 py-1 rounded-full"
+                          style={{ color: 'var(--b-text-mute)', background: 'var(--b-surface-2)' }}>
+                    toggle destructive
+                  </button>
+                  <button onClick={() => remove(c)} title="Delete capability"
+                          className="w-7 h-7 rounded-md flex items-center justify-center"
+                          style={{ color: 'var(--b-rose)' }}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Add capability */}
+      <div className="rounded-[14px] border p-5"
+           style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}>
+        <h2 className="b-display text-[15px] font-semibold mb-3" style={{ color: 'var(--b-text)' }}>Add capability</h2>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <Input placeholder="domain.verb" value={form.id} onChange={e => setForm({ ...form, id: e.target.value })} />
+          <Input placeholder="domain" value={form.domain} onChange={e => setForm({ ...form, domain: e.target.value })} />
+          <Input placeholder="description" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
+          <label className="flex items-center gap-2 text-[13px]" style={{ color: 'var(--b-text-soft)' }}>
+            <input type="checkbox" checked={form.destructive} onChange={e => setForm({ ...form, destructive: e.target.checked })} />
+            destructive
+          </label>
+        </div>
+        <div className="mt-4">
+          <button onClick={create}
+                  className="b-display flex items-center gap-1.5 text-[12.5px] font-semibold px-4 py-1.5 rounded-full"
+                  style={{ background: 'var(--b-teal-2)', color: 'white' }}>
+            Add capability
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

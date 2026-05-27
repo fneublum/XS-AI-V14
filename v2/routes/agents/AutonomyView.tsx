@@ -122,39 +122,57 @@ export default function AutonomyView() {
   }, [thresholds]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <ConnectionBanner error={error} />
 
-      <Card>
-        <CardBody className="text-sm text-slate-400">
+      {/* Intro hint — bento info card */}
+      <div className="rounded-[14px] p-4 text-[13px] flex gap-3"
+           style={{ background: 'var(--b-surface-2)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}>
+        <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] shrink-0 pt-0.5"
+              style={{ color: 'var(--b-teal-2)' }}>How to use</span>
+        <span>
           Set how much each agent is allowed to do on its own. Tighten anything you'd
           rather see first; loosen the routine stuff so they stop bothering you.
-        </CardBody>
-      </Card>
+        </span>
+      </div>
 
       {/* Beth is Ana Paula's personal assistant (gmail/gcal scope) and
         * doesn't propose business actions through the queue — omit her
         * here so the Autonomy view stays focused on operational agents. */}
       {agents.filter(a => a.id !== 'beth').map(a => {
         const rows = byAgent.get(a.id) ?? [];
+        const color = `var(--b-c-${a.id}, var(--b-text-soft))`;
         return (
-          <Card key={a.id}>
-            <CardHeader>
-              <CardTitle>
-                <AgentChip id={a.id} />
-                <span className="ml-2 text-slate-100">{a.display}</span>
-                <span className="ml-2 text-xs font-normal text-slate-400">{a.role}</span>
-              </CardTitle>
-              <span className="text-xs text-slate-500">
+          <div key={a.id} className="rounded-[14px] border overflow-hidden"
+               style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}>
+            {/* Top stripe in agent color */}
+            <div className="h-[3px]" style={{ background: color }} />
+            {/* Header row */}
+            <div className="flex items-center gap-3 px-5 py-3.5 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
+              <span className="w-7 h-7 rounded-lg flex items-center justify-center b-display text-[12px] font-bold text-white"
+                    style={{ background: color }}>
+                {a.id[0]?.toUpperCase()}
+              </span>
+              <div className="min-w-0">
+                <div className="b-display text-[15px] font-semibold" style={{ color }}>{a.display}</div>
+                <div className="text-[11.5px] truncate" style={{ color: 'var(--b-text-mute)' }}>{a.role}</div>
+              </div>
+              <span className="ml-auto inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
+                    style={{ background: 'var(--b-surface-2)', color: 'var(--b-text-mute)' }}>
                 {rows.length} {rows.length === 1 ? 'permission' : 'permissions'}
               </span>
-            </CardHeader>
-            <CardBody className="space-y-3">
+            </div>
+            <div className="p-4 space-y-3">
               {rows.length === 0 ? (
-                <EmptyState
-                  title="No permissions yet"
-                  description={`${a.display} can't act on anything until you grant a capability in the Capabilities tab.`}
-                />
+                <div className="rounded-[10px] border-2 border-dashed p-6 text-center"
+                     style={{ borderColor: 'var(--b-line)', background: 'var(--b-surface-2)' }}>
+                  <div className="b-display text-[14px] font-semibold mb-1" style={{ color: 'var(--b-text-soft)' }}>
+                    No permissions yet
+                  </div>
+                  <div className="text-[12px]" style={{ color: 'var(--b-text-mute)' }}>
+                    {a.display} can't act on anything until you grant a capability in the Capabilities tab.
+                  </div>
+                </div>
               ) : (
                 rows.map(t => (
                   <PermissionTile
@@ -166,8 +184,8 @@ export default function AutonomyView() {
                   />
                 ))
               )}
-            </CardBody>
-          </Card>
+            </div>
+          </div>
         );
       })}
     </div>
@@ -219,31 +237,42 @@ function PermissionTile({
   }
 
   return (
-    <div className="rounded-md border border-[#1f1f1f] bg-[#141414] p-4">
+    <div className="rounded-[12px] border p-4"
+         style={{ background: 'var(--b-surface-2)', borderColor: 'var(--b-line)' }}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[15px] leading-snug text-slate-100">{description}</div>
-          <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
-            <code>{t.capability_id}</code>
-            {cap?.destructive && <Badge variant="danger">destructive</Badge>}
+          <div className="text-[14.5px] leading-snug" style={{ color: 'var(--b-text)' }}>{description}</div>
+          <div className="mt-1.5 flex items-center gap-2 text-[11px]">
+            <code className="b-mono" style={{ color: 'var(--b-text-mute)' }}>{t.capability_id}</code>
+            {cap?.destructive && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium b-mono"
+                    style={{ background: 'var(--b-rose-soft)', color: 'var(--b-rose)' }}>destructive</span>
+            )}
           </div>
         </div>
         {!editing && (
-          <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>Change</Button>
+          <button onClick={() => setEditing(true)}
+                  className="b-display text-[12px] font-semibold px-3 py-1.5 rounded-full"
+                  style={{ background: 'var(--b-surface)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line-bold)' }}>
+            Change
+          </button>
         )}
       </div>
 
+      {/* Current behaviour — the human paragraph */}
       <div className="mt-3 flex items-start gap-2">
         <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', human.dotClass)} />
-        <div className="text-sm text-slate-300">
-          <span className="mr-2 font-medium text-slate-100">{human.label}.</span>
+        <div className="text-[13px]" style={{ color: 'var(--b-text-soft)' }}>
+          <span className="mr-1.5 font-medium" style={{ color: 'var(--b-text)' }}>{human.label}.</span>
           <span>{human.describe(limits)}</span>
         </div>
       </div>
 
+      {/* Inline editor */}
       {editing && (
-        <div className="mt-4 rounded border border-[#1f1f1f] bg-[#0f0f0f] p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Trust level</div>
+        <div className="mt-4 rounded-[10px] p-3 border"
+             style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}>
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--b-text-mute)' }}>Trust level</div>
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
             {(['AUTO', 'QUEUE_LOW', 'QUEUE_HIGH', 'NEVER_AUTO'] as Tier[]).map(opt => {
               const h = TIER_HUMAN[opt];
@@ -256,19 +285,20 @@ function PermissionTile({
                   disabled={disabled}
                   onClick={() => setTier(opt)}
                   className={cn(
-                    'flex items-start gap-2 rounded border p-2.5 text-left transition-colors',
-                    selected
-                      ? 'border-emerald-500/40 bg-emerald-500/5'
-                      : 'border-[#1f1f1f] bg-[#141414] hover:border-[#2a2a2a]',
+                    'flex items-start gap-2 rounded-[10px] border p-2.5 text-left transition-colors',
                     disabled && 'opacity-40 cursor-not-allowed',
                   )}
+                  style={{
+                    background: selected ? 'var(--b-teal-soft)' : 'var(--b-surface-2)',
+                    borderColor: selected ? 'var(--b-teal-2)' : 'var(--b-line)',
+                  }}
                 >
                   <span className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', h.dotClass)} />
                   <span>
-                    <div className="text-sm font-medium text-slate-100">{h.label}</div>
-                    <div className="mt-0.5 text-xs text-slate-400">{h.describe('your limits')}</div>
+                    <div className="text-[13px] font-medium" style={{ color: 'var(--b-text)' }}>{h.label}</div>
+                    <div className="mt-0.5 text-[11.5px]" style={{ color: 'var(--b-text-mute)' }}>{h.describe('your limits')}</div>
                     {disabled && (
-                      <div className="mt-1 text-[11px] text-amber-400">
+                      <div className="mt-1 text-[10.5px]" style={{ color: 'var(--b-gold)' }}>
                         Not available — this capability is marked destructive.
                       </div>
                     )}
@@ -280,11 +310,13 @@ function PermissionTile({
 
           {tier === 'QUEUE_LOW' && (
             <>
-              <div className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Limits for "Auto within limits"</div>
-              <p className="mt-1 text-xs text-slate-500">Leave a field blank to skip that condition.</p>
+              <div className="mt-4 text-[10.5px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--b-text-mute)' }}>
+                Limits for "Auto within limits"
+              </div>
+              <p className="mt-1 text-[11.5px]" style={{ color: 'var(--b-text-mute)' }}>Leave a field blank to skip that condition.</p>
               <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-slate-400">Max amount (USD)</span>
+                <label className="flex flex-col gap-1 text-[12.5px]">
+                  <span style={{ color: 'var(--b-text-mute)' }}>Max amount (USD)</span>
                   <Input
                     type="number"
                     inputMode="numeric"
@@ -293,8 +325,8 @@ function PermissionTile({
                     onChange={e => setMaxAmt(e.target.value)}
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-slate-400">Customer age (days)</span>
+                <label className="flex flex-col gap-1 text-[12.5px]">
+                  <span style={{ color: 'var(--b-text-mute)' }}>Customer age (days)</span>
                   <Input
                     type="number"
                     inputMode="numeric"
@@ -307,13 +339,23 @@ function PermissionTile({
             </>
           )}
 
-          <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[#1f1f1f] pt-3">
-            <Button variant="primary" size="sm" onClick={commit}>Save</Button>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
+          <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3" style={{ borderColor: 'var(--b-line-soft)' }}>
+            <button onClick={commit}
+                    className="b-display flex items-center gap-1.5 text-[12.5px] font-semibold px-3.5 py-1.5 rounded-full"
+                    style={{ background: 'var(--b-teal-2)', color: 'white' }}>
+              Save
+            </button>
+            <button onClick={() => setEditing(false)}
+                    className="text-[12px] px-3 py-1.5 rounded-full"
+                    style={{ color: 'var(--b-text-mute)' }}>
+              Cancel
+            </button>
             <span className="flex-1" />
-            <Button variant="ghost" size="sm" onClick={() => onRemove(t)}>
-              <Trash2 size={14} className="mr-1" /> Revoke permission
-            </Button>
+            <button onClick={() => onRemove(t)}
+                    className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-full"
+                    style={{ background: 'var(--b-rose-soft)', color: 'var(--b-rose)' }}>
+              <Trash2 size={12} /> Revoke permission
+            </button>
           </div>
         </div>
       )}
