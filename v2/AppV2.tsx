@@ -131,7 +131,10 @@ const buildSections = (
     icon: Compass,
     items: [
       { id: 'purchase-orders',  label: 'Purchase & cost',          icon: ShoppingCart },
-      { id: 'purchase-orders-list', label: 'Purchase Orders',      icon: Receipt },
+      // 'Purchase Orders' standalone menu entry removed — the PO list
+      // is now Step 5 of the Purchase & cost wizard. The route
+      // 'purchase-orders-list' is kept in the dispatcher so existing
+      // deep-links still resolve, but it's no longer a sidebar item.
       { id: 'sales-orders',     label: 'Sales Orders (Proformas)', icon: FileSignature },
       { id: 'pl-invoice',       label: 'Packing list & Invoice',   icon: Package },
       { id: 'invoices',         label: 'Invoice & docs',           icon: Receipt },
