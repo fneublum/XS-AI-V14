@@ -69,7 +69,7 @@ const buildColumns = (
         {r.invoiceNumber}
       </span>
     ) },
-  { id: 'sold', header: 'Sold to', sortable: true, filterable: true, width: '165px',
+  { id: 'sold', header: 'Sold to', sortable: true, filterable: true, width: '126px',
     value: r => r.soldTo ?? r.billToName ?? '',
     cell: r => {
       const full = r.soldTo ?? r.billToName;
