@@ -19,7 +19,7 @@ import {
   Database, Settings as SettingsIcon,
   Building2, Compass, Handshake, Truck, Banknote, Wrench,
   ShieldAlert,
-  Bot, Activity,
+  Bot,
 } from 'lucide-react';
 import { CompanySwitcher } from './layout/CompanySwitcher';
 import { CommandPalette, PaletteCommand, PaletteDataProvider } from './layout/CommandPalette';
@@ -120,6 +120,10 @@ const buildSections = (
     icon: Building2,
     items: [
       { id: 'dashboard',        label: 'Dashboard',     icon: LayoutDashboard },
+      // Agents Console used to live in its own AGENTS section. Moved
+      // here so the operator finds it adjacent to the Dashboard chat
+      // that mentions the same agents.
+      { id: 'agentic-console',  label: 'Agents console', icon: Bot },
       { id: 'ai-sales',         label: 'AI Sales Agent', icon: Sparkles },
     ],
   },
@@ -173,18 +177,6 @@ const buildSections = (
       { id: 'payables',          label: 'Payables',          icon: ArrowUpRight },
       { id: 'receivables',       label: 'Receivables',       icon: ArrowDownLeft },
       { id: 'customer-balances', label: 'Customer Balances', icon: Wallet },
-    ],
-  },
-  {
-    id: 'agents',
-    label: 'Agents',
-    accent: 'emerald',
-    icon: Bot,
-    items: [
-      // Collapsed: Stream / Autonomy / Capabilities / Audit live as tabs
-      // inside one Console route now. "Agent log" was removed entirely —
-      // it duplicated the Dashboard's overview + inbox tabs.
-      { id: 'agentic-console',      label: 'Console',       icon: Activity },
     ],
   },
   {
@@ -260,8 +252,8 @@ const routeTitles: Record<string, string> = {
   'email-agent':     'Email Agent',
   'agent-portal-quotes':   'Freight Quotes',
   'agent-portal-bookings': 'Bookings',
-  // Agentic (XS-agentic)
-  'agentic-console':      'Agents · Console',
+  // Agents console (XS-agentic) — lives under Workspace.
+  'agentic-console':      'Agents console',
 };
 
 // Single-letter hotkeys removed per user preference — navigation goes
@@ -272,6 +264,7 @@ const routeHotkeys: Record<string, string> = {};
 const routeSection: Record<string, string> = {
   'dashboard':       'Overview',
   // Workspace
+  'agentic-console': 'Workspace',
   'ai-email':        'Workspace',
   'ai-upload':       'Workspace',
   'ai-sales':        'Workspace',

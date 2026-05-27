@@ -810,9 +810,9 @@ export default function DashboardV2() {
                       hidden
                       onChange={e => { addFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ''; }}
                     />
-                    {/* Agent quick-pick row — click to insert @agent at start of input */}
-                    <div className="flex items-center gap-1.5 flex-wrap mt-2 pt-2 border-t" style={{ borderColor: 'var(--b-line-soft)' }}>
-                      <span className="text-[10.5px] uppercase tracking-[0.14em] mr-1" style={{ color: 'var(--b-text-mute)' }}>Route to</span>
+                    {/* Single toolbar row — agent quick-pick + attach + send */}
+                    <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t" style={{ borderColor: 'var(--b-line-soft)' }}>
+                      {/* Agent quick-pick chips */}
                       {agentOrder.map(id => {
                         const active = input.trim().toLowerCase().startsWith('@' + id);
                         const color = `var(--b-c-${id}, var(--b-text-soft))`;
@@ -836,22 +836,18 @@ export default function DashboardV2() {
                           </button>
                         );
                       })}
-                    </div>
-                    {/* Bottom toolbar — attach + send */}
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t gap-2" style={{ borderColor: 'var(--b-line-soft)' }}>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-full"
-                          style={{ color: 'var(--b-text-mute)' }}
-                          title="Attach file"
-                        >
-                          <Paperclip size={12} /> attach
-                        </button>
-                        <span className="text-[11px] truncate" style={{ color: 'var(--b-text-faint)' }}>drag · paste · ≤ 2 MB each · attachments route to @lara</span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      {/* Attach button */}
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-full"
+                        style={{ color: 'var(--b-text-mute)' }}
+                        title="Attach file · attachments route to @lara"
+                      >
+                        <Paperclip size={12} /> attach
+                      </button>
+                      {/* Send — pushed to the right */}
+                      <div className="ml-auto flex items-center gap-2 shrink-0">
                         <span className="text-[11px] b-mono" style={{ color: 'var(--b-text-mute)' }}>↵</span>
                         <button
                           onClick={send}
