@@ -69,7 +69,7 @@ const buildColumns = (
         {r.invoiceNumber}
       </span>
     ) },
-  { id: 'date', header: 'Issued', align: 'right', sortable: true, width: '90px',
+  { id: 'date', header: 'Issued', align: 'right', sortable: true, width: '34px',
     value: r => r.invoiceDate ?? '',
     cell: r => (
       <span className="text-slate-500 font-mono tabular-nums text-[11px]">
