@@ -220,18 +220,35 @@ export function generateInvoicePdf(
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(cyanColor);
 
+  // Wrap each column's value to its actual column width using
+  // jsPDF's splitTextToSize. Earlier the INCOTERM rendered as one
+  // line of "CIF - COST, INSURANCE AND FREIGHT" and bled into the
+  // POD column (text became "...FREIGHTBRMAO - Manaus"). Column
+  // gaps: TERMS x14→90 = 76mm; INCOTERM x90→155 = 65mm; POD x155→
+  // 196 = 41mm. Subtract ~3mm padding so the wrapped text doesn't
+  // touch the next header.
   const termsText = inv.paymentTerms || 'ADV / CAD';
-  doc.text(termsText.length > 25 ? termsText.substring(0, 25) : termsText, 14, y);
+  const termsLines = doc.splitTextToSize(termsText, 73);
+  doc.text(termsLines, 14, y);
 
   const incotermCode = inv.incoterm || 'CFR';
-  doc.text(`${incotermCode} - ${INCOTERM_NAMES[incotermCode] || incotermCode}`, 90, y);
+  const incotermText = `${incotermCode} - ${INCOTERM_NAMES[incotermCode] || incotermCode}`;
+  const incotermLines = doc.splitTextToSize(incotermText, 62);
+  doc.text(incotermLines, 90, y);
 
   const podCode = inv.pod || '';
   const podPort = ctx.ports.find(p => p.code === podCode);
-  doc.text(podPort ? `${podCode} - ${podPort.name}` : (podCode || '-'), 155, y);
+  const podText = podPort ? `${podCode} - ${podPort.name}` : (podCode || '-');
+  const podLines = doc.splitTextToSize(podText, 38);
+  doc.text(podLines, 155, y);
 
   // ─── ITEMS TABLE ─────────────────────────────────────────────
-  y += 12;
+  // Advance y by the TALLEST of the three wrapped values so the
+  // items table doesn't overlap a 2-line INCOTERM / TERMS row.
+  // ~5mm per line at fontSize 10; baseline gap of 7mm before the
+  // table starts.
+  const maxValueLines = Math.max(termsLines.length, incotermLines.length, podLines.length);
+  y += 7 + (maxValueLines * 5);
   const items = parseItems(inv.items);
 
   const tableHead = [[
