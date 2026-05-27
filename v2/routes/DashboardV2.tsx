@@ -100,10 +100,19 @@ async function api<T = any>(method: string, path: string, body?: any): Promise<T
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  let data: any = null;
-  if (text) { try { data = JSON.parse(text); } catch { data = text; } }
-  if (!res.ok) throw new Error(data?.error ?? text ?? `${res.status} ${res.statusText}`);
-  return data as T;
+  // Strict JSON. Non-OK or non-JSON response => throw, so callers'
+  // catch blocks fire (sets connected=false and renders the banner).
+  // Without this, prod App Engine's SPA catch-all returns index.html
+  // for /xs-agentic/* paths, which would be set as state and crash
+  // any downstream .map call.
+  if (!res.ok) {
+    let msg: string = text;
+    try { const j = JSON.parse(text); msg = j?.error ?? text; } catch {}
+    throw new Error(msg || `${res.status} ${res.statusText}`);
+  }
+  if (!text) return null as T;
+  try { return JSON.parse(text) as T; }
+  catch { throw new Error(`non-JSON response from ${path} — control-plane likely unreachable`); }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -213,16 +222,19 @@ export default function DashboardV2() {
   const refresh = useCallback(async () => {
     try {
       const list = await api<ChatMessage[]>('GET', '/chat/messages?limit=300');
-      setMessages(list);
+      setMessages(Array.isArray(list) ? list : []);
       setConnected(true);
     } catch {
+      setMessages([]);
       setConnected(false);
     }
   }, []);
 
   useEffect(() => {
     refresh();
-    api<Personas>('GET', '/chat/personas').then(setPersonas).catch(() => {});
+    api<Personas>('GET', '/chat/personas')
+      .then(p => setPersonas(p && typeof p === 'object' && !Array.isArray(p) ? p : {}))
+      .catch(() => setPersonas({}));
     const t = setInterval(refresh, 4000);
     return () => clearInterval(t);
   }, [refresh]);
@@ -231,11 +243,17 @@ export default function DashboardV2() {
   // and refresh whenever the user re-enters that mode.
   useEffect(() => {
     if (mode === 'overview') {
-      api<Overview>('GET', '/chat/overview').then(setOverview).catch(() => setOverview(null));
+      api<Overview>('GET', '/chat/overview')
+        .then(o => setOverview(o && typeof o === 'object' && !Array.isArray(o) ? o : null))
+        .catch(() => setOverview(null));
     } else if (mode === 'prompts') {
-      api<Suggestions>('GET', '/chat/suggestions').then(setSuggestions).catch(() => setSuggestions(null));
+      api<Suggestions>('GET', '/chat/suggestions')
+        .then(s => setSuggestions(s && typeof s === 'object' && !Array.isArray(s) ? s : null))
+        .catch(() => setSuggestions(null));
     } else if (mode === 'crons') {
-      api<CronsPayload>('GET', '/chat/crons').then(setCrons).catch(() => setCrons(null));
+      api<CronsPayload>('GET', '/chat/crons')
+        .then(c => setCrons(c && typeof c === 'object' && Array.isArray((c as any).crons) ? c : null))
+        .catch(() => setCrons(null));
     }
   }, [mode]);
 
