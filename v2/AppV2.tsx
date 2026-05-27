@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './providers/AuthProvider';
 import { CompanyProvider, useCompany } from './providers/CompanyProvider';
 import { useCompanies } from './queries/useCompanies';
 import { formatDate } from './lib/formatDate';
+import { isAdminRole } from './lib/roles';
 import { QueryProvider } from './providers/QueryProvider';
 import { ToastProvider, useToast } from './primitives/Toast';
 import { EditorProvider, useEditor } from './providers/EditorProvider';
@@ -108,6 +109,8 @@ const buildSections = (
   openSettingsMenu: () => void,
   userRole?: string,
 ): import('./layout/Sidebar').SidebarSection[] => {
+  const adminTier = isAdminRole(userRole);
+
   // Cargo Agent users get a scoped sidebar — only their portal.
   if (userRole === 'Cargo Agent') {
     return [{
@@ -195,7 +198,13 @@ const buildSections = (
     icon: Wrench,
     items: [
       { id: '__data',     label: 'Data',     icon: Database,    onClick: openDataMenu },
-      { id: '__settings', label: 'Settings', icon: SettingsIcon, onClick: openSettingsMenu },
+      // Settings (Companies / Users / Connections) is admin-only —
+      // hidden from the sidebar for non-admin tiers. The route
+      // renders below ALSO gate on isAdminRole so a URL deep-link
+      // can't bypass the menu hide.
+      ...(adminTier
+        ? [{ id: '__settings', label: 'Settings', icon: SettingsIcon, onClick: openSettingsMenu }]
+        : []),
     ],
   },
   ];
@@ -355,6 +364,26 @@ const shortcutGroups: ShortcutGroup[] = [
     ],
   },
 ];
+
+// Inline placeholder for an admin-only route reached by a non-admin
+// user (typically via URL deep-link). Renders inside the existing
+// shell so navigation stays usable; the user can pick a different
+// route from the sidebar without a hard reload.
+const AdminAccessDenied: React.FC<{ label: string }> = ({ label }) => (
+  <div className="bento-scope p-8" style={{ maxWidth: '720px' }}>
+    <div className="rounded-[14px] border p-8 text-center" style={{
+      background: 'var(--b-surface)', borderColor: 'var(--b-line)',
+    }}>
+      <div className="b-display text-[18px] font-semibold mb-2" style={{ color: 'var(--b-text)' }}>
+        Admin access required
+      </div>
+      <div className="text-[13px]" style={{ color: 'var(--b-text-mute)' }}>
+        {label} is restricted to ADMIN / OWNER roles. Ask a workspace
+        administrator if you need access.
+      </div>
+    </div>
+  </div>
+);
 
 const AppV2Inner: React.FC = () => {
   const [activeId, setActiveId] = useState(() => {
@@ -669,7 +698,8 @@ const AppV2Inner: React.FC = () => {
         breadcrumbs={breadcrumbs}
         onSearch={() => setPaletteOpen(true)}
         onOpenSettings={() => navigate('settings')}
-        onOpenConnections={() => navigate('connections')}
+        // TopBar plug icon hidden for non-admins (Connections is admin-only).
+        onOpenConnections={isAdminRole(user?.role) ? () => navigate('connections') : undefined}
       >
         <Suspense fallback={<Fallback />}>
           {activeId === 'dashboard'       && <DashboardV2 />}
@@ -694,8 +724,12 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'statements'        && <StatementsV2 />}
           {activeId === 'payment-terms'   && <PaymentTermsV2 />}
           {activeId === 'commissions'     && <CommissionsV2 />}
-          {activeId === 'users'           && <AdminUsersV2 />}
-          {activeId === 'companies'       && <AdminCompaniesV2 />}
+          {/* Admin-only routes — gated so a non-admin who deep-links
+              via URL gets the access-denied placeholder instead of
+              the screen. Sidebar + menu modal also hide these for
+              non-admins (defence in depth). */}
+          {activeId === 'users'           && (isAdminRole(user?.role) ? <AdminUsersV2 />     : <AdminAccessDenied label="Users" />)}
+          {activeId === 'companies'       && (isAdminRole(user?.role) ? <AdminCompaniesV2 /> : <AdminAccessDenied label="Companies" />)}
           {activeId === 'cargo-agents'    && <AdminCargoAgentsV2 />}
           {activeId === 'carriers'        && <AdminCarriersV2 />}
           {activeId === 'ports'           && <AdminPortsV2 />}
@@ -708,7 +742,7 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'ai-logistics'    && <AiLogisticsManagerV2 />}
           {activeId === 'email-agent'     && <EmailAgentV2 />}
           {activeId === 'settings'        && <SettingsV2 />}
-          {activeId === 'connections'     && <ConnectionsV2 />}
+          {activeId === 'connections'     && (isAdminRole(user?.role) ? <ConnectionsV2 />    : <AdminAccessDenied label="Connections" />)}
           {activeId === 'connections-hub'  && <ConnectionsHubV2 />}
           {activeId === 'ai-inbox'         && <AiInboxV2 />}
           {activeId === 'sopici'          && <AgentSalesOrdersV2 />}

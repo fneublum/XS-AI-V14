@@ -5,7 +5,9 @@
 
 import React from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X as XIcon, Settings, Building, Users, Plug } from 'lucide-react';
+import { X as XIcon, Settings, Building, Users, Plug, ShieldAlert } from 'lucide-react';
+import { useAuth } from '../providers/AuthProvider';
+import { isAdminRole } from '../lib/roles';
 
 interface Props {
   open: boolean;
@@ -35,7 +37,10 @@ const ITEMS: Item[] = [
   },
 ];
 
-export const SettingsMenuModal: React.FC<Props> = ({ open, onOpenChange, navigate }) => (
+export const SettingsMenuModal: React.FC<Props> = ({ open, onOpenChange, navigate }) => {
+  const { user } = useAuth();
+  const adminTier = isAdminRole(user?.role);
+  return (
   <Dialog.Root open={open} onOpenChange={onOpenChange}>
     <Dialog.Portal>
       <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px]" />
@@ -59,7 +64,7 @@ export const SettingsMenuModal: React.FC<Props> = ({ open, onOpenChange, navigat
         </div>
 
         <div className="px-3 py-3 space-y-1.5">
-          {ITEMS.map(it => (
+          {adminTier ? ITEMS.map(it => (
             <button
               key={it.routeId}
               type="button"
@@ -78,9 +83,28 @@ export const SettingsMenuModal: React.FC<Props> = ({ open, onOpenChange, navigat
                 </span>
               </span>
             </button>
-          ))}
+          )) : (
+            // Defence-in-depth: the sidebar already hides this entry
+            // for non-admins, but if the modal somehow gets opened
+            // (deep-link, programmatic call, future regression),
+            // render a clean access-denied state instead of leaking
+            // the admin route ids via the navigation buttons.
+            <div className="flex flex-col items-center text-center px-4 py-8 gap-3">
+              <span className="p-2.5 rounded-full bg-amber-500/10 text-amber-300">
+                <ShieldAlert size={18} />
+              </span>
+              <div>
+                <div className="text-[13px] font-semibold text-slate-100">Admin access required</div>
+                <div className="text-[11.5px] text-slate-500 mt-1">
+                  Companies, Users, and Connections are restricted to ADMIN / OWNER roles.
+                  Ask a workspace administrator if you need to manage these settings.
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>
 );
+};
