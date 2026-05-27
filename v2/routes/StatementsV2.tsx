@@ -14,12 +14,15 @@
 // Logistics Follow Up).
 
 import React, { useMemo, useState } from 'react';
-import { FileText, Download, ChevronDown } from 'lucide-react';
+import { FileText, Download, ChevronDown, RefreshCw } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useStatement, useCounterpartyBalances, type StatementKind } from '../queries/useStatement';
 import { useCompany } from '../providers/CompanyProvider';
 import { useCompanies } from '../queries/useCompanies';
+import { useToast } from '../primitives/Toast';
+import { invokeEdgeFunction } from '../../services/edgeAuth';
+import { useQueryClient } from '@tanstack/react-query';
 
 function fmtMoney(n: number, c: string = 'USD'): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 2 }).format(n);
@@ -34,6 +37,8 @@ function fmtDate(d: string | null | undefined): string {
 const StatementsV2: React.FC = () => {
   const { currentCompanyId } = useCompany();
   const companies = useCompanies();
+  const toast = useToast();
+  const qc = useQueryClient();
   const currentCompany = useMemo(
     () => companies.data?.find(c => c.id === currentCompanyId),
     [companies.data, currentCompanyId],
@@ -43,9 +48,51 @@ const StatementsV2: React.FC = () => {
   const [counterpartyName, setCounterpartyName] = useState<string>('');
   const today = new Date().toISOString().slice(0, 10);
   const [asOf, setAsOf] = useState(today);
+  const [qbSyncing, setQbSyncing] = useState(false);
 
   const counterparties = useCounterpartyBalances(kind);
   const statement = useStatement({ kind, counterpartyName, asOf });
+
+  // ── QuickBooks pull-sync ───────────────────────────────────────
+  async function syncFromQb() {
+    if (currentCompanyId === 'ALL') {
+      toast.push({ kind: 'warning', title: 'Pick a specific company first' });
+      return;
+    }
+    setQbSyncing(true);
+    try {
+      const res: any = await invokeEdgeFunction('qb-pull-payments', {
+        companyId: currentCompanyId,
+        // Pull the last 90 days by default — full history would take
+        // longer and most users only care about current AR/AP.
+        since: new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10),
+      });
+      if (res?.error) throw new Error(res.error);
+      toast.push({
+        kind: 'success',
+        title: `QuickBooks sync · ${res.pulled} payment${res.pulled === 1 ? '' : 's'} pulled`,
+        description: res.allocated > 0
+          ? `${res.allocated} allocation${res.allocated === 1 ? '' : 's'} matched to invoices.`
+          : res.pulled === 0
+            ? 'Already up to date.'
+            : 'No invoice matches found — payments saved as unallocated.',
+      });
+      // Refresh every view that reads transactions/balances.
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['ar_invoice_balances'] });
+      qc.invalidateQueries({ queryKey: ['ap_supplier_invoice_balances'] });
+      qc.invalidateQueries({ queryKey: ['statement'] });
+      qc.invalidateQueries({ queryKey: ['counterparty_balances'] });
+    } catch (e: any) {
+      toast.push({
+        kind: 'error',
+        title: 'QuickBooks sync failed',
+        description: (e?.message ?? String(e)).slice(0, 240),
+      });
+    } finally {
+      setQbSyncing(false);
+    }
+  }
 
   // ── PDF export ───────────────────────────────────────────────────
   function exportPdf() {
@@ -204,6 +251,18 @@ const StatementsV2: React.FC = () => {
               style={{ background: 'var(--b-surface-2)', border: '1px solid var(--b-line)', color: 'var(--b-text)' }}
             />
           </div>
+
+          {/* QB pull-sync */}
+          <button
+            onClick={syncFromQb}
+            disabled={qbSyncing || currentCompanyId === 'ALL'}
+            title="Pull payments from QuickBooks for the current company"
+            className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: 'var(--b-surface-2)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}
+          >
+            <RefreshCw size={12} className={qbSyncing ? 'animate-spin' : ''} />
+            {qbSyncing ? 'Syncing…' : 'Pull from QuickBooks'}
+          </button>
 
           {/* Export */}
           <button
