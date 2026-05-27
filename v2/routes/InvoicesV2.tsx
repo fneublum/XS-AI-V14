@@ -54,7 +54,7 @@ const buildColumns = (
   termsCodeByDescription: Map<string, string>,
   etdByBookingNumber: Map<string, string | null>,
 ): DataTableColumn<Invoice>[] => [
-  { id: 'inv', header: 'Invoice', mono: true, sortable: true, filterable: true,
+  { id: 'inv', header: 'Invoice', mono: true, sortable: true, filterable: true, width: '120px',
     value: r => r.invoiceNumber,
     cell: r => (
       <span className="inline-flex items-center gap-1.5">
