@@ -61,6 +61,7 @@ const ReceivablesV2     = lazy(() => import('./routes/ReceivablesV2'));
 const PayablesV2        = lazy(() => import('./routes/PayablesV2'));
 const CommissionsV2     = lazy(() => import('./routes/CommissionsV2'));
 const CustomerBalancesV2 = lazy(() => import('./routes/CustomerBalancesV2'));
+const StatementsV2       = lazy(() => import('./routes/StatementsV2'));
 const AiSalesV2          = lazy(() => import('./routes/AiSalesV2'));
 const TradingFollowUpV2    = lazy(() => import('./routes/TradingFollowUpV2'));
 const LogisticsFollowUpV2  = lazy(() => import('./routes/LogisticsFollowUpV2'));
@@ -177,6 +178,7 @@ const buildSections = (
       { id: 'payables',          label: 'Payables',          icon: ArrowUpRight },
       { id: 'receivables',       label: 'Receivables',       icon: ArrowDownLeft },
       { id: 'customer-balances', label: 'Customer Balances', icon: Wallet },
+      { id: 'statements',        label: 'Statements',        icon: Receipt },
     ],
   },
   {
@@ -225,6 +227,7 @@ const routeTitles: Record<string, string> = {
   'payables':        'Payables',
   'receivables':     'Receivables',
   'customer-balances': 'Customer Balances',
+  'statements':        'Statements',
   // Reachable via Data modal or command palette — not in the sidebar
   // tree but still valid routes.
   'customers':       'Customers',
@@ -298,6 +301,7 @@ const routeSection: Record<string, string> = {
   'payables':        'Finance',
   'receivables':     'Finance',
   'customer-balances': 'Finance',
+  'statements':        'Finance',
   'pl':              'Finance',
   'cost-profit':     'Finance',
   // Data
@@ -685,6 +689,7 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'receivables'     && <ReceivablesV2 />}
           {activeId === 'payables'        && <PayablesV2 />}
           {activeId === 'customer-balances' && <CustomerBalancesV2 />}
+          {activeId === 'statements'        && <StatementsV2 />}
           {activeId === 'payment-terms'   && <PaymentTermsV2 />}
           {activeId === 'commissions'     && <CommissionsV2 />}
           {activeId === 'users'           && <AdminUsersV2 />}
