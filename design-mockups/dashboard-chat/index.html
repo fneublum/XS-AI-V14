@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dashboard chat · 3 design directions</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;1,9..144,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #0a0e17;
+    color: #e8ecf3;
+  }
+  .display { font-family: 'Fraunces', serif; }
+  .card-link {
+    transition: transform 0.18s, box-shadow 0.18s;
+  }
+  .card-link:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 24px 48px -20px rgba(0,0,0,0.7);
+  }
+</style>
+</head>
+<body class="min-h-screen p-10">
+  <div class="max-w-6xl mx-auto">
+    <div class="mb-12">
+      <div class="text-[11px] uppercase tracking-[0.16em] text-slate-400 mb-2">V14 · Dashboard team chat</div>
+      <h1 class="display text-[48px] leading-[1.05] tracking-tight">
+        Three directions to look at.
+      </h1>
+      <p class="text-slate-400 mt-4 max-w-2xl leading-relaxed">
+        Pick the one that feels right. Each opens in its own page and includes three states
+        (live / empty / offline) toggleable via tabs at the top. Once you pick a direction
+        I'll wire it into the real React code (DashboardV2.tsx) — the mockups are HTML+Tailwind
+        so we can iterate fast before committing to React.
+      </p>
+    </div>
+
+    <div class="grid md:grid-cols-3 gap-6">
+
+      <!-- Direction 1 -->
+      <a href="01-command-center.html" class="card-link block rounded-2xl overflow-hidden border border-slate-800" style="background: linear-gradient(180deg, #11161c 0%, #06080a 100%);">
+        <div class="aspect-[4/3] flex items-center justify-center text-center px-6" style="background-image: radial-gradient(circle at 50% 50%, rgba(74, 222, 128, 0.06), transparent); border-bottom: 1px solid #1a2129;">
+          <div>
+            <div class="text-[40px]" style="font-family: 'JetBrains Mono', monospace; color: #4ade80; text-shadow: 0 0 14px rgba(74, 222, 128, 0.4);">// 01</div>
+            <div style="font-family: 'VT323', monospace; color: #4ade80; font-size: 28px; letter-spacing: 0.04em;">COMMAND</div>
+          </div>
+        </div>
+        <div class="p-5">
+          <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 mb-2">Direction 01</div>
+          <h2 class="text-lg font-semibold mb-2 text-emerald-300">Command Center</h2>
+          <p class="text-[13px] text-slate-400 leading-relaxed">
+            Bloomberg-terminal density. Phosphor glow, scanlines, monospace everything,
+            agent vitals + live audit tail surround the chat. Treats you as a flight controller.
+          </p>
+          <div class="mt-4 text-[11px] text-slate-500">JetBrains Mono · VT323 · phosphor green</div>
+        </div>
+      </a>
+
+      <!-- Direction 2 -->
+      <a href="02-conversational-warmth.html" class="card-link block rounded-2xl overflow-hidden border" style="background: linear-gradient(180deg, #f6f1e8 0%, #efe7d8 100%); border-color: #d8cdb2; color: #1b1810;">
+        <div class="aspect-[4/3] flex items-center justify-center text-center px-6" style="border-bottom: 1px solid #d8cdb2;">
+          <div>
+            <div class="display text-[44px] italic leading-none" style="color: #b15c3e;">Atelier</div>
+            <div class="text-[12px] uppercase tracking-[0.18em] mt-3" style="color: #877e69;">A warmer room</div>
+          </div>
+        </div>
+        <div class="p-5">
+          <div class="text-[11px] uppercase tracking-[0.15em] mb-2" style="color: #877e69;">Direction 02</div>
+          <h2 class="display text-xl mb-2" style="color: #1b1810;">Conversational Warmth</h2>
+          <p class="text-[13px] leading-relaxed" style="color: #4a4434;">
+            Light cream paper, italic Fraunces serif, oversized wax-seal avatars.
+            Conversation flows like a curated column. Treats AI agents as people worth listening to.
+          </p>
+          <div class="mt-4 text-[11px]" style="color: #877e69;">Fraunces · DM Sans · cream paper</div>
+        </div>
+      </a>
+
+      <!-- Direction 3 -->
+      <a href="03-operations-dashboard.html" class="card-link block rounded-2xl overflow-hidden border border-slate-800" style="background: linear-gradient(180deg, #121826 0%, #0b0f18 100%);">
+        <div class="aspect-[4/3] grid grid-cols-3 gap-2 p-5" style="background-image: radial-gradient(ellipse 60% 50% at 25% 25%, rgba(94, 234, 212, 0.06), transparent); border-bottom: 1px solid #1d2740;">
+          <div class="rounded-lg" style="background: rgba(251, 191, 36, 0.18); border: 1px solid rgba(251, 191, 36, 0.3);"></div>
+          <div class="rounded-lg" style="background: rgba(94, 234, 212, 0.15); border: 1px solid rgba(94, 234, 212, 0.3);"></div>
+          <div class="rounded-lg" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3);"></div>
+          <div class="col-span-2 rounded-lg" style="background: rgba(20, 30, 50, 0.8); border: 1px solid #1d2740;"></div>
+          <div class="rounded-lg" style="background: rgba(20, 30, 50, 0.8); border: 1px solid #1d2740;"></div>
+          <div class="col-span-3 rounded-lg" style="background: rgba(20, 30, 50, 0.8); border: 1px solid #1d2740; height: 36px;"></div>
+        </div>
+        <div class="p-5">
+          <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 mb-2">Direction 03</div>
+          <h2 class="text-lg font-semibold mb-2" style="color: #5eead4;">Bento Operations</h2>
+          <p class="text-[13px] text-slate-400 leading-relaxed">
+            Chat is one panel among many. Today's KPIs, decision queue, agent vitals, audit tail —
+            all glanceable in one frame. The chat is where you act on what the workspace surfaces.
+          </p>
+          <div class="mt-4 text-[11px] text-slate-500">Bricolage Grotesque · Plus Jakarta · teal accent</div>
+        </div>
+      </a>
+
+    </div>
+
+    <div class="mt-12 p-6 rounded-2xl border border-slate-800 bg-slate-900/40">
+      <h3 class="font-semibold mb-3 text-slate-200">How to compare</h3>
+      <ul class="text-[13.5px] text-slate-400 space-y-2 list-disc pl-5">
+        <li>Open each direction in its own tab — switch between them to feel the contrast.</li>
+        <li>Each has three states (live / empty / offline) at the top — click through them.</li>
+        <li>Same realistic data across all three (Plastix Indústria shipment, ACME AR follow-up, EcoPoli RFQ) so you compare the design, not the content.</li>
+        <li>Once you pick a direction, I'll port it into <code class="text-[12px] text-emerald-300 bg-slate-800/60 px-1.5 py-0.5 rounded">v2/routes/DashboardV2.tsx</code> for real.</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

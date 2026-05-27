@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>V14 · Team chat · Bento Operations (Light)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=Plus+Jakarta+Sans:ital,wght@0,300..700;1,300..700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Page surfaces */
+    --bg-page:    #f5f6f8;
+    --bg-surface: #ffffff;
+    --bg-soft:    #f1f3f7;
+    --bg-softer:  #e9ecf2;
+    --bg-deep:    #0d1117;
+
+    /* Lines */
+    --line:       #e2e6ec;
+    --line-soft:  #eceff4;
+    --line-bold:  #d2d7df;
+
+    /* Ink */
+    --text:       #0d1117;
+    --text-soft:  #3e4756;
+    --text-mute:  #6b7491;
+    --text-faint: #9ca3b4;
+
+    /* Accents — saturated enough for AA on white */
+    --teal:       #0d9488;
+    --teal-2:     #0f766e;
+    --teal-soft:  #ccfbf1;
+    --gold:       #b45309;
+    --gold-soft:  #fef3c7;
+    --rose:       #be123c;
+    --rose-soft:  #fee2e2;
+    --emerald:    #047857;
+    --emerald-soft:#d1fae5;
+    --cyan:       #0e7490;
+    --cyan-soft:  #cffafe;
+    --indigo:     #4338ca;
+    --indigo-soft:#e0e7ff;
+
+    /* Agent palette — light-mode tuned */
+    --c-max:    #6d28d9;
+    --c-lara:   #be185d;
+    --c-matt:   #047857;
+    --c-logan:  #0369a1;
+    --c-sal:    #b45309;
+    --c-gem:    #4338ca;
+    --c-hermes: #c2410c;
+    --c-felipe: #15803d;
+
+    --c-max-soft:    #ede9fe;
+    --c-lara-soft:   #fce7f3;
+    --c-matt-soft:   #d1fae5;
+    --c-logan-soft:  #e0f2fe;
+    --c-sal-soft:    #fef3c7;
+    --c-gem-soft:    #e0e7ff;
+    --c-hermes-soft: #ffedd5;
+    --c-felipe-soft: #dcfce7;
+  }
+  html, body {
+    background: var(--bg-page);
+    color: var(--text);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+  body {
+    background-image:
+      radial-gradient(ellipse 80% 40% at 15% 0%, rgba(13, 148, 136, 0.05), transparent 60%),
+      radial-gradient(ellipse 70% 40% at 95% 100%, rgba(67, 56, 202, 0.04), transparent 60%);
+    background-attachment: fixed;
+  }
+  .display {
+    font-family: 'Bricolage Grotesque', sans-serif;
+    font-variation-settings: 'opsz' 32, 'wght' 500;
+    letter-spacing: -0.02em;
+  }
+  .mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum' 1; }
+
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 1px 0 rgba(13, 17, 23, 0.02), 0 6px 22px -16px rgba(13, 17, 23, 0.08);
+  }
+  .card-pad { padding: 20px 22px; }
+  .card-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 22px 14px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .card-title {
+    font-family: 'Bricolage Grotesque', sans-serif;
+    font-variation-settings: 'opsz' 14, 'wght' 600;
+    font-size: 13px;
+    letter-spacing: -0.005em;
+    color: var(--text);
+  }
+  .card-meta {
+    font-size: 11.5px;
+    color: var(--text-mute);
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Tinted KPI cards (subtle color washes for visual hierarchy) */
+  .card-tinted-gold    { background: linear-gradient(180deg, #fffbf0 0%, #fff 60%); border-color: #f4e1bc; }
+  .card-tinted-cyan    { background: linear-gradient(180deg, #f0fbff 0%, #fff 60%); border-color: #bee3f0; }
+  .card-tinted-sal     { background: linear-gradient(180deg, #fef9ed 0%, #fff 60%); border-color: #f1dcae; }
+  .card-tinted-emerald { background: linear-gradient(180deg, #f0fdf5 0%, #fff 60%); border-color: #bbe6cf; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--bg-soft);
+    color: var(--text-soft);
+  }
+  .pill-warm    { background: var(--gold-soft);    color: var(--gold); }
+  .pill-cool    { background: var(--emerald-soft); color: var(--emerald); }
+  .pill-rose    { background: var(--rose-soft);    color: var(--rose); }
+  .pill-teal    { background: var(--teal-soft);    color: var(--teal-2); }
+
+  .kpi-value {
+    font-family: 'Bricolage Grotesque', sans-serif;
+    font-variation-settings: 'opsz' 96, 'wght' 600;
+    font-size: 44px;
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+  }
+  .kpi-delta {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11.5px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 2px 7px;
+    border-radius: 6px;
+  }
+  .delta-up   { background: var(--emerald-soft); color: var(--emerald); }
+  .delta-down { background: var(--rose-soft);    color: var(--rose); }
+  .delta-flat { background: var(--bg-soft);      color: var(--text-mute); }
+
+  .spark { stroke-width: 1.6; fill: none; }
+
+  /* Agent dot */
+  .a-dot {
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Bricolage Grotesque', sans-serif;
+    font-variation-settings: 'opsz' 14, 'wght' 700;
+    font-size: 11px;
+    color: white;
+  }
+  .a-dot-max     { background: var(--c-max);    }
+  .a-dot-lara    { background: var(--c-lara);   }
+  .a-dot-matt    { background: var(--c-matt);   }
+  .a-dot-logan   { background: var(--c-logan);  }
+  .a-dot-sal     { background: var(--c-sal);    }
+  .a-dot-gem     { background: var(--c-gem);    }
+  .a-dot-hermes  { background: var(--c-hermes); }
+  .a-dot-felipe  { background: var(--c-felipe); }
+
+  .auth-max     { color: var(--c-max); }
+  .auth-lara    { color: var(--c-lara); }
+  .auth-matt    { color: var(--c-matt); }
+  .auth-logan   { color: var(--c-logan); }
+  .auth-sal     { color: var(--c-sal); }
+  .auth-gem     { color: var(--c-gem); }
+  .auth-hermes  { color: var(--c-hermes); }
+  .auth-felipe  { color: var(--c-felipe); }
+
+  /* Chat */
+  .chat-msg {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    gap: 12px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .chat-msg.user .bubble {
+    background: linear-gradient(180deg, #ecfeff 0%, #f0fdfa 100%);
+    border-color: #b6e5db;
+  }
+  .bubble {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+  .bubble code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 1px 6px;
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--teal-2);
+  }
+  .author-line {
+    font-family: 'Bricolage Grotesque', sans-serif;
+    font-variation-settings: 'opsz' 14, 'wght' 600;
+    font-size: 13px;
+  }
+  .ts {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-mute);
+  }
+
+  .data-block {
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 16px;
+    font-size: 12px;
+  }
+  .data-block .k { color: var(--text-mute); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  .data-block .v { color: var(--text); font-weight: 500; }
+
+  /* Composer */
+  .composer {
+    border-top: 1px solid var(--line);
+    background: linear-gradient(0deg, #fbfcfd 0%, var(--bg-surface) 100%);
+    padding: 14px 18px;
+  }
+  .composer-input {
+    background: white;
+    border: 1px solid var(--line-bold);
+    border-radius: 14px;
+    padding: 12px 16px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .composer-input:focus-within {
+    border-color: var(--teal-2);
+    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12);
+  }
+  .composer textarea {
+    width: 100%;
+    background: transparent;
+    border: 0; outline: 0;
+    color: var(--text);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-size: 13.5px;
+    resize: none;
+  }
+  .composer textarea::placeholder { color: var(--text-faint); }
+
+  .btn-primary {
+    background: var(--teal-2);
+    color: white;
+    padding: 7px 14px;
+    border-radius: 100px;
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: 'Bricolage Grotesque', sans-serif;
+    font-variation-settings: 'opsz' 14, 'wght' 600;
+    transition: background 0.15s;
+  }
+  .btn-primary:hover { background: var(--teal); }
+  .btn-ghost {
+    color: var(--text-soft);
+    padding: 7px 12px;
+    border-radius: 100px;
+    font-size: 12px;
+    background: var(--bg-soft);
+    transition: background 0.15s;
+  }
+  .btn-ghost:hover { background: var(--bg-softer); }
+
+  .q-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line-soft);
+    display: flex; gap: 12px; align-items: start;
+  }
+
+  /* Agent tile */
+  .agent-tile {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .agent-tile::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 2px;
+    background: currentColor;
+  }
+  .agent-tile.t-max::before    { color: var(--c-max); }
+  .agent-tile.t-lara::before   { color: var(--c-lara); }
+  .agent-tile.t-matt::before   { color: var(--c-matt); }
+  .agent-tile.t-logan::before  { color: var(--c-logan); }
+  .agent-tile.t-sal::before    { color: var(--c-sal); }
+  .agent-tile.t-gem::before    { color: var(--c-gem); }
+  .agent-tile.t-hermes::before { color: var(--c-hermes); }
+
+  .audit-row {
+    display: grid;
+    grid-template-columns: 60px 20px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 18px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .audit-row:hover { background: var(--bg-soft); }
+
+  .state-tab {
+    padding: 6px 14px;
+    border-radius: 100px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-mute);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .state-tab.active {
+    background: var(--bg-surface);
+    color: var(--teal-2);
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  .state-tab:hover { color: var(--text-soft); }
+
+  .nav-rail {
+    background: var(--bg-surface);
+    border: 1px solid var(--line);
+    border-radius: 100px;
+    padding: 6px;
+    display: flex;
+    gap: 2px;
+    box-shadow: 0 2px 8px -4px rgba(13, 17, 23, 0.06);
+  }
+  .nav-pill {
+    padding: 8px 14px;
+    border-radius: 100px;
+    font-size: 12.5px;
+    color: var(--text-mute);
+    display: inline-flex; align-items: center; gap: 6px;
+    cursor: pointer;
+  }
+  .nav-pill.active {
+    background: var(--bg-soft);
+    color: var(--text);
+  }
+
+  .ring-pulse {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--emerald);
+    box-shadow: 0 0 0 0 rgba(4, 120, 87, 0.4);
+    animation: ringpulse 2s infinite;
+  }
+  @keyframes ringpulse {
+    0% { box-shadow: 0 0 0 0 rgba(4, 120, 87, 0.4); }
+    70% { box-shadow: 0 0 0 8px rgba(4, 120, 87, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(4, 120, 87, 0); }
+  }
+
+  .chip-tiny {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg-soft);
+    color: var(--text-mute);
+  }
+
+  .theme-swap {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    color: var(--text-mute);
+    padding: 6px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--line);
+    border-radius: 100px;
+    text-decoration: none;
+    transition: background 0.15s;
+  }
+  .theme-swap:hover { background: var(--bg-soft); color: var(--text-soft); }
+</style>
+</head>
+<body class="min-h-screen p-6 md:p-8">
+
+<!-- HEADER -->
+<div class="max-w-[1640px] mx-auto mb-7">
+  <div class="flex items-end justify-between flex-wrap gap-6">
+    <div>
+      <div class="flex items-center gap-3 mb-3">
+        <div class="text-[11px] uppercase tracking-[0.18em] text-[color:var(--text-mute)]">Direction 03 · Bento Operations</div>
+        <span class="pill pill-teal">Light</span>
+      </div>
+      <h1 class="display text-[40px] leading-none" style="font-variation-settings: 'opsz' 64, 'wght' 600;">
+        Chat is the <span style="color: var(--teal-2);">action layer</span>.
+      </h1>
+      <p class="text-[14px] text-[color:var(--text-soft)] mt-3 max-w-xl leading-relaxed">
+        Same bento layout, daylight clothes. Surfaces are white-on-cool-paper, accents
+        re-tuned for contrast on white, KPI cards take a soft color wash so the eye still
+        knows where to land.
+      </p>
+    </div>
+
+    <div class="flex flex-col items-end gap-3">
+      <div class="flex items-center gap-2">
+        <a href="03-operations-dashboard.html" class="theme-swap">◐ Dark version</a>
+      </div>
+      <div class="nav-rail">
+        <div class="nav-pill active"><span>◉</span> Chat</div>
+        <div class="nav-pill"><span>▦</span> Overview</div>
+        <div class="nav-pill"><span>✦</span> Prompts</div>
+        <div class="nav-pill"><span>◷</span> Crons</div>
+      </div>
+      <div class="flex items-center gap-2 text-[11px] text-[color:var(--text-mute)]">
+        <span class="ring-pulse"></span>
+        polling · 4s · <span class="mono">v14.40</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STATE TABS -->
+<div class="max-w-[1640px] mx-auto flex gap-2 mb-5">
+  <div class="state-tab active" onclick="showState('live', event)">Workspace · live</div>
+  <div class="state-tab" onclick="showState('empty', event)">Quiet state</div>
+  <div class="state-tab" onclick="showState('offline', event)">Connection lost</div>
+</div>
+
+<!-- STATE: LIVE -->
+<div id="state-live" class="max-w-[1640px] mx-auto">
+
+  <!-- ROW 1: TODAY'S PULSE -->
+  <div class="grid grid-cols-4 gap-4 mb-4">
+
+    <div class="card card-tinted-gold card-pad">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-3">AR open · 30d</div>
+      <div class="flex items-end justify-between">
+        <div class="kpi-value" style="color: var(--gold);">$284.2k</div>
+        <span class="kpi-delta delta-up">↑ 12%</span>
+      </div>
+      <div class="text-[12px] text-[color:var(--text-mute)] mt-2">across 23 customers · 3 overdue</div>
+      <svg class="spark mt-3 w-full" height="36" viewBox="0 0 240 36" stroke="var(--gold)">
+        <path d="M0,28 L20,24 L40,26 L60,20 L80,22 L100,16 L120,18 L140,12 L160,14 L180,8 L200,10 L220,6 L240,4" />
+      </svg>
+    </div>
+
+    <div class="card card-tinted-cyan card-pad">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-3">In transit</div>
+      <div class="flex items-end justify-between">
+        <div class="kpi-value" style="color: var(--cyan);">12</div>
+        <span class="kpi-delta delta-flat">→ 12</span>
+      </div>
+      <div class="text-[12px] text-[color:var(--text-mute)] mt-2">containers · 4 discharging this week</div>
+      <div class="flex gap-1 mt-3">
+        <div class="h-1.5 flex-1 rounded-full" style="background: var(--c-logan);"></div>
+        <div class="h-1.5 flex-1 rounded-full" style="background: var(--c-logan);"></div>
+        <div class="h-1.5 flex-1 rounded-full" style="background: var(--c-logan); opacity: 0.6;"></div>
+        <div class="h-1.5 flex-1 rounded-full" style="background: var(--c-logan); opacity: 0.6;"></div>
+        <div class="h-1.5 flex-1 rounded-full" style="background: var(--bg-softer);"></div>
+        <div class="h-1.5 flex-1 rounded-full" style="background: var(--bg-softer);"></div>
+        <div class="h-1.5 flex-1 rounded-full" style="background: var(--bg-softer);"></div>
+      </div>
+    </div>
+
+    <div class="card card-tinted-sal card-pad">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-3">Open RFQs</div>
+      <div class="flex items-end justify-between">
+        <div class="kpi-value" style="color: var(--c-sal);">7</div>
+        <span class="kpi-delta delta-up">↑ 2 new</span>
+      </div>
+      <div class="text-[12px] text-[color:var(--text-mute)] mt-2">EcoPoli, Petroquímica Sul · $312k pipeline</div>
+      <svg class="spark mt-3 w-full" height="36" viewBox="0 0 240 36" stroke="var(--c-sal)">
+        <path d="M0,30 L40,28 L80,18 L120,22 L160,14 L200,10 L240,8" />
+      </svg>
+    </div>
+
+    <div class="card card-tinted-emerald card-pad">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-3">Agent actions · 24h</div>
+      <div class="flex items-end justify-between">
+        <div class="kpi-value" style="color: var(--emerald);">147</div>
+        <span class="kpi-delta delta-up">96% ok</span>
+      </div>
+      <div class="text-[12px] text-[color:var(--text-mute)] mt-2">5 failed · 3 awaiting your call</div>
+      <div class="flex gap-0.5 mt-3 h-3">
+        <div class="flex-[31] rounded-l-sm" style="background: var(--emerald);"></div>
+        <div class="flex-[108]" style="background: var(--c-matt); opacity: 0.55;"></div>
+        <div class="flex-[5]" style="background: var(--rose);"></div>
+        <div class="flex-[3] rounded-r-sm" style="background: var(--gold);"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 2: CHAT + DECISION QUEUE -->
+  <div class="grid grid-cols-4 gap-4 mb-4">
+
+    <!-- CHAT -->
+    <div class="card col-span-3 flex flex-col" style="min-height: 540px;">
+      <div class="card-header">
+        <div class="card-title">Team room</div>
+        <span class="pill pill-teal">● 7 of 7 online</span>
+        <span class="pill">4 messages today</span>
+        <div class="card-meta">last 17s ago</div>
+      </div>
+
+      <div class="flex-1 overflow-auto">
+        <!-- felipe -->
+        <div class="chat-msg user">
+          <div class="a-dot a-dot-felipe">F</div>
+          <div>
+            <div class="flex items-baseline gap-3 mb-1.5">
+              <span class="author-line auth-felipe">Felipe</span>
+              <span class="ts">07:14:18</span>
+            </div>
+            <div class="bubble">
+              <span class="pill pill-teal mr-1.5">@logan</span>
+              status on <code>MSKU1234567</code> — Santos shipment for Plastix Indústria
+            </div>
+          </div>
+        </div>
+
+        <!-- logan -->
+        <div class="chat-msg">
+          <div class="a-dot a-dot-logan">L</div>
+          <div>
+            <div class="flex items-baseline gap-3 mb-1.5">
+              <span class="author-line auth-logan">Logan</span>
+              <span class="ts">07:14:21</span>
+              <span class="chip-tiny">read /bookings · 142ms</span>
+            </div>
+            <div class="bubble">
+              <em>Maersk Horizon</em> discharged Houston yesterday at 09:42 EST. Container at terminal,
+              T&amp;S Transport on dray. Customer pickup window opens tomorrow 07:00 CDT.
+              <div class="data-block">
+                <span class="k">container</span><span class="v">MSKU 1234567</span>
+                <span class="k">bl</span><span class="v">MAEU 240517</span>
+                <span class="k">pickup</span><span class="v">2026-05-28 · 07:00 CDT</span>
+                <span class="k">demurrage</span><span class="v" style="color: var(--gold);">starts 2026-05-30 · 96h free</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- matt -->
+        <div class="chat-msg">
+          <div class="a-dot a-dot-matt">M</div>
+          <div>
+            <div class="flex items-baseline gap-3 mb-1.5">
+              <span class="author-line auth-matt">Matt</span>
+              <span class="ts">07:14:33</span>
+              <span class="pill pill-warm">awaiting decision</span>
+            </div>
+            <div class="bubble" style="background: #fffbf0; border-color: #f4e1bc;">
+              <div class="flex items-center gap-2 flex-wrap mb-2">
+                <span class="display text-[15px]" style="color: var(--gold);">$45,200 USD</span>
+                <span class="text-[color:var(--text-mute)] text-[12px]">·</span>
+                <span class="text-[13px]">ACME Plastics LTDA</span>
+                <span class="chip-tiny">14d overdue</span>
+              </div>
+              Invoice <code>INV-2026-04-1842</code>. Good customer — 8 prior, avg 7d late, never &gt;30.
+              I'd send a polite follow-up to <code>ap@acmeplastics.com.br</code>.
+              <div class="flex gap-2 mt-3 pt-3 border-t" style="border-color: #f4e1bc;">
+                <button class="btn-primary">Approve &amp; send</button>
+                <button class="btn-ghost">See draft</button>
+                <button class="btn-ghost" style="color: var(--rose);">Deny</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- sal -->
+        <div class="chat-msg">
+          <div class="a-dot a-dot-sal">S</div>
+          <div>
+            <div class="flex items-baseline gap-3 mb-1.5">
+              <span class="author-line auth-sal">Sal</span>
+              <span class="ts">07:15:14</span>
+            </div>
+            <div class="bubble">
+              New RFQ — <strong>EcoPoli LLC</strong>, 2×40HC HDPE film grade, target $1,840/MT CIF Santos.
+              Margin at spot ≈ <span style="color: var(--emerald);">7.5%</span>. Draft a proforma?
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- composer -->
+      <div class="composer">
+        <div class="composer-input">
+          <textarea rows="2" placeholder="Reply to the team…"></textarea>
+          <div class="flex items-center justify-between mt-2 pt-2 border-t" style="border-color: var(--line-soft);">
+            <div class="flex items-center gap-2">
+              <span class="pill pill-teal">→ @sal</span>
+              <span class="text-[11.5px] text-[color:var(--text-mute)]">drag · paste · attach</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] text-[color:var(--text-mute)]">⌘↵</span>
+              <button class="btn-primary">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DECISION QUEUE -->
+    <div class="card flex flex-col">
+      <div class="card-header">
+        <div class="card-title">Awaiting you</div>
+        <span class="pill pill-warm">3</span>
+        <div class="card-meta">↺ 3s</div>
+      </div>
+      <div class="flex-1 overflow-auto">
+        <div class="q-item">
+          <div class="a-dot a-dot-matt">M</div>
+          <div class="min-w-0 flex-1">
+            <div class="text-[13px] font-medium leading-tight">ACME Plastics — AR follow-up</div>
+            <div class="text-[11.5px] text-[color:var(--text-mute)] mt-1">$45,200 · 14 days late</div>
+            <div class="flex gap-1.5 mt-2">
+              <button class="text-[11px] px-2 py-0.5 rounded-md" style="background: var(--teal-2); color: white;">approve</button>
+              <button class="text-[11px] px-2 py-0.5 rounded-md" style="background: var(--bg-soft); color: var(--text-soft);">deny</button>
+            </div>
+          </div>
+        </div>
+        <div class="q-item">
+          <div class="a-dot a-dot-sal">S</div>
+          <div class="min-w-0 flex-1">
+            <div class="text-[13px] font-medium leading-tight">EcoPoli proforma · 2×40HC HDPE</div>
+            <div class="text-[11.5px] text-[color:var(--text-mute)] mt-1">~$88k · margin 7.5%</div>
+            <div class="flex gap-1.5 mt-2">
+              <button class="text-[11px] px-2 py-0.5 rounded-md" style="background: var(--teal-2); color: white;">approve</button>
+              <button class="text-[11px] px-2 py-0.5 rounded-md" style="background: var(--bg-soft); color: var(--text-soft);">deny</button>
+            </div>
+          </div>
+        </div>
+        <div class="q-item">
+          <div class="a-dot a-dot-lara">L</div>
+          <div class="min-w-0 flex-1">
+            <div class="text-[13px] font-medium leading-tight">Reply re: Petroquímica order</div>
+            <div class="text-[11.5px] text-[color:var(--text-mute)] mt-1">customer asked about ETA</div>
+            <div class="flex gap-1.5 mt-2">
+              <button class="text-[11px] px-2 py-0.5 rounded-md" style="background: var(--teal-2); color: white;">approve</button>
+              <button class="text-[11px] px-2 py-0.5 rounded-md" style="background: var(--bg-soft); color: var(--text-soft);">deny</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card-pad border-t" style="border-color: var(--line-soft); padding-top: 14px; padding-bottom: 14px;">
+        <div class="text-[11.5px] text-[color:var(--text-mute)]">5 auto-approved · 2 denied · 0 expired today</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 3: AGENT STATUS + AUDIT TAIL -->
+  <div class="grid grid-cols-4 gap-4">
+
+    <!-- AGENT STATUS -->
+    <div class="card col-span-2">
+      <div class="card-header">
+        <div class="card-title">Agent vitals</div>
+        <div class="card-meta">RTT 38ms</div>
+      </div>
+      <div class="card-pad">
+        <div class="grid grid-cols-2 gap-3">
+
+          <div class="agent-tile t-max">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="a-dot a-dot-max">M</div>
+              <div>
+                <div class="author-line auth-max">Max</div>
+                <div class="text-[10.5px] text-[color:var(--text-mute)]">Manager</div>
+              </div>
+              <span class="ml-auto ring-pulse"></span>
+            </div>
+            <div class="text-[11.5px] text-[color:var(--text-mute)] mono">briefing · last ping 12s</div>
+          </div>
+
+          <div class="agent-tile t-lara">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="a-dot a-dot-lara">L</div>
+              <div>
+                <div class="author-line auth-lara">Lara</div>
+                <div class="text-[10.5px] text-[color:var(--text-mute)]">Assistant</div>
+              </div>
+              <span class="ml-auto ring-pulse"></span>
+            </div>
+            <div class="text-[11.5px] text-[color:var(--text-mute)] mono">scanning · ec4@ · 1.2s</div>
+          </div>
+
+          <div class="agent-tile t-matt">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="a-dot a-dot-matt">M</div>
+              <div>
+                <div class="author-line auth-matt">Matt</div>
+                <div class="text-[10.5px] text-[color:var(--text-mute)]">Finance · AR/AP</div>
+              </div>
+              <span class="ml-auto ring-pulse" style="background: var(--gold); box-shadow: none;"></span>
+            </div>
+            <div class="text-[11.5px] text-[color:var(--text-mute)] mono">awaiting your call</div>
+          </div>
+
+          <div class="agent-tile t-logan">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="a-dot a-dot-logan">L</div>
+              <div>
+                <div class="author-line auth-logan">Logan</div>
+                <div class="text-[10.5px] text-[color:var(--text-mute)]">Shipments</div>
+              </div>
+              <span class="ml-auto ring-pulse"></span>
+            </div>
+            <div class="text-[11.5px] text-[color:var(--text-mute)] mono">tracking 12 BLs</div>
+          </div>
+
+          <div class="agent-tile t-sal">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="a-dot a-dot-sal">S</div>
+              <div>
+                <div class="author-line auth-sal">Sal</div>
+                <div class="text-[10.5px] text-[color:var(--text-mute)]">Sales</div>
+              </div>
+              <span class="ml-auto ring-pulse"></span>
+            </div>
+            <div class="text-[11.5px] text-[color:var(--text-mute)] mono">3 quotes outstanding</div>
+          </div>
+
+          <div class="agent-tile t-gem">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="a-dot a-dot-gem">G</div>
+              <div>
+                <div class="author-line auth-gem">Gem</div>
+                <div class="text-[10.5px] text-[color:var(--text-mute)]">ERP data</div>
+              </div>
+              <span class="ml-auto ring-pulse"></span>
+            </div>
+            <div class="text-[11.5px] text-[color:var(--text-mute)] mono">supabase · 0 lag</div>
+          </div>
+
+          <div class="agent-tile t-hermes col-span-2">
+            <div class="flex items-center gap-3">
+              <div class="a-dot a-dot-hermes">H</div>
+              <div class="flex-1">
+                <div class="flex items-baseline gap-2">
+                  <span class="author-line auth-hermes">Hermes</span>
+                  <span class="text-[11px] text-[color:var(--text-mute)]">bridge to Mac mini · Tailscale Funnel</span>
+                </div>
+              </div>
+              <div class="flex gap-4 text-[11px] mono text-[color:var(--text-mute)]">
+                <span><span style="color: var(--emerald);">●</span> funnel</span>
+                <span>11ms</span>
+                <span>uptime 4d 17h</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AUDIT TAIL -->
+    <div class="card col-span-2">
+      <div class="card-header">
+        <div class="card-title">Activity tail</div>
+        <span class="pill">last 5 min</span>
+        <div class="card-meta">live</div>
+      </div>
+      <div>
+        <div class="audit-row">
+          <span class="ts">07:15:14</span>
+          <div class="a-dot a-dot-sal" style="width: 20px; height: 20px; font-size: 9px;">S</div>
+          <span><span class="auth-sal author-line">Sal</span> proposed <code class="mono text-[11.5px]" style="color: var(--teal-2);">rfq.draft_proforma</code> · EcoPoli</span>
+          <span class="pill pill-warm">awaiting</span>
+        </div>
+        <div class="audit-row">
+          <span class="ts">07:14:51</span>
+          <div class="a-dot a-dot-matt" style="width: 20px; height: 20px; font-size: 9px;">M</div>
+          <span><span class="auth-matt author-line">Matt</span> executed <code class="mono text-[11.5px]" style="color: var(--teal-2);">ar.send_followup</code> · ACME · <code class="mono text-[11.5px]">A-44291</code></span>
+          <span class="pill pill-cool">ok</span>
+        </div>
+        <div class="audit-row">
+          <span class="ts">07:14:51</span>
+          <div class="a-dot a-dot-felipe" style="width: 20px; height: 20px; font-size: 9px;">F</div>
+          <span><span class="auth-felipe author-line">Felipe</span> approved <code class="mono text-[11.5px]">A-44291</code></span>
+          <span class="pill pill-teal">decided</span>
+        </div>
+        <div class="audit-row">
+          <span class="ts">07:14:33</span>
+          <div class="a-dot a-dot-matt" style="width: 20px; height: 20px; font-size: 9px;">M</div>
+          <span><span class="auth-matt author-line">Matt</span> proposed <code class="mono text-[11.5px]" style="color: var(--teal-2);">ar.send_followup</code></span>
+          <span class="pill pill-warm">awaiting</span>
+        </div>
+        <div class="audit-row">
+          <span class="ts">07:14:21</span>
+          <div class="a-dot a-dot-logan" style="width: 20px; height: 20px; font-size: 9px;">L</div>
+          <span><span class="auth-logan author-line">Logan</span> read <code class="mono text-[11.5px]">/bookings/MSKU1234567</code></span>
+          <span class="pill">read</span>
+        </div>
+        <div class="audit-row">
+          <span class="ts">07:14:18</span>
+          <div class="a-dot a-dot-felipe" style="width: 20px; height: 20px; font-size: 9px;">F</div>
+          <span><span class="auth-felipe author-line">Felipe</span> routed to <span class="auth-logan author-line">Logan</span></span>
+          <span class="pill">routed</span>
+        </div>
+        <div class="audit-row">
+          <span class="ts">07:13:00</span>
+          <div class="a-dot a-dot-hermes" style="width: 20px; height: 20px; font-size: 9px;">H</div>
+          <span><span class="auth-hermes author-line">Hermes</span> ran cron <code class="mono text-[11.5px]" style="color: var(--teal-2);">morning.briefing</code></span>
+          <span class="pill pill-cool">ok</span>
+        </div>
+      </div>
+      <div class="card-pad border-t flex items-center justify-between" style="border-color: var(--line-soft);">
+        <span class="text-[11.5px] text-[color:var(--text-mute)]">147 events today · all in audit log</span>
+        <button class="text-[12px]" style="color: var(--teal-2);">open Audit tab →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STATE: EMPTY -->
+<div id="state-empty" class="max-w-[1640px] mx-auto hidden">
+  <div class="grid grid-cols-4 gap-4 mb-4">
+    <div class="card card-pad opacity-70">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-3">AR open · 30d</div>
+      <div class="kpi-value text-[color:var(--text-mute)]">$0</div>
+    </div>
+    <div class="card card-pad opacity-70">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-3">In transit</div>
+      <div class="kpi-value text-[color:var(--text-mute)]">0</div>
+    </div>
+    <div class="card card-pad opacity-70">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-3">Open RFQs</div>
+      <div class="kpi-value text-[color:var(--text-mute)]">0</div>
+    </div>
+    <div class="card card-pad opacity-70">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-3">Actions 24h</div>
+      <div class="kpi-value text-[color:var(--text-mute)]">0</div>
+    </div>
+  </div>
+  <div class="grid grid-cols-4 gap-4">
+    <div class="card col-span-3 flex flex-col" style="min-height: 540px;">
+      <div class="card-header">
+        <div class="card-title">Team room</div>
+        <span class="pill">idle</span>
+        <div class="card-meta">0 messages</div>
+      </div>
+      <div class="flex-1 flex flex-col items-center justify-center px-10 text-center">
+        <div class="display text-[72px]" style="font-variation-settings: 'opsz' 96, 'wght' 300; color: var(--text-faint);">·</div>
+        <h3 class="display text-[22px] mt-2 mb-3" style="color: var(--text-soft);">Nothing on the wire.</h3>
+        <p class="text-[13.5px] text-[color:var(--text-mute)] max-w-sm mb-6 leading-relaxed">
+          The team is idle. Ask Max for a briefing, or pick a prompt from Prompts to get started.
+        </p>
+        <div class="flex flex-wrap gap-2 justify-center max-w-md">
+          <button class="pill">@max morning briefing</button>
+          <button class="pill">@matt who's overdue?</button>
+          <button class="pill">@logan anything at risk?</button>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="composer-input">
+          <textarea rows="2" placeholder="Reply to the team…"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Awaiting you</div><span class="pill">0</span></div>
+      <div class="p-8 text-center text-[12.5px] text-[color:var(--text-mute)]">
+        Nothing in the queue.<br>
+        <span class="text-[11px] mt-1 block opacity-75">The agents are quiet.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STATE: OFFLINE -->
+<div id="state-offline" class="max-w-[1640px] mx-auto hidden">
+  <div class="card" style="border-color: #f5b8c2;">
+    <div class="card-header" style="border-bottom-color: #f5b8c2; background: #fef2f4;">
+      <div class="card-title" style="color: var(--rose);">⚠ Control-plane unreachable</div>
+      <div class="card-meta" style="color: var(--rose);">last contact 47s</div>
+    </div>
+    <div class="p-10 md:p-14">
+      <h2 class="display text-[40px] leading-none mb-3" style="font-variation-settings: 'opsz' 64, 'wght' 600;">
+        We've <span style="color: var(--rose);">lost the wire</span> to the mini.
+      </h2>
+      <p class="text-[14px] text-[color:var(--text-soft)] max-w-2xl leading-relaxed mb-8">
+        Polling is stalled. Most often a brief Tailnet hiccup that recovers in a few seconds —
+        retry to verify. If it sticks, the launchd job on the Mac mini may need a restart.
+      </p>
+
+      <div class="grid grid-cols-3 gap-4 mb-8">
+        <div class="card card-pad" style="background: var(--bg-soft);">
+          <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-2">Edge function</div>
+          <div class="display text-[20px]" style="color: var(--emerald);">200 OK</div>
+          <div class="text-[11.5px] text-[color:var(--text-mute)] mt-1 mono">supabase · agentic-proxy · 142ms</div>
+        </div>
+        <div class="card card-pad" style="background: var(--bg-soft);">
+          <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-2">Tailscale Funnel</div>
+          <div class="display text-[20px]" style="color: var(--rose);">timeout</div>
+          <div class="text-[11.5px] text-[color:var(--text-mute)] mt-1 mono">tailb21dd3.ts.net · 5000ms</div>
+        </div>
+        <div class="card card-pad" style="background: var(--bg-soft);">
+          <div class="text-[11px] uppercase tracking-[0.14em] text-[color:var(--text-mute)] mb-2">Control-plane</div>
+          <div class="display text-[20px]" style="color: var(--gold);">unknown</div>
+          <div class="text-[11.5px] text-[color:var(--text-mute)] mt-1 mono">last seen 47s ago</div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-3">
+        <button class="btn-primary" style="padding: 10px 22px; font-size: 13px;">Retry now</button>
+        <button class="btn-ghost" style="padding: 10px 18px; font-size: 13px;">Open the runbook</button>
+        <button class="btn-ghost" style="padding: 10px 18px; font-size: 13px;">SSH into the mini</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function showState(s, e) {
+    ['live','empty','offline'].forEach(k => {
+      document.getElementById('state-' + k).classList.add('hidden');
+    });
+    document.querySelectorAll('.state-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('state-' + s).classList.remove('hidden');
+    e.currentTarget.classList.add('active');
+  }
+</script>
+
+</body>
+</html>

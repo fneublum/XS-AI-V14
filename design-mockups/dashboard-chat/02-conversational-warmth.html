@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>V14 · Team chat · Atelier</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper:       #f6f1e8;
+    --paper-2:     #efe7d8;
+    --paper-3:     #e6dcc7;
+    --ink:         #1b1810;
+    --ink-soft:    #4a4434;
+    --ink-mute:    #877e69;
+    --rule:        #d8cdb2;
+    --rule-soft:   #e6dcc7;
+    --sage:        #4d7c5a;
+    --sage-light:  #b6cdb7;
+    --terracotta:  #b15c3e;
+    --gold:        #b89047;
+    --plum:        #6d4259;
+
+    --c-max:       #6e58a8;
+    --c-lara:      #b85272;
+    --c-matt:      #4a8b6f;
+    --c-logan:     #3f7ba8;
+    --c-sal:       #c08d3a;
+    --c-gem:       #5b67a5;
+    --c-hermes:    #c66a3a;
+    --c-felipe:    #4d7c5a;
+  }
+  html, body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  body {
+    /* paper texture */
+    background-image:
+      radial-gradient(circle at 25% 25%, rgba(177, 92, 62, 0.025) 0px, transparent 50%),
+      radial-gradient(circle at 75% 75%, rgba(184, 144, 71, 0.025) 0px, transparent 50%);
+  }
+  .display { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  .label {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    font-weight: 500;
+  }
+
+  /* Wax-seal style avatar */
+  .seal {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-weight: 500;
+    font-size: 22px;
+    color: white;
+    flex-shrink: 0;
+    box-shadow:
+      inset 0 1px 2px rgba(255,255,255,0.25),
+      inset 0 -2px 4px rgba(0,0,0,0.18),
+      0 2px 6px rgba(27, 24, 16, 0.15);
+    position: relative;
+  }
+  .seal::before {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    border-radius: 50%;
+    border: 1px dashed rgba(255,255,255,0.3);
+  }
+
+  .seal-sm {
+    width: 36px; height: 36px;
+    font-size: 15px;
+  }
+  .seal-sm::before { inset: 2px; }
+
+  .seal-max     { background: linear-gradient(135deg, #8a6fcb 0%, #6e58a8 100%); }
+  .seal-lara    { background: linear-gradient(135deg, #d96f8d 0%, #b85272 100%); }
+  .seal-matt    { background: linear-gradient(135deg, #6daa8b 0%, #4a8b6f 100%); }
+  .seal-logan   { background: linear-gradient(135deg, #5d97c3 0%, #3f7ba8 100%); }
+  .seal-sal     { background: linear-gradient(135deg, #d9a755 0%, #c08d3a 100%); }
+  .seal-gem     { background: linear-gradient(135deg, #7c87c2 0%, #5b67a5 100%); }
+  .seal-hermes  { background: linear-gradient(135deg, #db8454 0%, #c66a3a 100%); }
+  .seal-felipe  { background: linear-gradient(135deg, #689b75 0%, #4d7c5a 100%); }
+
+  .author-max    { color: var(--c-max); }
+  .author-lara   { color: var(--c-lara); }
+  .author-matt   { color: var(--c-matt); }
+  .author-logan  { color: var(--c-logan); }
+  .author-sal    { color: var(--c-sal); }
+  .author-gem    { color: var(--c-gem); }
+  .author-hermes { color: var(--c-hermes); }
+  .author-felipe { color: var(--c-felipe); }
+
+  .roster-item {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 16px;
+    border-radius: 14px;
+    transition: background 0.16s, transform 0.16s;
+    cursor: pointer;
+  }
+  .roster-item:hover {
+    background: var(--paper-2);
+  }
+  .roster-item.active {
+    background: white;
+    box-shadow:
+      0 1px 0 rgba(27, 24, 16, 0.04),
+      0 6px 18px -8px rgba(27, 24, 16, 0.12);
+  }
+
+  /* Message styling */
+  .conversation { max-width: 720px; margin: 0 auto; }
+  .msg-row { display: flex; gap: 16px; padding: 18px 28px; }
+  .msg-row.user { flex-direction: row-reverse; }
+  .msg-row.user .bubble-body { background: #e7eeea; border-color: #d4ddd6; }
+  .msg-row.user .meta { text-align: right; }
+
+  .bubble-body {
+    background: white;
+    border: 1px solid var(--rule-soft);
+    border-radius: 16px;
+    padding: 16px 20px;
+    max-width: 560px;
+    font-size: 15px;
+    line-height: 1.65;
+    color: var(--ink);
+    box-shadow: 0 1px 0 rgba(27, 24, 16, 0.025);
+    position: relative;
+  }
+  .meta {
+    font-size: 12.5px;
+    color: var(--ink-mute);
+    margin-bottom: 5px;
+  }
+  .meta .author {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 14.5px;
+    font-style: italic;
+    margin-right: 9px;
+  }
+
+  .data-card {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 11px 14px;
+    margin-top: 8px;
+    font-size: 13.5px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 14px;
+    align-items: baseline;
+  }
+  .data-card .k { color: var(--ink-mute); font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .data-card .v { color: var(--ink); font-weight: 500; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 11.5px;
+    font-weight: 500;
+    background: var(--paper-2);
+    color: var(--ink-soft);
+  }
+  .pill-warm { background: #f4d8ca; color: #803c25; }
+  .pill-cool { background: #d8e7da; color: #2d5d3e; }
+  .pill-gold { background: #efe2c0; color: #6e5418; }
+
+  /* Composer */
+  .composer-wrap {
+    border-top: 1px solid var(--rule);
+    background: linear-gradient(0deg, var(--paper) 70%, transparent 100%);
+    padding: 22px 28px 26px;
+  }
+  .composer {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 18px;
+    padding: 14px 16px;
+    box-shadow: 0 4px 18px -10px rgba(27, 24, 16, 0.12);
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .composer textarea {
+    width: 100%;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--ink);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    resize: none;
+    padding: 4px 0;
+  }
+  .composer textarea::placeholder { color: var(--ink-mute); }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px;
+    border-radius: 100px;
+    background: var(--paper-2);
+    color: var(--ink-soft);
+    font-size: 12px;
+  }
+  .chip-route {
+    background: #e7eeea;
+    color: #2d5d3e;
+    font-weight: 500;
+  }
+
+  .btn-send {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 8px 16px;
+    border-radius: 100px;
+    font-size: 13px;
+    font-weight: 500;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn-send:hover { background: var(--terracotta); }
+
+  /* Section dividers */
+  .divider-ornament {
+    display: flex; align-items: center; gap: 12px;
+    color: var(--ink-mute);
+    font-size: 11.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding: 20px 28px 8px;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .divider-ornament::before, .divider-ornament::after {
+    content: '';
+    flex: 1; height: 1px;
+    background: var(--rule);
+  }
+
+  .state-tab {
+    padding: 8px 16px;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--ink-mute);
+    cursor: pointer;
+    border-radius: 100px;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .state-tab.active {
+    background: white;
+    color: var(--ink);
+    box-shadow: 0 1px 0 rgba(27, 24, 16, 0.06), 0 4px 10px -6px rgba(27, 24, 16, 0.1);
+  }
+
+  .ornament-rule {
+    text-align: center;
+    color: var(--rule);
+    font-size: 14px;
+    letter-spacing: 0.5em;
+    margin: 6px 0;
+  }
+</style>
+</head>
+<body class="min-h-screen p-6 md:p-10">
+
+<!-- HEADER -->
+<div class="max-w-[1320px] mx-auto mb-8">
+  <div class="flex items-end justify-between flex-wrap gap-4">
+    <div>
+      <div class="label mb-2">Direction 02 · Editorial / Atelier</div>
+      <h1 class="display text-[44px] leading-[1.05] tracking-[-0.02em]">
+        The team room, <span class="italic" style="color: var(--terracotta);">slowed down</span>.
+      </h1>
+    </div>
+    <p class="text-[14px] max-w-md text-[color:var(--ink-soft)] leading-relaxed">
+      A warmer surface that treats each conversation as worth reading.
+      Light paper, italic display serif, oversized wax-seal avatars.
+      Even when the agents are AI, the room feels human-scaled.
+    </p>
+  </div>
+  <div class="ornament-rule">· · ·</div>
+</div>
+
+<!-- STATE TABS -->
+<div class="max-w-[1320px] mx-auto flex gap-1 mb-5 p-1 rounded-full w-fit" style="background: var(--paper-2);">
+  <div class="state-tab active" onclick="showState('live', event)">Today's room</div>
+  <div class="state-tab" onclick="showState('empty', event)">Quiet morning</div>
+  <div class="state-tab" onclick="showState('offline', event)">Connection lost</div>
+</div>
+
+<!-- STATE: LIVE -->
+<div id="state-live" class="max-w-[1320px] mx-auto">
+  <div class="grid grid-cols-[300px_1fr] gap-6">
+
+    <!-- LEFT: ROSTER -->
+    <aside class="flex flex-col gap-4">
+      <div class="bg-white rounded-2xl p-4 border" style="border-color: var(--rule-soft);">
+        <div class="label mb-3 px-2">The team</div>
+
+        <div class="roster-item active">
+          <div class="seal seal-sm seal-max">M</div>
+          <div class="min-w-0">
+            <div class="display italic text-[16px]" style="color: var(--c-max);">Max</div>
+            <div class="text-[12px] text-[color:var(--ink-mute)]">Manager · briefing</div>
+          </div>
+        </div>
+        <div class="roster-item">
+          <div class="seal seal-sm seal-lara">L</div>
+          <div class="min-w-0">
+            <div class="display italic text-[16px]" style="color: var(--c-lara);">Lara</div>
+            <div class="text-[12px] text-[color:var(--ink-mute)]">Assistant · inbox</div>
+          </div>
+        </div>
+        <div class="roster-item">
+          <div class="seal seal-sm seal-matt">M</div>
+          <div class="min-w-0">
+            <div class="display italic text-[16px]" style="color: var(--c-matt);">Matt</div>
+            <div class="text-[12px] text-[color:var(--ink-mute)]">Finance · AR / AP</div>
+          </div>
+        </div>
+        <div class="roster-item">
+          <div class="seal seal-sm seal-logan">L</div>
+          <div class="min-w-0">
+            <div class="display italic text-[16px]" style="color: var(--c-logan);">Logan</div>
+            <div class="text-[12px] text-[color:var(--ink-mute)]">Shipments · BLs</div>
+          </div>
+        </div>
+        <div class="roster-item">
+          <div class="seal seal-sm seal-sal">S</div>
+          <div class="min-w-0">
+            <div class="display italic text-[16px]" style="color: var(--c-sal);">Sal</div>
+            <div class="text-[12px] text-[color:var(--ink-mute)]">Sales · RFQs &amp; proformas</div>
+          </div>
+        </div>
+        <div class="roster-item">
+          <div class="seal seal-sm seal-gem">G</div>
+          <div class="min-w-0">
+            <div class="display italic text-[16px]" style="color: var(--c-gem);">Gem</div>
+            <div class="text-[12px] text-[color:var(--ink-mute)]">ERP data</div>
+          </div>
+        </div>
+        <div class="roster-item">
+          <div class="seal seal-sm seal-hermes">H</div>
+          <div class="min-w-0">
+            <div class="display italic text-[16px]" style="color: var(--c-hermes);">Hermes</div>
+            <div class="text-[12px] text-[color:var(--ink-mute)]">Mac mini · bridge</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl p-4 border" style="border-color: var(--rule-soft);">
+        <div class="label mb-3 px-2">Other rooms</div>
+        <div class="roster-item">
+          <div class="w-9 h-9 rounded-xl flex items-center justify-center" style="background: var(--paper-2);">▦</div>
+          <div class="text-[14px]">Overview</div>
+        </div>
+        <div class="roster-item">
+          <div class="w-9 h-9 rounded-xl flex items-center justify-center" style="background: var(--paper-2);">✦</div>
+          <div class="text-[14px]">Prompts</div>
+        </div>
+        <div class="roster-item">
+          <div class="w-9 h-9 rounded-xl flex items-center justify-center" style="background: var(--paper-2);">◷</div>
+          <div class="text-[14px]">Schedules</div>
+        </div>
+      </div>
+
+      <div class="text-[11.5px] text-[color:var(--ink-mute)] px-2 leading-relaxed">
+        EC4 Enterprises · this room is private to your team.
+        Polling every 4 seconds. <span class="mono">v14.40</span>
+      </div>
+    </aside>
+
+    <!-- MAIN: CONVERSATION -->
+    <main class="bg-white rounded-3xl border overflow-hidden flex flex-col" style="border-color: var(--rule-soft); min-height: 760px; box-shadow: 0 6px 24px -16px rgba(27, 24, 16, 0.18);">
+
+      <!-- header -->
+      <div class="px-7 py-5 border-b flex items-baseline justify-between" style="border-color: var(--rule-soft);">
+        <div>
+          <h2 class="display text-[28px] leading-none">Team room</h2>
+          <div class="text-[12.5px] mt-2 text-[color:var(--ink-mute)]">
+            Tuesday morning · seven on the loop · last activity 17 seconds ago
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="text-[12px] px-3 py-1.5 rounded-full" style="background: var(--paper-2); color: var(--ink-soft);">refresh</button>
+          <button class="text-[12px] px-3 py-1.5 rounded-full" style="background: var(--paper-2); color: var(--ink-soft);">clear</button>
+        </div>
+      </div>
+
+      <!-- conversation -->
+      <div class="flex-1 overflow-auto py-2">
+
+        <div class="divider-ornament">Morning · 7:14</div>
+
+        <!-- felipe -->
+        <div class="msg-row user conversation">
+          <div class="seal seal-felipe">F</div>
+          <div>
+            <div class="meta"><span class="author author-felipe">Felipe</span><span>just now</span></div>
+            <div class="bubble-body">
+              <span class="pill chip-route">@logan</span>
+              what's the status on the Santos shipment for Plastix Indústria?
+            </div>
+          </div>
+        </div>
+
+        <!-- logan -->
+        <div class="msg-row conversation">
+          <div class="seal seal-logan">L</div>
+          <div>
+            <div class="meta"><span class="author author-logan">Logan</span><span>3 seconds later</span></div>
+            <div class="bubble-body">
+              All green — the <em>Maersk Horizon</em> discharged in Houston at 09:42 EST yesterday.
+              T&amp;S Transport is on dray, container is at the terminal ready for customer pickup tomorrow morning.
+              <div class="data-card">
+                <div class="k">Container</div><div class="v mono">MSKU 1234567</div>
+                <div class="k">Vessel</div><div class="v">Maersk Horizon · v.452W</div>
+                <div class="k">Discharged</div><div class="v">2026-05-26 · 09:42 EST</div>
+                <div class="k">Pickup opens</div><div class="v">2026-05-28 · 07:00 CDT</div>
+                <div class="k">Demurrage</div><div class="v">starts 2026-05-30 · 96h free</div>
+              </div>
+              <div class="mt-3 text-[13px] text-[color:var(--ink-mute)]">
+                I let Lara know — she already messaged the customer 16 minutes ago.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider-ornament">Then · 7:14</div>
+
+        <!-- matt -->
+        <div class="msg-row conversation">
+          <div class="seal seal-matt">M</div>
+          <div>
+            <div class="meta"><span class="author author-matt">Matt</span><span>flagged · awaiting you</span></div>
+            <div class="bubble-body" style="border-color: #e8c4a4;">
+              <div class="flex items-center gap-2 mb-3">
+                <span class="pill pill-warm">14 days overdue</span>
+                <span class="pill pill-gold">$45,200 USD</span>
+              </div>
+              <p>
+                Heads up — <strong>ACME Plastics LTDA</strong> hasn't paid invoice
+                <span class="mono text-[13px]">INV-2026-04-1842</span> yet.
+                They're a good customer (eight prior invoices, average seven days late, never past 30).
+              </p>
+              <p class="mt-3 text-[14px] text-[color:var(--ink-soft)]">
+                I drafted a polite follow-up to <span class="mono text-[12.5px]">ap@acmeplastics.com.br</span>.
+                Want me to send it?
+              </p>
+              <div class="flex items-center gap-2 mt-4 pt-3 border-t" style="border-color: var(--rule-soft);">
+                <button class="btn-send">Approve &amp; send</button>
+                <button class="text-[13px] px-3 py-1.5 rounded-full text-[color:var(--ink-soft)]" style="background: var(--paper-2);">Read draft first</button>
+                <button class="text-[13px] px-3 py-1.5 rounded-full text-[color:var(--ink-mute)]">Not now</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- felipe -->
+        <div class="msg-row user conversation">
+          <div class="seal seal-felipe">F</div>
+          <div>
+            <div class="meta"><span class="author author-felipe">Felipe</span><span>just now</span></div>
+            <div class="bubble-body">
+              approve. you've handled this customer well before.
+            </div>
+          </div>
+        </div>
+
+        <!-- matt confirms -->
+        <div class="msg-row conversation">
+          <div class="seal seal-matt">M</div>
+          <div>
+            <div class="meta"><span class="author author-matt">Matt</span><span>just now</span></div>
+            <div class="bubble-body">
+              <span class="pill pill-cool">✓ sent</span>
+              Sent. I'll watch the inbox for a reply and chase again in seven days if nothing lands.
+            </div>
+          </div>
+        </div>
+
+        <div class="divider-ornament">A moment ago</div>
+
+        <!-- sal -->
+        <div class="msg-row conversation">
+          <div class="seal seal-sal">S</div>
+          <div>
+            <div class="meta"><span class="author author-sal">Sal</span><span>20 seconds ago</span></div>
+            <div class="bubble-body">
+              New RFQ from <strong>EcoPoli LLC</strong> — two 40HC containers of HDPE film grade,
+              target $1,840 per metric tonne CIF Santos.
+              <div class="data-card">
+                <div class="k">Product</div><div class="v">HDPE film grade</div>
+                <div class="k">Quantity</div><div class="v">2 × 40HC ≈ 48 MT</div>
+                <div class="k">Target price</div><div class="v">$1,840 / MT CIF SSZ</div>
+                <div class="k">Spot today</div><div class="v">$1,712 / MT</div>
+                <div class="k">Margin</div><div class="v" style="color: var(--sage);">~7.5%</div>
+                <div class="k">Credit</div><div class="v">$85k available · within limit</div>
+              </div>
+              <div class="mt-3">
+                Want me to draft the proforma?
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- composer -->
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <span class="chip chip-route">
+              <span class="seal seal-sm seal-sal" style="width: 18px; height: 18px; font-size: 9px;">S</span>
+              routing to Sal
+            </span>
+            <span class="chip">paste · drop · attach files</span>
+            <span class="text-[11.5px] text-[color:var(--ink-mute)] ml-auto">⌘↵ to send</span>
+          </div>
+          <textarea rows="2" placeholder="Write something to the team…"></textarea>
+          <div class="flex items-center justify-between mt-3 pt-3 border-t" style="border-color: var(--rule-soft);">
+            <div class="flex items-center gap-3 text-[color:var(--ink-mute)] text-[13px]">
+              <button class="hover:text-[color:var(--ink-soft)]">📎</button>
+              <button class="hover:text-[color:var(--ink-soft)]">B</button>
+              <button class="italic hover:text-[color:var(--ink-soft)]">I</button>
+              <button class="hover:text-[color:var(--ink-soft)]">{ }</button>
+            </div>
+            <button class="btn-send">Send to Sal →</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- STATE: EMPTY -->
+<div id="state-empty" class="max-w-[1320px] mx-auto hidden">
+  <div class="grid grid-cols-[300px_1fr] gap-6">
+    <aside class="bg-white rounded-2xl p-4 border" style="border-color: var(--rule-soft);">
+      <div class="label mb-3 px-2">The team · all idle</div>
+      <div class="roster-item"><div class="seal seal-sm seal-max" style="opacity: 0.6;">M</div><div><div class="display italic text-[16px] text-[color:var(--ink-mute)]">Max</div><div class="text-[11.5px] text-[color:var(--ink-mute)]">last seen 23m ago</div></div></div>
+      <div class="roster-item"><div class="seal seal-sm seal-lara" style="opacity: 0.6;">L</div><div><div class="display italic text-[16px] text-[color:var(--ink-mute)]">Lara</div><div class="text-[11.5px] text-[color:var(--ink-mute)]">last seen 18m ago</div></div></div>
+      <div class="roster-item"><div class="seal seal-sm seal-matt" style="opacity: 0.6;">M</div><div><div class="display italic text-[16px] text-[color:var(--ink-mute)]">Matt</div><div class="text-[11.5px] text-[color:var(--ink-mute)]">last seen 1h ago</div></div></div>
+      <div class="roster-item"><div class="seal seal-sm seal-logan" style="opacity: 0.6;">L</div><div><div class="display italic text-[16px] text-[color:var(--ink-mute)]">Logan</div><div class="text-[11.5px] text-[color:var(--ink-mute)]">last seen 47m ago</div></div></div>
+      <div class="roster-item"><div class="seal seal-sm seal-sal" style="opacity: 0.6;">S</div><div><div class="display italic text-[16px] text-[color:var(--ink-mute)]">Sal</div><div class="text-[11.5px] text-[color:var(--ink-mute)]">last seen 2h ago</div></div></div>
+      <div class="roster-item"><div class="seal seal-sm seal-gem" style="opacity: 0.6;">G</div><div><div class="display italic text-[16px] text-[color:var(--ink-mute)]">Gem</div><div class="text-[11.5px] text-[color:var(--ink-mute)]">last seen 8m ago</div></div></div>
+      <div class="roster-item"><div class="seal seal-sm seal-hermes" style="opacity: 0.6;">H</div><div><div class="display italic text-[16px] text-[color:var(--ink-mute)]">Hermes</div><div class="text-[11.5px] text-[color:var(--ink-mute)]">idle</div></div></div>
+    </aside>
+
+    <main class="bg-white rounded-3xl border overflow-hidden flex flex-col" style="border-color: var(--rule-soft); min-height: 760px; box-shadow: 0 6px 24px -16px rgba(27, 24, 16, 0.18);">
+      <div class="px-7 py-5 border-b" style="border-color: var(--rule-soft);">
+        <h2 class="display text-[28px] leading-none">Team room</h2>
+        <div class="text-[12.5px] mt-2 text-[color:var(--ink-mute)]">Quiet morning · nobody on deck</div>
+      </div>
+      <div class="flex-1 flex flex-col items-center justify-center px-8 text-center">
+        <div class="display text-[72px] italic leading-none mb-4" style="color: var(--rule);">∅</div>
+        <h3 class="display text-[24px] mb-3" style="color: var(--ink-soft);">A clean room.</h3>
+        <p class="max-w-sm text-[14px] text-[color:var(--ink-mute)] leading-relaxed mb-8">
+          No messages waiting, no decisions to make.
+          Start something below, or open Prompts for a few suggestions tuned to today.
+        </p>
+        <div class="flex flex-wrap gap-2 justify-center max-w-md">
+          <button class="chip" style="background: var(--paper-2);">@max morning briefing</button>
+          <button class="chip" style="background: var(--paper-2);">@matt who's overdue?</button>
+          <button class="chip" style="background: var(--paper-2);">@logan anything at risk this week?</button>
+        </div>
+      </div>
+      <div class="composer-wrap">
+        <div class="composer">
+          <textarea rows="2" placeholder="Write something to the team…"></textarea>
+          <div class="flex items-center justify-between mt-3 pt-3 border-t" style="border-color: var(--rule-soft);">
+            <div class="text-[12px] text-[color:var(--ink-mute)]">No route chosen — first @mention picks the agent.</div>
+            <button class="btn-send">Send</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- STATE: OFFLINE -->
+<div id="state-offline" class="max-w-[1320px] mx-auto hidden">
+  <div class="bg-white rounded-3xl border overflow-hidden" style="border-color: #e0bba8;">
+    <div class="p-10 md:p-16 text-center" style="background: linear-gradient(180deg, #f8e9dc 0%, var(--paper) 100%);">
+      <div class="display italic text-[14px] mb-4" style="color: var(--terracotta); letter-spacing: 0.12em; text-transform: uppercase;">An interruption</div>
+      <h2 class="display text-[44px] leading-tight mb-4">
+        The team room is <span class="italic" style="color: var(--terracotta);">temporarily unreachable.</span>
+      </h2>
+      <p class="text-[15.5px] text-[color:var(--ink-soft)] max-w-xl mx-auto leading-relaxed">
+        We can't reach the Mac mini that runs the agents.
+        This usually clears on its own in a few seconds — the tailnet hiccups now and then.
+        Nothing was lost; messages will resume from where they paused.
+      </p>
+      <div class="flex justify-center gap-3 mt-8">
+        <button class="btn-send">Try again</button>
+        <button class="text-[14px] px-5 py-2.5 rounded-full" style="background: white; border: 1px solid var(--rule); color: var(--ink-soft);">Open the runbook</button>
+      </div>
+      <div class="ornament-rule mt-10">· · ·</div>
+      <div class="text-[12px] text-[color:var(--ink-mute)] mt-4 mono">last contact 47 seconds ago · maxs-mac-mini.tailb21dd3.ts.net</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function showState(s, e) {
+    ['live','empty','offline'].forEach(k => {
+      document.getElementById('state-' + k).classList.add('hidden');
+    });
+    document.querySelectorAll('.state-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('state-' + s).classList.remove('hidden');
+    e.currentTarget.classList.add('active');
+  }
+</script>
+
+</body>
+</html>

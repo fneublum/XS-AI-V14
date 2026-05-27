@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>V14 · Team chat · Command Center</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=VT323&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg-0: #06080a;
+    --bg-1: #0b0e12;
+    --bg-2: #11161c;
+    --line: #1a2129;
+    --line-bright: #243140;
+    --phosphor: #4ade80;
+    --phosphor-dim: #16a34a;
+    --phosphor-glow: rgba(74, 222, 128, 0.35);
+    --amber: #fbbf24;
+    --rust: #fb7185;
+    --steel: #94a3b8;
+    --ink: #c9d4dd;
+  }
+  * { font-feature-settings: 'tnum' 1, 'ss01' 1; }
+  html, body {
+    background: var(--bg-0);
+    color: var(--ink);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    letter-spacing: 0.005em;
+  }
+  /* CRT scanline texture, very subtle */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 2px,
+      rgba(255, 255, 255, 0.012) 2px,
+      rgba(255, 255, 255, 0.012) 3px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
+  /* Phosphor glow on key elements */
+  .phosphor      { color: var(--phosphor); text-shadow: 0 0 14px var(--phosphor-glow); }
+  .phosphor-dim  { color: var(--phosphor-dim); }
+  .amber         { color: var(--amber); }
+  .rust          { color: var(--rust); }
+  .steel         { color: var(--steel); }
+  .display       { font-family: 'VT323', monospace; letter-spacing: 0.04em; }
+
+  .panel {
+    background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-2) 100%);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+  }
+  .panel-header {
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--line-bright);
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: var(--steel);
+  }
+  .panel-header::before {
+    content: '';
+    width: 6px; height: 6px;
+    background: var(--phosphor);
+    box-shadow: 0 0 8px var(--phosphor-glow);
+    border-radius: 50%;
+  }
+  .panel-header .right {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--steel);
+    opacity: 0.7;
+  }
+
+  /* Agent row in roster */
+  .agent-row {
+    display: grid;
+    grid-template-columns: 24px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 14px;
+    border-left: 2px solid transparent;
+    transition: background 0.12s;
+    cursor: pointer;
+  }
+  .agent-row:hover { background: rgba(74, 222, 128, 0.04); }
+  .agent-row.active {
+    background: rgba(74, 222, 128, 0.08);
+    border-left-color: var(--phosphor);
+  }
+  .agent-glyph {
+    width: 22px; height: 22px;
+    border: 1px solid currentColor;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+    font-size: 11px;
+    border-radius: 1px;
+  }
+  .pulse-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .blink-cursor::after {
+    content: '▊';
+    color: var(--phosphor);
+    animation: blink 1s steps(1) infinite;
+    margin-left: 2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Agent color tags */
+  .a-max     { color: #c4b5fd; }
+  .a-lara    { color: #f9a8d4; }
+  .a-matt    { color: #6ee7b7; }
+  .a-logan   { color: #7dd3fc; }
+  .a-sal     { color: #fcd34d; }
+  .a-gem     { color: #a5b4fc; }
+  .a-hermes  { color: #fdba74; }
+  .a-felipe  { color: #4ade80; }
+
+  .msg {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 14px;
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(36, 49, 64, 0.4);
+    align-items: start;
+  }
+  .msg-meta {
+    text-align: right;
+    font-size: 10.5px;
+    color: var(--steel);
+    line-height: 1.4;
+  }
+  .msg-body { font-size: 12.5px; color: var(--ink); }
+  .msg-body code {
+    background: rgba(74, 222, 128, 0.1);
+    color: var(--phosphor);
+    padding: 1px 4px;
+    border-radius: 1px;
+    font-size: 11.5px;
+  }
+
+  .composer {
+    border-top: 1px solid var(--line-bright);
+    background: var(--bg-1);
+  }
+  .composer-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+    font-size: 10.5px;
+    color: var(--steel);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .composer textarea {
+    background: var(--bg-0);
+    border: 0;
+    width: 100%;
+    color: var(--ink);
+    padding: 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    resize: none;
+    outline: none;
+  }
+  .composer textarea::placeholder { color: #4b5563; }
+
+  .kbd {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 2px 5px;
+    border: 1px solid var(--line-bright);
+    border-bottom-width: 2px;
+    border-radius: 2px;
+    background: var(--bg-2);
+    color: var(--steel);
+  }
+  .feed-row {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    gap: 10px;
+    padding: 7px 14px;
+    font-size: 11px;
+    border-bottom: 1px solid rgba(36, 49, 64, 0.4);
+  }
+  .feed-row .ts { color: var(--steel); }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border: 1px solid currentColor;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border-radius: 1px;
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(36, 49, 64, 0.4) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(36, 49, 64, 0.4) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+
+  .ticker {
+    display: flex; gap: 24px;
+    font-size: 11px;
+    color: var(--steel);
+    padding: 6px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--bg-1);
+  }
+  .ticker .kv .k { color: #4b5563; margin-right: 6px; text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.15em; }
+
+  /* Tab nav */
+  .state-tab {
+    padding: 6px 14px;
+    border: 1px solid var(--line);
+    border-bottom: none;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--steel);
+    cursor: pointer;
+    background: var(--bg-1);
+  }
+  .state-tab.active {
+    background: var(--bg-0);
+    color: var(--phosphor);
+    border-color: var(--phosphor-dim);
+    border-bottom: 1px solid var(--bg-0);
+    margin-bottom: -1px;
+  }
+
+  .ascii-rule {
+    color: var(--line-bright);
+    letter-spacing: -0.05em;
+    user-select: none;
+    font-size: 10px;
+  }
+
+  .empty-frame {
+    border: 1px dashed var(--line-bright);
+    color: var(--steel);
+    padding: 48px;
+    text-align: center;
+  }
+</style>
+</head>
+<body class="min-h-screen p-8">
+
+<!-- HEADER / META -->
+<div class="max-w-[1680px] mx-auto mb-6">
+  <div class="flex items-end justify-between flex-wrap gap-3">
+    <div>
+      <div class="display text-[40px] phosphor leading-none">XS-AGENTIC // COMMAND</div>
+      <div class="text-[11px] uppercase tracking-[0.18em] steel mt-1">Direction 01 · "Command Center"</div>
+    </div>
+    <div class="text-[11px] steel max-w-[460px] leading-relaxed">
+      Power-operator surface. Treats Felipe as a flight-controller with seven specialised agents on the loop.
+      Density, telemetry, keyboard verbs, phosphor glow. Built for the hour you spend here, not the minute.
+    </div>
+  </div>
+  <div class="ascii-rule mt-4">═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════</div>
+</div>
+
+<!-- STATE TABS -->
+<div class="max-w-[1680px] mx-auto flex gap-0 mb-0 px-0">
+  <div class="state-tab active" onclick="showState('live')">▶ Live · 4 messages</div>
+  <div class="state-tab" onclick="showState('empty')">  Empty · idle</div>
+  <div class="state-tab" onclick="showState('offline')">  Control-plane offline</div>
+</div>
+
+<!-- STATE: LIVE -->
+<div id="state-live" class="max-w-[1680px] mx-auto">
+  <div class="grid grid-cols-[260px_1fr_300px] panel" style="border-top: 1px solid var(--phosphor-dim);">
+
+    <!-- LEFT: AGENT ROSTER -->
+    <div class="border-r" style="border-color: var(--line);">
+      <div class="panel-header"><span>Roster · 7/8</span><span class="right">RTT 38ms</span></div>
+
+      <!-- Agents -->
+      <div>
+        <!-- max -->
+        <div class="agent-row active">
+          <div class="agent-glyph a-max">M</div>
+          <div>
+            <div class="a-max font-medium">max <span class="steel font-normal">/ manager</span></div>
+            <div class="text-[10px] steel">briefing · last ping 12s</div>
+          </div>
+          <span class="pulse-dot" style="background: var(--phosphor)"></span>
+        </div>
+
+        <!-- lara -->
+        <div class="agent-row">
+          <div class="agent-glyph a-lara">L</div>
+          <div>
+            <div class="a-lara font-medium">lara <span class="steel font-normal">/ inbox</span></div>
+            <div class="text-[10px] steel">scanning ec4@ · 1.2s</div>
+          </div>
+          <span class="pulse-dot" style="background: var(--phosphor)"></span>
+        </div>
+
+        <!-- matt -->
+        <div class="agent-row">
+          <div class="agent-glyph a-matt">M</div>
+          <div>
+            <div class="a-matt font-medium">matt <span class="steel font-normal">/ ar/ap</span></div>
+            <div class="text-[10px] steel">idle · qb sync 04m ago</div>
+          </div>
+          <span class="pulse-dot" style="background: var(--amber)"></span>
+        </div>
+
+        <!-- logan -->
+        <div class="agent-row">
+          <div class="agent-glyph a-logan">L</div>
+          <div>
+            <div class="a-logan font-medium">logan <span class="steel font-normal">/ shipments</span></div>
+            <div class="text-[10px] steel">tracking 12 BLs</div>
+          </div>
+          <span class="pulse-dot" style="background: var(--phosphor)"></span>
+        </div>
+
+        <!-- sal -->
+        <div class="agent-row">
+          <div class="agent-glyph a-sal">S</div>
+          <div>
+            <div class="a-sal font-medium">sal <span class="steel font-normal">/ rfq</span></div>
+            <div class="text-[10px] steel">3 quotes outstanding</div>
+          </div>
+          <span class="pulse-dot" style="background: var(--phosphor)"></span>
+        </div>
+
+        <!-- gem -->
+        <div class="agent-row">
+          <div class="agent-glyph a-gem">G</div>
+          <div>
+            <div class="a-gem font-medium">gem <span class="steel font-normal">/ erp data</span></div>
+            <div class="text-[10px] steel">supabase 0 lag</div>
+          </div>
+          <span class="pulse-dot" style="background: var(--phosphor)"></span>
+        </div>
+
+        <!-- hermes -->
+        <div class="agent-row">
+          <div class="agent-glyph a-hermes">H</div>
+          <div>
+            <div class="a-hermes font-medium">hermes <span class="steel font-normal">/ mac mini</span></div>
+            <div class="text-[10px] steel">via tailnet · 11ms</div>
+          </div>
+          <span class="pulse-dot" style="background: var(--phosphor)"></span>
+        </div>
+      </div>
+
+      <!-- VIEWS -->
+      <div class="panel-header mt-4"><span>Views</span><span class="right">⌘+</span></div>
+      <div>
+        <div class="agent-row"><span class="phosphor-dim">▸</span><div>overview <span class="steel text-[10px]">⌘1</span></div><span></span></div>
+        <div class="agent-row"><span class="phosphor-dim">▸</span><div>prompts <span class="steel text-[10px]">⌘2</span></div><span></span></div>
+        <div class="agent-row"><span class="phosphor-dim">▸</span><div>crons <span class="steel text-[10px]">⌘3</span></div><span></span></div>
+      </div>
+    </div>
+
+    <!-- CENTER: CHAT -->
+    <div class="flex flex-col" style="min-height: 720px;">
+      <div class="panel-header">
+        <span>Team Chat · #ec4-ops</span>
+        <span class="right">polling @ 4s · 4 msg · 02:14:47 utc</span>
+      </div>
+
+      <!-- messages -->
+      <div class="flex-1 overflow-auto">
+
+        <!-- system marker -->
+        <div class="msg" style="grid-template-columns: 92px 1fr; background: rgba(74, 222, 128, 0.02);">
+          <div class="msg-meta">07:14:02<br><span class="phosphor-dim">[BOOT]</span></div>
+          <div class="msg-body steel">
+            ═══ session resumed · 4 historical messages reloaded from action_queue ═══
+          </div>
+        </div>
+
+        <!-- felipe -->
+        <div class="msg">
+          <div class="msg-meta">07:14:18<br><span class="a-felipe">felipe</span></div>
+          <div class="msg-body">
+            <span class="a-logan">@logan</span> status on <code>MSKU1234567</code> — santos shipment for plastix industria
+          </div>
+        </div>
+
+        <!-- logan -->
+        <div class="msg">
+          <div class="msg-meta">07:14:21<br><span class="a-logan">logan</span></div>
+          <div class="msg-body">
+            <span class="phosphor-dim">┌─ tracking · MSKU1234567 / MAEU240517</span><br>
+            vessel <code>MAERSK HORIZON</code> discharged houston 09:42 EST yesterday.<br>
+            <span class="steel">→</span> container available at terminal · pickup window opens <span class="amber">2026-05-28 07:00 CDT</span><br>
+            <span class="steel">→</span> demurrage clock starts 2026-05-30 17:00 (free time 96h)<br>
+            <span class="steel">→</span> assigned drayage: T&amp;S Transport, ref <code>TS-44182</code><br>
+            <span class="phosphor-dim">└─ all green. customer notified by lara 16m ago.</span>
+          </div>
+        </div>
+
+        <!-- matt -->
+        <div class="msg">
+          <div class="msg-meta">07:14:33<br><span class="a-matt">matt</span></div>
+          <div class="msg-body">
+            <span class="amber">▲ ar alert</span> · acme plastics ltda <code>INV-2026-04-1842</code> · <span class="amber">$45,200 USD · 14 days overdue</span><br>
+            <span class="steel">history</span> · 8 prior invoices · avg pay 7 days late · never &gt;30 · last contact 22 days ago<br>
+            <span class="steel">propose</span> · send tier-1 followup email to <code>ap@acmeplastics.com.br</code> · queued as <code>ar.send_followup #A-44291</code><br>
+            <span class="phosphor-dim">decision: [a] approve · [d] deny · [c] cancel · [i] inspect draft</span>
+          </div>
+        </div>
+
+        <!-- felipe -->
+        <div class="msg">
+          <div class="msg-meta">07:14:50<br><span class="a-felipe">felipe</span></div>
+          <div class="msg-body">
+            approve. you've handled this customer well before.
+          </div>
+        </div>
+
+        <!-- matt -->
+        <div class="msg">
+          <div class="msg-meta">07:14:51<br><span class="a-matt">matt</span></div>
+          <div class="msg-body">
+            <span class="phosphor">✓ approved</span> · sent · hermes report nominal · <code>#A-44291</code> → <code>EXECUTED</code>
+          </div>
+        </div>
+
+        <!-- sal -->
+        <div class="msg">
+          <div class="msg-meta">07:15:14<br><span class="a-sal">sal</span></div>
+          <div class="msg-body">
+            new rfq · <span class="a-sal">ecopoli llc</span> · 2x40HC HDPE film grade · target $1,840/MT CIF santos<br>
+            <span class="steel">margin</span> @ current spot $1,712/MT → <span class="phosphor">7.5%</span> · <span class="steel">tenor</span> 45 days · <span class="steel">credit</span> ok ($85k available / $128k limit)<br>
+            shall i draft proforma? <span class="phosphor-dim">[y] yes · [m] modify · [s] skip</span>
+            <span class="blink-cursor"></span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- composer -->
+      <div class="composer">
+        <div class="composer-bar">
+          <span class="phosphor">▍</span>
+          <span>route → <span class="a-sal">@sal</span></span>
+          <span class="steel">·</span>
+          <span>0 attachments</span>
+          <span class="steel">·</span>
+          <span>1,847 chars budget</span>
+          <span class="ml-auto flex gap-2">
+            <span class="kbd">↵ send</span>
+            <span class="kbd">⌘K cmd</span>
+            <span class="kbd">⌘/ help</span>
+          </span>
+        </div>
+        <textarea rows="4" placeholder="> _ compose · drag files · paste images · use @agent to route"></textarea>
+      </div>
+    </div>
+
+    <!-- RIGHT: DECISION QUEUE + AUDIT TAIL -->
+    <div class="border-l flex flex-col" style="border-color: var(--line);">
+
+      <div class="panel-header"><span>Decision Queue · 3 awaiting</span><span class="right">tier</span></div>
+      <div>
+        <div class="feed-row">
+          <div class="ts">07:15:14</div>
+          <div>
+            <span class="a-sal font-medium">sal</span> · <span class="amber badge">QUEUE_HIGH</span><br>
+            <span class="text-[11px]">rfq.draft_proforma · ecopoli llc</span>
+          </div>
+        </div>
+        <div class="feed-row">
+          <div class="ts">07:11:02</div>
+          <div>
+            <span class="a-logan font-medium">logan</span> · <span class="phosphor badge">QUEUE_LOW</span><br>
+            <span class="text-[11px]">shipment.notify_eta_change · plastix · -2d</span>
+          </div>
+        </div>
+        <div class="feed-row">
+          <div class="ts">06:48:17</div>
+          <div>
+            <span class="a-lara font-medium">lara</span> · <span class="amber badge">QUEUE_HIGH</span><br>
+            <span class="text-[11px]">email.send_reply · re: petroquimica order</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-header mt-4"><span>Audit Tail · last 60s</span><span class="right">live</span></div>
+      <div>
+        <div class="feed-row">
+          <div class="ts text-[10px]">07:14:51</div>
+          <div class="text-[10.5px]"><span class="phosphor">executed</span> · matt · ar.send_followup · #A-44291</div>
+        </div>
+        <div class="feed-row">
+          <div class="ts text-[10px]">07:14:51</div>
+          <div class="text-[10.5px]"><span class="phosphor">approved</span> · felipe · A-44291</div>
+        </div>
+        <div class="feed-row">
+          <div class="ts text-[10px]">07:14:33</div>
+          <div class="text-[10.5px]"><span class="amber">awaiting</span> · matt · A-44291</div>
+        </div>
+        <div class="feed-row">
+          <div class="ts text-[10px]">07:14:21</div>
+          <div class="text-[10.5px]"><span class="steel">read</span> · logan · /bookings/MSKU1234567</div>
+        </div>
+        <div class="feed-row">
+          <div class="ts text-[10px]">07:14:18</div>
+          <div class="text-[10.5px]"><span class="steel">routed</span> · felipe → logan</div>
+        </div>
+      </div>
+
+      <div class="panel-header mt-4"><span>Vitals</span><span class="right">5s</span></div>
+      <div class="px-4 py-3 text-[11px] space-y-1.5">
+        <div class="flex justify-between"><span class="steel">cp uptime</span><span class="phosphor">4d 17h</span></div>
+        <div class="flex justify-between"><span class="steel">queue depth</span><span class="phosphor">3</span></div>
+        <div class="flex justify-between"><span class="steel">actions 24h</span><span class="phosphor">147 · 142 ok</span></div>
+        <div class="flex justify-between"><span class="steel">failed 24h</span><span class="amber">5</span></div>
+        <div class="flex justify-between"><span class="steel">hermes batt</span><span class="phosphor">on ac</span></div>
+        <div class="flex justify-between"><span class="steel">tailnet</span><span class="phosphor">funnel ok</span></div>
+        <div class="flex justify-between"><span class="steel">gemini quota</span><span class="phosphor">71%</span></div>
+        <div class="flex justify-between"><span class="steel">anthropic quota</span><span class="phosphor">42%</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- TICKER STATUS BAR -->
+  <div class="ticker">
+    <span class="kv"><span class="k">build</span>v14.40-operational</span>
+    <span class="kv"><span class="k">user</span>felipe@ec4</span>
+    <span class="kv"><span class="k">scope</span>ec4 enterprises llc</span>
+    <span class="kv"><span class="k">cp</span>maxs-mac-mini.tailb21dd3.ts.net</span>
+    <span class="kv"><span class="k">net</span><span class="phosphor">●</span> 11ms</span>
+    <span class="kv ml-auto"><span class="k">↑/↓</span>nav <span class="k ml-2">a/d</span>approve/deny <span class="k ml-2">/</span>focus composer <span class="k ml-2">⌘⇧p</span>palette</span>
+  </div>
+</div>
+
+<!-- STATE: EMPTY (hidden by default) -->
+<div id="state-empty" class="max-w-[1680px] mx-auto hidden">
+  <div class="grid grid-cols-[260px_1fr_300px] panel" style="border-top: 1px solid var(--phosphor-dim);">
+    <div class="border-r" style="border-color: var(--line);">
+      <div class="panel-header"><span>Roster · 7/8</span><span class="right">RTT 38ms</span></div>
+      <div>
+        <div class="agent-row"><div class="agent-glyph a-max">M</div><div><div class="a-max font-medium">max</div><div class="text-[10px] steel">idle · 23m</div></div><span class="pulse-dot" style="background: var(--steel)"></span></div>
+        <div class="agent-row"><div class="agent-glyph a-lara">L</div><div><div class="a-lara font-medium">lara</div><div class="text-[10px] steel">idle · 18m</div></div><span class="pulse-dot" style="background: var(--steel)"></span></div>
+        <div class="agent-row"><div class="agent-glyph a-matt">M</div><div><div class="a-matt font-medium">matt</div><div class="text-[10px] steel">idle · 1h 04m</div></div><span class="pulse-dot" style="background: var(--steel)"></span></div>
+        <div class="agent-row"><div class="agent-glyph a-logan">L</div><div><div class="a-logan font-medium">logan</div><div class="text-[10px] steel">idle · 47m</div></div><span class="pulse-dot" style="background: var(--steel)"></span></div>
+        <div class="agent-row"><div class="agent-glyph a-sal">S</div><div><div class="a-sal font-medium">sal</div><div class="text-[10px] steel">idle · 2h 11m</div></div><span class="pulse-dot" style="background: var(--steel)"></span></div>
+        <div class="agent-row"><div class="agent-glyph a-gem">G</div><div><div class="a-gem font-medium">gem</div><div class="text-[10px] steel">idle · 8m</div></div><span class="pulse-dot" style="background: var(--steel)"></span></div>
+        <div class="agent-row"><div class="agent-glyph a-hermes">H</div><div><div class="a-hermes font-medium">hermes</div><div class="text-[10px] steel">idle</div></div><span class="pulse-dot" style="background: var(--steel)"></span></div>
+      </div>
+    </div>
+
+    <div class="flex flex-col" style="min-height: 720px;">
+      <div class="panel-header"><span>Team Chat · #ec4-ops</span><span class="right">polling @ 4s · 0 msg</span></div>
+      <div class="flex-1 flex items-center justify-center p-12">
+        <div class="empty-frame max-w-md w-full grid-bg">
+          <div class="phosphor display text-[36px] mb-2">∅ NULL_BUFFER</div>
+          <div class="text-[11px] steel mb-6 leading-relaxed">
+            No messages in the queue. Agents are idle.<br>
+            Awaiting operator input or scheduled cron tick.
+          </div>
+          <div class="text-[10px] steel space-y-1">
+            <div><span class="kbd">/</span> focus composer</div>
+            <div><span class="kbd">⌘⇧p</span> command palette</div>
+            <div><span class="kbd">@</span> address an agent</div>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="composer-bar"><span class="phosphor">▍</span> ready · no route · 0 attachments <span class="ml-auto"><span class="kbd">↵ send</span></span></div>
+        <textarea rows="3" placeholder="> _ ready"></textarea>
+      </div>
+    </div>
+
+    <div class="border-l" style="border-color: var(--line);">
+      <div class="panel-header"><span>Decision Queue</span><span class="right">empty</span></div>
+      <div class="px-4 py-8 text-center text-[11px] steel">▢ no pending decisions<br>queue depth 0</div>
+      <div class="panel-header mt-4"><span>Audit Tail</span><span class="right">quiet</span></div>
+      <div class="px-4 py-8 text-center text-[11px] steel">~ no audit events in 5m</div>
+    </div>
+  </div>
+</div>
+
+<!-- STATE: OFFLINE (hidden by default) -->
+<div id="state-offline" class="max-w-[1680px] mx-auto hidden">
+  <div class="panel" style="border-top: 1px solid var(--rust); border-color: var(--rust);">
+    <div class="panel-header" style="background: rgba(251, 113, 133, 0.08);">
+      <span class="rust">⚠ control-plane unreachable</span>
+      <span class="right rust">last contact 47s</span>
+    </div>
+    <div class="p-12">
+      <div class="display text-[56px] rust mb-2">// CONNECTION_LOST</div>
+      <div class="text-[12px] steel max-w-2xl leading-relaxed mb-8">
+        Polling stalled against <code class="phosphor">maxs-mac-mini.tailb21dd3.ts.net</code> via the
+        <code class="phosphor">agentic-proxy</code> edge function. Most likely a tailnet hiccup or the
+        launchd job <code class="phosphor">ai.xs-agentic.control-plane</code> died on the mini. Retry
+        recovers in &lt;5s once the path reopens. Hard-failure paths in the runbook.
+      </div>
+
+      <div class="grid grid-cols-3 gap-px bg-[#1a2129]">
+        <div class="bg-[#0b0e12] p-5">
+          <div class="text-[10px] uppercase tracking-[0.15em] steel mb-2">Edge function</div>
+          <div class="phosphor text-[13px]">200 ok · 142ms</div>
+          <div class="text-[10px] steel mt-1">supabase: agentic-proxy</div>
+        </div>
+        <div class="bg-[#0b0e12] p-5">
+          <div class="text-[10px] uppercase tracking-[0.15em] steel mb-2">Funnel</div>
+          <div class="rust text-[13px]">timeout · 5000ms</div>
+          <div class="text-[10px] steel mt-1">tailb21dd3.ts.net</div>
+        </div>
+        <div class="bg-[#0b0e12] p-5">
+          <div class="text-[10px] uppercase tracking-[0.15em] steel mb-2">Control-plane (last)</div>
+          <div class="amber text-[13px]">unknown · 47s ago</div>
+          <div class="text-[10px] steel mt-1">PID 66035 (cached)</div>
+        </div>
+      </div>
+
+      <div class="mt-8 flex gap-3">
+        <button class="px-4 py-2 border phosphor" style="border-color: var(--phosphor); background: rgba(74, 222, 128, 0.06);">▶ retry · ↵</button>
+        <button class="px-4 py-2 border steel" style="border-color: var(--line-bright);">open audit</button>
+        <button class="px-4 py-2 border steel" style="border-color: var(--line-bright);">ssh mini</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function showState(s) {
+    ['live','empty','offline'].forEach(k => {
+      document.getElementById('state-' + k).classList.add('hidden');
+      document.querySelectorAll('.state-tab').forEach(t => t.classList.remove('active'));
+    });
+    document.getElementById('state-' + s).classList.remove('hidden');
+    event.currentTarget.classList.add('active');
+  }
+</script>
+
+</body>
+</html>
