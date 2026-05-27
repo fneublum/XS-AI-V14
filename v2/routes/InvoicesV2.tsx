@@ -93,7 +93,7 @@ const buildColumns = (
   { id: 'pod', header: 'POD', mono: true, sortable: true, filterable: true, width: '62px',
     value: r => podShort(r.pod),
     cell: r => <span className="font-mono text-[11.5px] text-slate-400" title={r.pod ?? ''}>{podShort(r.pod)}</span> },
-  { id: 'etd', header: 'ETD', align: 'right', sortable: true, width: '62px',
+  { id: 'etd', header: 'ETD', align: 'right', sortable: true, width: '37px',
     // Resolve via the booking row — invoices don't store ETD directly.
     value: r => (r.bookingNumber ? etdByBookingNumber.get(r.bookingNumber) ?? '' : ''),
     cell: r => {
@@ -104,7 +104,7 @@ const buildColumns = (
         </span>
       );
     } },
-  { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true, width: '110px',
+  { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true, width: '67px',
     value: r => r.totalAmount,
     cell: r => fmtMoney(r.totalAmount, r.currency) },
   { id: 'date', header: 'Issued', align: 'right', sortable: true, width: '90px',
