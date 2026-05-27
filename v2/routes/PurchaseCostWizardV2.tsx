@@ -40,7 +40,7 @@ import { ensureProducts } from '../lib/ensureProducts';
 import { FormField, Label } from '../primitives';
 import { useEntityInsert } from '../queries/useEntityMutations';
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3 | 4 | 5;
 type ShipmentType = 'IMPORT' | 'EXPORT' | 'LOCAL';
 type FreightType = 'PORT_TO_PORT' | 'DOOR_TO_PORT' | 'PORT_TO_DOOR' | 'DOOR_TO_DOOR';
 
@@ -54,10 +54,11 @@ const needsPickup   = (f: FreightType) => f === 'DOOR_TO_PORT' || f === 'DOOR_TO
 const needsDelivery = (f: FreightType) => f === 'PORT_TO_DOOR' || f === 'DOOR_TO_DOOR';
 
 const STEPS: Array<{ n: Step; label: string; hint: string }> = [
-  { n: 1, label: 'Source',         hint: 'Pick a supplier offer' },
-  { n: 2, label: 'Landed cost',    hint: 'Freight, duties, FX' },
-  { n: 3, label: 'Purchase order', hint: 'Create PO & save prices' },
-  { n: 4, label: 'Price list',     hint: 'What sales sees' },
+  { n: 1, label: 'Source',          hint: 'Pick a supplier offer' },
+  { n: 2, label: 'Landed cost',     hint: 'Freight, duties, FX' },
+  { n: 3, label: 'Purchase order',  hint: 'Create PO & save prices' },
+  { n: 4, label: 'Price list',      hint: 'What sales sees' },
+  { n: 5, label: 'Purchase Orders', hint: 'Browse all POs' },
 ];
 
 const cityCountry = (raw: string | null): string => {
@@ -355,6 +356,7 @@ const PurchaseCostWizardV2: React.FC = () => {
           }}
         />
       )}
+      {step === 5 && <PurchaseOrdersV2 />}
 
       <SupplierOfferDrawer
         offer={offerInDrawer}
