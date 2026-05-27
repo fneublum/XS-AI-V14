@@ -712,13 +712,13 @@ export default function DashboardV2() {
             />
           </div>
 
-          {/* ROW 2: chat (3 cols) + decision queue (1 col) */}
-          <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+          {/* ROW 2: chat — full width, the main work surface */}
+          <div className="grid grid-cols-1 gap-4">
 
             {/* CHAT PANEL */}
             <div
-              className="xl:col-span-3 relative flex flex-col rounded-[18px] border overflow-hidden"
-              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)', minHeight: '520px' }}
+              className="relative flex flex-col rounded-[18px] border overflow-hidden"
+              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)', minHeight: '560px' }}
               onDragEnter={onDragEnter}
               onDragLeave={onDragLeave}
               onDragOver={onDragOver}
@@ -810,17 +810,36 @@ export default function DashboardV2() {
                       hidden
                       onChange={e => { addFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ''; }}
                     />
+                    {/* Agent quick-pick row — click to insert @agent at start of input */}
+                    <div className="flex items-center gap-1.5 flex-wrap mt-2 pt-2 border-t" style={{ borderColor: 'var(--b-line-soft)' }}>
+                      <span className="text-[10.5px] uppercase tracking-[0.14em] mr-1" style={{ color: 'var(--b-text-mute)' }}>Route to</span>
+                      {agentOrder.map(id => {
+                        const active = input.trim().toLowerCase().startsWith('@' + id);
+                        const color = `var(--b-c-${id}, var(--b-text-soft))`;
+                        const p = personas[id];
+                        const fallback = AGENT_LABELS[id];
+                        const display = p?.display ?? fallback?.display ?? id;
+                        return (
+                          <button
+                            key={id}
+                            onClick={() => mention(id)}
+                            title={p?.role ?? display}
+                            className="flex items-center gap-1.5 text-[11.5px] px-2.5 py-1 rounded-full font-medium transition-colors"
+                            style={{
+                              background: active ? color : 'var(--b-surface-2)',
+                              color: active ? 'white' : color,
+                              border: '1px solid ' + (active ? color : 'transparent'),
+                            }}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: active ? 'white' : 'currentColor' }} />
+                            {display.toLowerCase()}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Bottom toolbar — attach + send */}
                     <div className="flex items-center justify-between mt-2 pt-2 border-t gap-2" style={{ borderColor: 'var(--b-line-soft)' }}>
                       <div className="flex items-center gap-2 min-w-0">
-                        <button
-                          onClick={() => mention('lara')}
-                          className="flex items-center gap-1.5 text-[11.5px] px-2.5 py-1 rounded-full font-medium"
-                          style={{ background: 'var(--b-teal-soft)', color: 'var(--b-teal-2)' }}
-                          title="Default route — Lara handles attachment OCR + ERP ingestion"
-                        >
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
-                          @lara
-                        </button>
                         <button
                           type="button"
                           onClick={() => fileInputRef.current?.click()}
@@ -830,7 +849,7 @@ export default function DashboardV2() {
                         >
                           <Paperclip size={12} /> attach
                         </button>
-                        <span className="text-[11px] truncate" style={{ color: 'var(--b-text-faint)' }}>drag · paste · ≤ 2 MB each</span>
+                        <span className="text-[11px] truncate" style={{ color: 'var(--b-text-faint)' }}>drag · paste · ≤ 2 MB each · attachments route to @lara</span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-[11px] b-mono" style={{ color: 'var(--b-text-mute)' }}>↵</span>
@@ -848,11 +867,15 @@ export default function DashboardV2() {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* ROW 3: queue (1) + agent vitals (1) + activity tail (1) */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
 
             {/* DECISION QUEUE */}
             <div
               className="flex flex-col rounded-[18px] border overflow-hidden"
-              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}
+              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)', maxHeight: '480px' }}
             >
               <div className="flex items-center gap-2 px-5 py-3.5 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
                 <span className="b-display text-[14px] font-semibold" style={{ color: 'var(--b-text)' }}>Awaiting you</span>
@@ -881,10 +904,6 @@ export default function DashboardV2() {
                 </div>
               )}
             </div>
-          </div>
-
-          {/* ROW 3: agent vitals (2 cols) + activity tail (2 cols) */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
             {/* AGENT VITALS */}
             <div
@@ -897,7 +916,7 @@ export default function DashboardV2() {
                   {agentOrder.length} of {agentOrder.length}
                 </span>
               </div>
-              <div className="p-4 grid grid-cols-2 gap-3">
+              <div className="p-3 grid grid-cols-1 gap-2 overflow-y-auto custom-scrollbar" style={{ maxHeight: '420px' }}>
                 {agentOrder.map(id => {
                   const p = personas[id];
                   const fallback = AGENT_LABELS[id];
@@ -924,7 +943,7 @@ export default function DashboardV2() {
             {/* ACTIVITY TAIL */}
             <div
               className="rounded-[18px] border overflow-hidden flex flex-col"
-              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}
+              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)', maxHeight: '480px' }}
             >
               <div className="flex items-center gap-2 px-5 py-3.5 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
                 <span className="b-display text-[14px] font-semibold" style={{ color: 'var(--b-text)' }}>Activity tail</span>
@@ -985,15 +1004,25 @@ function BentoKpiCard({ tint, label, value, valueColor, hint, icon }: {
 }) {
   const bg = tint === 'gold' ? 'var(--b-tint-gold)' : tint === 'cyan' ? 'var(--b-tint-cyan)' : tint === 'sal' ? 'var(--b-tint-sal)' : 'var(--b-tint-emerald)';
   return (
-    <div className="rounded-[18px] border p-5" style={{ background: bg, borderColor: 'var(--b-line)' }}>
-      <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--b-text-mute)' }}>
+    <div className="rounded-[14px] border px-4 py-3 flex items-center gap-4" style={{ background: bg, borderColor: 'var(--b-line)' }}>
+      {/* Icon + tinted square */}
+      <div
+        className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center"
+        style={{ background: valueColor, color: 'white' }}
+      >
         {icon}
-        <span>{label}</span>
       </div>
-      <div className="b-display text-[40px] leading-[0.95]" style={{ color: valueColor, fontVariationSettings: "'opsz' 96, 'wght' 600", letterSpacing: '-0.04em' }}>
+      {/* Label + hint stack on left */}
+      <div className="min-w-0 flex-1">
+        <div className="text-[10.5px] uppercase tracking-[0.14em] leading-none mb-1" style={{ color: 'var(--b-text-mute)' }}>
+          {label}
+        </div>
+        <div className="text-[11.5px] truncate" style={{ color: 'var(--b-text-mute)' }}>{hint}</div>
+      </div>
+      {/* Big value on right */}
+      <div className="b-display shrink-0 text-right" style={{ color: valueColor, fontVariationSettings: "'opsz' 96, 'wght' 600", letterSpacing: '-0.03em', fontSize: '26px', lineHeight: 1 }}>
         {value}
       </div>
-      <div className="mt-2 text-[12px]" style={{ color: 'var(--b-text-mute)' }}>{hint}</div>
     </div>
   );
 }
