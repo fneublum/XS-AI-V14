@@ -15,7 +15,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
-  X as XIcon, FileText, Package, ClipboardList, Ship,
+  X as XIcon, FileText, Package, ClipboardList, Ship, BadgeCheck,
   Eye, Download, Loader2, Mail, Upload, AlertCircle, CheckCircle2,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -35,6 +35,7 @@ import { getSupabaseClient } from '../../services/supabase';
 import { generateInvoicePdf } from '../services/pdf/invoicePdf';
 import { generatePackingListPdf } from '../services/pdf/packingListPdf';
 import { generateSliPdf } from '../services/pdf/sliPdf';
+import { generateCooPdf } from '../services/pdf/cooPdf';
 import { applyAdjustments } from '../services/pdf/priceAdjust';
 import { findCompany, PdfInvoice, InvoicePdfCtx, PdfBankRow } from '../services/pdf/types';
 import { isEc4Company } from '../services/pdf/isEc4Company';
@@ -198,6 +199,7 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
     pl: initialSelection?.pl ?? false,
     sli: initialSelection?.sli ?? false,
     bol: initialSelection?.bol ?? false,
+    coo: (initialSelection as any)?.coo ?? false,
   });
   const [brMode, setBrMode] = useState(false);
   const [halfMode, setHalfMode] = useState(false);
@@ -253,6 +255,7 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
       pl: initialSelection?.pl ?? false,
       sli: initialSelection?.sli ?? false,
       bol: initialSelection?.bol ?? false,
+      coo: (initialSelection as any)?.coo ?? false,
     });
     setBrMode(false);
     setHalfMode(false);
@@ -433,17 +436,18 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
     applyAdjustments(toPdfInvoice(invoice), { brMode, halfMode });
 
   // ─── Preview / Download handlers ─────────────────────────────
-  const docFactory = async (kind: 'invoice' | 'pl' | 'sli') => {
+  const docFactory = async (kind: 'invoice' | 'pl' | 'sli' | 'coo') => {
     const inv = adjustedInvoice();
     const stamp = await ensureStamp();
     const ctx = buildCtx(stamp);
     if (kind === 'invoice') return generateInvoicePdf(inv, ctx, false);
     if (kind === 'pl')      return generatePackingListPdf(inv, ctx, false);
+    if (kind === 'coo')     return generateCooPdf(inv, ctx, false);
     return generateSliPdf(inv, ctx, false);
   };
 
   const runAction = async (
-    kind: 'invoice' | 'pl' | 'sli',
+    kind: 'invoice' | 'pl' | 'sli' | 'coo',
     action: 'preview' | 'download',
     filename: string,
   ) => {
@@ -510,6 +514,14 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
           contentType: 'application/pdf',
         });
       }
+      if (selection.coo) {
+        const doc = generateCooPdf(inv, ctx, false);
+        attachments.push({
+          name: `CertificateOfOrigin_${invoice.invoiceNumber || 'unknown'}.pdf`,
+          contentBytes: docToBase64(doc),
+          contentType: 'application/pdf',
+        });
+      }
       // BOL data-URL fallback, skipped in BR mode to match v1.
       const bolUrl = (invoice as any).bolUrl || (invoice as any).bolurl;
       if (selection.bol && !brMode && bolUrl && typeof bolUrl === 'string' && bolUrl.startsWith('data:')) {
@@ -557,6 +569,7 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
         selection.invoice ? `• Commercial Invoice: ${inv.invoiceNumber}` : '',
         selection.pl      ? `• Packing List: ${invoice.plNumber || 'N/A'}` : '',
         selection.sli     ? `• Shipper's Letter of Instruction (SLI)` : '',
+        selection.coo     ? `• Certificate of Origin` : '',
         selection.bol && !brMode && bolUrl ? `• Bill of Lading (BOL)` : '',
         '',
         `Total Amount: $${Number(inv.totalAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
@@ -744,6 +757,34 @@ export const DeliveryDocsModal: React.FC<Props> = ({ invoice, onOpenChange, init
                 className={iconBtn}
               >
                 {busy === 'sli-download' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+              </button>
+            </DocRow>
+
+            {/* COO — Certificate of Origin (native generator). */}
+            <DocRow
+              checked={selection.coo}
+              onToggle={(v) => setSelection(s => ({ ...s, coo: v }))}
+              icon={<BadgeCheck size={14} />}
+              title="Certificate of Origin"
+              subtitle="Country of origin declaration · signed by exporter"
+            >
+              <button
+                type="button"
+                onClick={() => runAction('coo', 'preview', `CertificateOfOrigin_${invoice.invoiceNumber}.pdf`)}
+                disabled={busy !== null || sending}
+                title="Preview"
+                className={iconBtn}
+              >
+                {busy === 'coo-preview' ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />}
+              </button>
+              <button
+                type="button"
+                onClick={() => runAction('coo', 'download', `CertificateOfOrigin_${invoice.invoiceNumber}.pdf`)}
+                disabled={busy !== null || sending}
+                title="Download"
+                className={iconBtn}
+              >
+                {busy === 'coo-download' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
               </button>
             </DocRow>
 
