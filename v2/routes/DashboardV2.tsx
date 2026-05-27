@@ -811,9 +811,9 @@ export default function DashboardV2() {
                       onChange={e => { addFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ''; }}
                     />
                     {/* Single toolbar row — agent quick-pick + attach + send.
-                      * Sits flush against the textarea (no top margin / border)
-                      * so the composer reads as one tight block. */}
-                    <div className="flex items-center gap-2 flex-wrap">
+                      * Sits just below the textarea with a small breathing
+                      * gap (no divider line — the rhythm comes from spacing). */}
+                    <div className="flex items-center gap-2 flex-wrap mt-2">
                       {/* Agent quick-pick chips */}
                       {agentOrder.map(id => {
                         const active = input.trim().toLowerCase().startsWith('@' + id);
