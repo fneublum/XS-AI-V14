@@ -27,9 +27,10 @@ import { useToast } from '../primitives/Toast';
 import { invokeEdgeFunction } from '../../services/edgeAuth';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  fetchQBCustomers, fetchCustomerStatement,
+  fetchQBCustomers, fetchCustomerStatement, getQBConnectionStatus,
   type QBCustomer, type QBCustomerStatement,
 } from '../../services/quickbooksService';
+import { isEc4Company } from '../services/pdf/isEc4Company';
 
 function fmtMoney(n: number, c: string = 'USD'): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 2 }).format(n);
@@ -136,72 +137,84 @@ const StatementsV2: React.FC = () => {
   const [asOf, setAsOf] = useState(today);
   const [qbSyncing, setQbSyncing] = useState(false);
 
-  // ── Source: Local ledger vs QuickBooks ────────────────────────────
-  // Mirrors the FinanceBalancesV2 pattern. When EC4 (which uses QB
-  // for source-of-truth) has the company connected, the user can flip
-  // to source='qb' to pull statements straight from QuickBooks the
-  // same way Customer Balances does. AP (supplier) statements always
-  // use the local ledger — QB's vendor side has a different shape
-  // and FinanceBalancesV2 doesn't cover it either.
-  const [source, setSource] = useState<'local' | 'qb'>('local');
-  const [qbConnected, setQbConnected] = useState<boolean | null>(null);
-  const [qbCustomers, setQbCustomers] = useState<QBCustomer[]>([]);
-  const [qbLoadingCustomers, setQbLoadingCustomers] = useState(false);
-  const [qbStatement, setQbStatement] = useState<QBCustomerStatement | null>(null);
-  const [qbLoadingStatement, setQbLoadingStatement] = useState(false);
-  const [qbError, setQbError] = useState<string | null>(null);
+  // ── Auto-detect EC4 → merge local + QuickBooks ────────────────────
+  // EC4 uses QuickBooks as the source-of-truth for AR, but users also
+  // record payments directly in V14 (manual OCR receipts that haven't
+  // synced back to QB yet). Statements for EC4 must show BOTH so the
+  // ledger matches reality. For every other company (GENRYO etc.)
+  // we stay local — they don't have QB connected.
+  //
+  // EC4 detection is by company name (mirrors isEc4Company elsewhere
+  // — avoids hardcoding a tenant id). AP statements always use local
+  // because QB's vendor side has a different shape.
+  const isEc4 = isEc4Company(currentCompany ? { name: currentCompany.name } : null);
+  const useQbSource = kind === 'AR' && isEc4;
 
-  // Auto-detect QB connection on company change. Mirrors the load
-  // path in FinanceBalancesV2 — a 'not connected' / 'reconnect'
-  // error means the company isn't linked, anything else is a real
-  // failure we surface in the UI.
+  const [qbStatus, setQbStatus] = useState<'unknown' | 'connected' | 'disconnected' | 'error'>('unknown');
+  const [qbStatusError, setQbStatusError] = useState<string | null>(null);
+  const [qbCustomers, setQbCustomers] = useState<QBCustomer[]>([]);
+  const [qbStatement, setQbStatement] = useState<QBCustomerStatement | null>(null);
+  const [qbLoading, setQbLoading] = useState(false);
+
+  // Probe the QB connection on EC4 + AR. Uses the dedicated
+  // qb-auth/status endpoint first (cheap + accurate), then loads the
+  // customer list. Customer Balances uses fetchQBCustomers directly
+  // and infers connection from its error; we split the two so the
+  // connection signal is clean and a failing customer fetch doesn't
+  // hide a working OAuth token.
   useEffect(() => {
     let cancelled = false;
-    if (!currentCompanyId || currentCompanyId === 'ALL') {
-      setQbConnected(false);
+    if (!useQbSource || !currentCompanyId || currentCompanyId === 'ALL') {
+      setQbStatus('disconnected');
       setQbCustomers([]);
+      setQbStatement(null);
       return;
     }
-    setQbLoadingCustomers(true);
-    setQbError(null);
+    setQbStatus('unknown');
+    setQbStatusError(null);
     (async () => {
       try {
+        const status = await getQBConnectionStatus(currentCompanyId);
+        if (cancelled) return;
+        if (!status.connected) {
+          setQbStatus('disconnected');
+          return;
+        }
+        // Connected — load customers. Force refresh so the singleton
+        // cache from a different company's prior session doesn't leak.
         const list = await fetchQBCustomers(currentCompanyId, /* forceRefresh */ true);
         if (cancelled) return;
         list.sort((a, b) => a.displayName.localeCompare(b.displayName));
         setQbCustomers(list);
-        setQbConnected(true);
+        setQbStatus('connected');
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
+        // eslint-disable-next-line no-console
+        console.error('[StatementsV2] QB connection probe failed:', err);
         if (msg.includes('not connected') || msg.includes('reconnect')) {
-          setQbConnected(false);
+          setQbStatus('disconnected');
         } else {
-          setQbConnected(true);
-          setQbError(msg);
+          setQbStatus('error');
+          setQbStatusError(msg);
         }
-      } finally {
-        if (!cancelled) setQbLoadingCustomers(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [currentCompanyId]);
+  }, [useQbSource, currentCompanyId]);
 
-  // Re-fetch the QB statement whenever the user picks a customer or
-  // changes the as-of date in QB source mode.
+  // Fetch the QB statement when the user picks a customer (EC4 only).
+  // Local statement is always fetched in parallel below so the merge
+  // produces a complete picture.
   useEffect(() => {
     let cancelled = false;
-    if (source !== 'qb') return;
-    if (!counterpartyName) { setQbStatement(null); return; }
-    if (!currentCompanyId || currentCompanyId === 'ALL') return;
-    setQbLoadingStatement(true);
-    setQbError(null);
+    if (!useQbSource || qbStatus !== 'connected' || !counterpartyName || !currentCompanyId || currentCompanyId === 'ALL') {
+      setQbStatement(null);
+      return;
+    }
+    setQbLoading(true);
     (async () => {
       try {
-        // No start date — pull everything up to asOf so the running
-        // balance is correct from inception. QB caps to roughly the
-        // last 5 years internally, which matches what FinanceBalances
-        // shows.
         const result = await fetchCustomerStatement(
           currentCompanyId,
           counterpartyName,
@@ -212,38 +225,84 @@ const StatementsV2: React.FC = () => {
         setQbStatement(result);
       } catch (err) {
         if (cancelled) return;
-        setQbError(err instanceof Error ? err.message : String(err));
+        // eslint-disable-next-line no-console
+        console.error('[StatementsV2] QB statement fetch failed:', err);
         setQbStatement(null);
+        setQbStatusError(err instanceof Error ? err.message : String(err));
       } finally {
-        if (!cancelled) setQbLoadingStatement(false);
+        if (!cancelled) setQbLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [source, counterpartyName, asOf, currentCompanyId]);
+  }, [useQbSource, qbStatus, counterpartyName, asOf, currentCompanyId]);
 
   const counterparties = useCounterpartyBalances(kind);
-  const localStatement = useStatement({
-    kind,
-    // Skip the local fetch entirely when sourcing from QB.
-    counterpartyName: source === 'qb' ? '' : counterpartyName,
-    asOf,
-  });
+  // Always fetch the local statement — for EC4 it's MERGED on top of
+  // the QB statement; for everyone else it's the only source.
+  const localStatement = useStatement({ kind, counterpartyName, asOf });
 
-  // Adapt the QB statement into the local shape so the rest of the
-  // render code is source-agnostic.
+  // Build the effective Statement passed to the render. Three cases:
+  //   1. Non-EC4 (or AP): local only — pass through.
+  //   2. EC4 + QB connected + statement loaded: MERGE QB invoices/
+  //      payments with local payments that haven't been pushed to QB
+  //      yet (transaction.qbId === null). QB-side data is the trunk,
+  //      local payments are added so freshly-recorded receipts show
+  //      immediately even before the next qb-pull-payments sync.
+  //   3. EC4 + QB error/disconnected: fall back to local + surface
+  //      an info banner above the table.
   const statement = useMemo(() => {
-    if (source === 'qb') {
-      const data = qbStatement
-        ? adaptQbStatementToLocal(qbStatement, asOf, currentCompanyId || 'ALL')
-        : null;
-      return {
-        data,
-        isLoading: qbLoadingStatement,
-        error: qbError ? new Error(qbError) : null,
-      } as { data: Statement | null; isLoading: boolean; error: Error | null };
+    if (!useQbSource) return localStatement;
+    const qbAdapted = qbStatement
+      ? adaptQbStatementToLocal(qbStatement, asOf, currentCompanyId || 'ALL')
+      : null;
+    if (!qbAdapted) {
+      // QB unavailable / not picked yet — degrade to local only.
+      return localStatement;
     }
-    return localStatement;
-  }, [source, qbStatement, qbLoadingStatement, qbError, asOf, currentCompanyId, localStatement]);
+    // Merge: take QB lines as the base, append local payment lines
+    // that aren't already mirrored in QB. We can't reliably dedupe
+    // line-by-line without a shared id; the closest signal is the
+    // `qbId` field on the local transaction, which is non-null
+    // iff the payment was pulled FROM or pushed TO QB. Local
+    // payments with qbId === null are the manual receipts that
+    // haven't been QB-synced yet.
+    const localLines = localStatement.data?.lines ?? [];
+    const localOnlyPayments = localLines.filter(l =>
+      l.kind === 'PAYMENT' && !l.id.includes('qb-pull-')
+      // The local statement hook embeds the source in the line id —
+      // 'qb-pull-' prefixes pulled-from-QB allocations. Filter those
+      // out so we don't double-count after a pull.
+    );
+    const mergedLines: StatementLine[] = [...qbAdapted.lines, ...localOnlyPayments]
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    // Re-derive the closing balance from the merged ledger so the
+    // running total + footer match what's actually displayed.
+    const closingBalance = mergedLines.reduce((s, l) => s + l.debit - l.credit, 0);
+    return {
+      data: {
+        ...qbAdapted,
+        lines: mergedLines,
+        closingBalance,
+      } as Statement,
+      isLoading: qbLoading || localStatement.isLoading,
+      error: null,
+    } as { data: Statement | null; isLoading: boolean; error: Error | null };
+  }, [useQbSource, qbStatement, qbLoading, localStatement, asOf, currentCompanyId]);
+
+  // Counterparty options shown in the dropdown — QB list for EC4,
+  // local list for everyone else.
+  const counterpartyOptions = useMemo(() => {
+    if (useQbSource && qbStatus === 'connected') {
+      return qbCustomers.map(c => ({
+        value: c.displayName,
+        label: c.displayName + (c.balance ? ` · ${fmtMoney(c.balance)} open` : ''),
+      }));
+    }
+    return (counterparties.data ?? []).map(c => ({
+      value: c.name,
+      label: `${c.name} · ${c.invoices} invoice${c.invoices === 1 ? '' : 's'} · ${fmtMoney(c.outstanding)}`,
+    }));
+  }, [useQbSource, qbStatus, qbCustomers, counterparties.data]);
 
   // ── QuickBooks pull-sync ───────────────────────────────────────
   async function syncFromQb() {
@@ -396,13 +455,7 @@ const StatementsV2: React.FC = () => {
               {(['AR', 'AP'] as StatementKind[]).map(k => (
                 <button
                   key={k}
-                  onClick={() => {
-                    setKind(k);
-                    setCounterpartyName('');
-                    // QB source covers AR only — flip back to local
-                    // when the user switches to AP.
-                    if (k === 'AP') setSource('local');
-                  }}
+                  onClick={() => { setKind(k); setCounterpartyName(''); }}
                   className="px-3 py-1 rounded-full text-[12px] font-medium transition-colors"
                   style={{
                     background: kind === k ? 'var(--b-teal-2)' : 'transparent',
@@ -415,33 +468,36 @@ const StatementsV2: React.FC = () => {
             </div>
           </div>
 
-          {/* Source toggle (only when QB connected + AR mode) */}
-          {kind === 'AR' && qbConnected && (
+          {/* Source badge — auto-merged for EC4, local-only elsewhere.
+              No user toggle; the choice is driven by company. */}
+          {useQbSource && (
             <div>
               <div className="text-[10.5px] uppercase tracking-[0.14em] mb-1.5" style={{ color: 'var(--b-text-mute)' }}>Source</div>
-              <div className="flex items-center gap-1 p-1 rounded-full" style={{ background: 'var(--b-surface-2)', border: '1px solid var(--b-line)' }}>
-                <button
-                  onClick={() => { setSource('local'); setCounterpartyName(''); }}
-                  title="Read invoices + payments from the ERP ledger (Supabase)"
-                  className="px-3 py-1 rounded-full text-[12px] font-medium transition-colors inline-flex items-center gap-1.5"
-                  style={{
-                    background: source === 'local' ? 'var(--b-teal-2)' : 'transparent',
-                    color: source === 'local' ? 'white' : 'var(--b-text-mute)',
-                  }}
-                >
-                  <Database size={11} /> Local
-                </button>
-                <button
-                  onClick={() => { setSource('qb'); setCounterpartyName(''); }}
-                  title="Pull customers and statements live from QuickBooks (same source as Customer Balances)"
-                  className="px-3 py-1 rounded-full text-[12px] font-medium transition-colors inline-flex items-center gap-1.5"
-                  style={{
-                    background: source === 'qb' ? 'var(--b-teal-2)' : 'transparent',
-                    color: source === 'qb' ? 'white' : 'var(--b-text-mute)',
-                  }}
-                >
-                  <Cloud size={11} /> QuickBooks
-                </button>
+              <div
+                title={
+                  qbStatus === 'connected'
+                    ? 'EC4 → merging QuickBooks invoices/payments with local ERP payments.'
+                    : qbStatus === 'disconnected'
+                      ? 'QuickBooks not connected for this company. Showing local payments only.'
+                      : qbStatus === 'error'
+                        ? `QuickBooks error: ${qbStatusError ?? 'unknown'}. Showing local payments only.`
+                        : 'Checking QuickBooks connection…'
+                }
+                className="inline-flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-full"
+                style={{
+                  background: 'var(--b-surface-2)',
+                  border: '1px solid var(--b-line)',
+                  color: qbStatus === 'connected' ? 'var(--b-emerald)'
+                    : qbStatus === 'error' ? 'var(--b-rose)'
+                    : 'var(--b-text-mute)',
+                }}
+              >
+                <Cloud size={11} />
+                {qbStatus === 'connected' ? 'QuickBooks + Local'
+                  : qbStatus === 'unknown' ? 'Checking QB…'
+                  : qbStatus === 'disconnected' ? 'QB disconnected'
+                  : 'QB error'}
+                <Database size={11} />
               </div>
             </div>
           )}
@@ -455,26 +511,18 @@ const StatementsV2: React.FC = () => {
               <select
                 value={counterpartyName}
                 onChange={e => setCounterpartyName(e.target.value)}
-                disabled={source === 'qb' && qbLoadingCustomers}
+                disabled={useQbSource && qbStatus === 'unknown'}
                 className="block w-full appearance-none rounded-[10px] px-3 py-2 pr-8 text-[13px]"
                 style={{ background: 'var(--b-surface-2)', border: '1px solid var(--b-line)', color: 'var(--b-text)' }}
               >
                 <option value="">
-                  {source === 'qb' && qbLoadingCustomers
+                  {useQbSource && qbStatus === 'unknown'
                     ? 'Loading QB customers…'
                     : '— pick one —'}
                 </option>
-                {source === 'qb'
-                  ? qbCustomers.map(c => (
-                      <option key={c.id} value={c.displayName}>
-                        {c.displayName}{c.balance ? ` · ${fmtMoney(c.balance)} open` : ''}
-                      </option>
-                    ))
-                  : (counterparties.data ?? []).map(c => (
-                      <option key={c.name} value={c.name}>
-                        {c.name} · {c.invoices} invoice{c.invoices === 1 ? '' : 's'} · {fmtMoney(c.outstanding)}
-                      </option>
-                    ))}
+                {counterpartyOptions.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
               <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--b-text-mute)' }} />
             </div>
