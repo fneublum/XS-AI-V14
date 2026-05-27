@@ -104,7 +104,7 @@ const buildColumns = (
         </span>
       );
     } },
-  { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true, width: '45px',
+  { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true, width: '36px',
     value: r => r.totalAmount,
     cell: r => fmtMoney(r.totalAmount, r.currency) },
   { id: 'date', header: 'Issued', align: 'right', sortable: true, width: '90px',
