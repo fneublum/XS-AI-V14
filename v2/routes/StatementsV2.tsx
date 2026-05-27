@@ -13,10 +13,16 @@
 // already powers the other V14 statement PDFs (Trading Follow Up,
 // Logistics Follow Up).
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { FileText, Download, ChevronDown, RefreshCw, Database, Cloud } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  FileText, Download, ChevronDown, RefreshCw, Database, Cloud,
+  Mail, Loader2, Send, X as XIcon, FileSpreadsheet,
+} from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
+import * as Dialog from '@radix-ui/react-dialog';
+import { sendEmail } from '../../services/emailService';
 import {
   useStatement, useCounterpartyBalances,
   type StatementKind, type Statement, type StatementLine,
@@ -378,10 +384,28 @@ const StatementsV2: React.FC = () => {
     }
   }
 
+  // ── Email draft state ────────────────────────────────────────────
+  // Same EmailDraft + sendEmail flow Customer Balances uses — routes
+  // through the signed-in Outlook / Gmail account via emailService.
+  interface EmailDraft {
+    to: string;
+    cc: string;
+    subject: string;
+    htmlBody: string;
+    attachments: { name: string; contentBytes: string; contentType: string }[];
+  }
+  const [emailPreviewOpen, setEmailPreviewOpen] = useState(false);
+  const [emailDraft, setEmailDraft] = useState<EmailDraft>({
+    to: '', cc: '', subject: '', htmlBody: '', attachments: [],
+  });
+  const [sendingEmail, setSendingEmail] = useState(false);
+
   // ── PDF export ───────────────────────────────────────────────────
-  function exportPdf() {
+  // Builds the jsPDF document. Returned (instead of just `.save()`'d)
+  // so the email-draft path can attach it as base64 without rebuilding.
+  function buildStatementPdf(): { doc: jsPDF; filename: string } | null {
     const s = statement.data;
-    if (!s || !s.counterpartyName) return;
+    if (!s || !s.counterpartyName) return null;
     const doc = new jsPDF({ unit: 'pt', format: 'letter' });
     const pageW = doc.internal.pageSize.getWidth();
 
@@ -457,8 +481,140 @@ const StatementsV2: React.FC = () => {
     doc.text(`Generated ${new Date().toLocaleString()} · ${currentCompany?.name ?? ''}`, 40, pageH - 30);
 
     const safe = s.counterpartyName.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-    doc.save(`statement-${kind.toLowerCase()}-${safe}-${asOf}.pdf`);
+    const filename = `statement-${kind.toLowerCase()}-${safe}-${asOf}.pdf`;
+    return { doc, filename };
   }
+
+  function exportPdf() {
+    const built = buildStatementPdf();
+    if (!built) return;
+    built.doc.save(built.filename);
+  }
+
+  // ── XLSX export ──────────────────────────────────────────────────
+  // Mirrors the FinanceBalancesV2 layout: title rows + aging row +
+  // header + line items + totals. Column widths matched to PDF so
+  // the artifact reads the same in either format.
+  function exportXlsx() {
+    const s = statement.data;
+    if (!s || !s.counterpartyName) return;
+    const titleRows = [
+      [`${kind === 'AR' ? 'Customer' : 'Supplier'} Statement`],
+      [s.counterpartyName],
+      [`From ${currentCompany?.name ?? currentCompanyId} · As of ${fmtDate(s.asOf)}`],
+      [],
+    ];
+    const agingRows = [
+      ['0-30 days', '31-60 days', '61-90 days', '90+ days', 'Total outstanding'],
+      [
+        s.aging.bucket_0_30, s.aging.bucket_31_60, s.aging.bucket_61_90,
+        s.aging.bucket_90_plus, s.aging.total,
+      ],
+      [],
+    ];
+    const header = ['Date', 'Description', 'Debit', 'Credit', 'Balance'];
+    let running = 0;
+    const body = s.lines.map(l => {
+      running += l.debit - l.credit;
+      return [
+        l.date,
+        l.kind === 'INVOICE' ? `Invoice ${l.ref}` : `Payment · ${l.ref}`,
+        l.debit > 0 ? l.debit : '',
+        l.credit > 0 ? l.credit : '',
+        running,
+      ];
+    });
+    const totals = ['', 'Closing balance', '', '', s.closingBalance];
+    const aoa = [...titleRows, ...agingRows, header, ...body, totals];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [
+      { wch: 12 }, { wch: 36 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Statement');
+    const safe = s.counterpartyName.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
+    const filename = `statement-${kind.toLowerCase()}-${safe}-${asOf}.xlsx`;
+    XLSX.writeFile(wb, filename);
+    toast.push({ kind: 'success', title: 'Statement downloaded', description: filename });
+  }
+
+  // ── Open email preview modal with the PDF pre-attached ──────────
+  const openEmailPreview = useCallback(() => {
+    const built = buildStatementPdf();
+    if (!built) return;
+    const s = statement.data!;
+    const base64 = built.doc.output('datauristring').split(',')[1];
+
+    // Pull a default recipient from the QB customer record when in
+    // EC4 + QB-connected mode (primaryEmail is the QB-stored email).
+    const qbMatch = qbCustomers.find(c => c.displayName === s.counterpartyName);
+    const toAddress = qbMatch?.primaryEmail ?? '';
+
+    const periodLabel = `As of ${fmtDate(s.asOf)}`;
+    const body =
+      `Dear ${s.counterpartyName},\n\n` +
+      `Please find attached your account statement.\n\n` +
+      `${periodLabel}\n` +
+      `Closing balance: ${fmtMoney(s.closingBalance)}\n\n` +
+      `If you have any questions about your account, please don't hesitate to reach out.\n\n` +
+      `Best regards`;
+    setEmailDraft({
+      to: toAddress,
+      cc: '',
+      subject: `${kind === 'AR' ? 'Customer' : 'Supplier'} Statement — ${s.counterpartyName} (${periodLabel})`,
+      htmlBody: body,
+      attachments: [{
+        name: built.filename,
+        contentBytes: base64,
+        contentType: 'application/pdf',
+      }],
+    });
+    setEmailPreviewOpen(true);
+  }, [statement.data, kind, qbCustomers, currentCompany, currentCompanyId, asOf]);
+
+  const sendEmailFromPreview = useCallback(async () => {
+    if (!emailDraft.to) {
+      toast.push({ kind: 'error', title: 'Recipient required', description: 'Enter a recipient email address.' });
+      return;
+    }
+    setSendingEmail(true);
+    try {
+      const toList = emailDraft.to.split(/[;,]/).map(e => e.trim()).filter(Boolean);
+      const ccList = emailDraft.cc.split(/[;,]/).map(e => e.trim()).filter(Boolean);
+      if (toList.length === 0) {
+        toast.push({ kind: 'error', title: 'Invalid recipient', description: 'Enter a valid recipient email address.' });
+        setSendingEmail(false);
+        return;
+      }
+      const escaped = emailDraft.htmlBody.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const htmlBody =
+        `<div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto;">` +
+        `<h2 style="color: #14b8a6; margin-bottom: 8px;">${emailDraft.subject}</h2>` +
+        `<div style="white-space: pre-wrap; line-height: 1.6; color:#0f172a;">${escaped}</div>` +
+        `</div>`;
+      const result = await sendEmail({
+        to: toList,
+        cc: ccList.length > 0 ? ccList : undefined,
+        subject: emailDraft.subject,
+        htmlBody,
+        attachments: emailDraft.attachments,
+      });
+      if (result.success) {
+        toast.push({ kind: 'success', title: 'Email sent', description: `Sent via ${result.provider}` });
+        setTimeout(() => setEmailPreviewOpen(false), 800);
+      } else {
+        toast.push({ kind: 'error', title: 'Email failed', description: result.message });
+      }
+    } catch (err) {
+      toast.push({
+        kind: 'error',
+        title: 'Email failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setSendingEmail(false);
+    }
+  }, [emailDraft, toast]);
 
   return (
     <div className="bento-scope p-4 space-y-4" style={{ maxWidth: '1280px' }}>
@@ -582,15 +738,39 @@ const StatementsV2: React.FC = () => {
               the local transactions table) still matters for the
               Receivables list, drawer history, and AR aging view. */}
 
-          {/* Export */}
-          <button
-            onClick={exportPdf}
-            disabled={!statement.data || !counterpartyName}
-            className="b-display flex items-center gap-1.5 text-[12.5px] font-semibold px-4 py-2 rounded-full disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            style={{ background: 'var(--b-teal-2)', color: 'white' }}
-          >
-            <Download size={13} /> Export PDF
-          </button>
+          {/* Exports — PDF / XLSX / Email. Mirrors the Customer
+              Balances action cluster so finance ops have one mental
+              model across the two screens. All three are disabled
+              when no statement is loaded. */}
+          <div className="flex items-center gap-2 ml-auto">
+            <button
+              onClick={exportPdf}
+              disabled={!statement.data || !counterpartyName}
+              title="Download statement as PDF"
+              className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ background: 'var(--b-surface-2)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}
+            >
+              <Download size={12} /> Download PDF
+            </button>
+            <button
+              onClick={exportXlsx}
+              disabled={!statement.data || !counterpartyName}
+              title="Download statement as Excel spreadsheet"
+              className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ background: 'var(--b-surface-2)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}
+            >
+              <FileSpreadsheet size={12} /> Download XLSX
+            </button>
+            <button
+              onClick={openEmailPreview}
+              disabled={!statement.data || !counterpartyName}
+              title="Email statement to the customer (PDF attached)"
+              className="b-display flex items-center gap-1.5 text-[12.5px] font-semibold px-4 py-2 rounded-full disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              style={{ background: 'var(--b-teal-2)', color: 'white' }}
+            >
+              <Mail size={13} /> Email
+            </button>
+          </div>
         </div>
       </div>
 
@@ -686,6 +866,104 @@ const StatementsV2: React.FC = () => {
           </div>
         </>
       ) : null}
+
+      {/* ── Email preview modal ───────────────────────────────────────
+          Mirrors the layout/behaviour of the Customer Balances email
+          modal so finance ops see the same UX in both places. PDF is
+          attached automatically; the user reviews the To / CC /
+          Subject / Body before sending via the signed-in Outlook /
+          Gmail account (emailService picks the provider). */}
+      <Dialog.Root open={emailPreviewOpen} onOpenChange={setEmailPreviewOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px]" />
+          <Dialog.Content className="fixed left-1/2 top-[7%] -translate-x-1/2 z-50 w-[min(96vw,720px)] rounded-md border border-[#1f1f1f] bg-[#0a0a0a] shadow-[0_16px_48px_rgba(0,0,0,0.6)] flex flex-col max-h-[86vh]">
+            <div className="px-5 py-4 border-b border-[#1f1f1f] flex items-start gap-3">
+              <div className="p-1.5 rounded-md bg-teal-600/10 text-teal-300">
+                <Mail size={14} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <Dialog.Title className="text-[14px] font-semibold text-slate-100">
+                  Email {kind === 'AR' ? 'customer' : 'supplier'} statement
+                </Dialog.Title>
+                <Dialog.Description className="text-[12px] text-slate-500 mt-0.5">
+                  Review and send — routes through your signed-in Outlook / Gmail. PDF is attached.
+                </Dialog.Description>
+              </div>
+              <Dialog.Close
+                aria-label="Close"
+                className="text-slate-500 hover:text-slate-100 transition-colors p-1 -m-1"
+              >
+                <XIcon size={14} />
+              </Dialog.Close>
+            </div>
+
+            <div className="px-5 py-4 overflow-y-auto space-y-3">
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-1">To</label>
+                <input
+                  type="text"
+                  value={emailDraft.to}
+                  onChange={e => setEmailDraft(d => ({ ...d, to: e.target.value }))}
+                  placeholder="recipient@example.com"
+                  className="w-full px-2.5 py-1.5 text-[12.5px] bg-[#0f0f0f] border border-[#1f1f1f] rounded-md text-slate-200 focus:outline-none focus:border-teal-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-1">CC</label>
+                <input
+                  type="text"
+                  value={emailDraft.cc}
+                  onChange={e => setEmailDraft(d => ({ ...d, cc: e.target.value }))}
+                  placeholder="Optional — comma or semicolon separated"
+                  className="w-full px-2.5 py-1.5 text-[12.5px] bg-[#0f0f0f] border border-[#1f1f1f] rounded-md text-slate-200 focus:outline-none focus:border-teal-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-1">Subject</label>
+                <input
+                  type="text"
+                  value={emailDraft.subject}
+                  onChange={e => setEmailDraft(d => ({ ...d, subject: e.target.value }))}
+                  className="w-full px-2.5 py-1.5 text-[12.5px] bg-[#0f0f0f] border border-[#1f1f1f] rounded-md text-slate-200 focus:outline-none focus:border-teal-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-slate-500 font-medium block mb-1">Message</label>
+                <textarea
+                  value={emailDraft.htmlBody}
+                  onChange={e => setEmailDraft(d => ({ ...d, htmlBody: e.target.value }))}
+                  rows={10}
+                  className="w-full px-2.5 py-1.5 text-[12.5px] bg-[#0f0f0f] border border-[#1f1f1f] rounded-md text-slate-200 focus:outline-none focus:border-teal-500 resize-y"
+                />
+              </div>
+              {emailDraft.attachments.length > 0 && (
+                <div className="flex items-center gap-2 text-[11.5px] text-slate-400 border border-[#1f1f1f] rounded-md bg-[#0f0f0f] px-3 py-2">
+                  <FileText size={12} className="text-teal-300" />
+                  <span className="font-mono truncate">{emailDraft.attachments[0].name}</span>
+                  <span className="ml-auto text-slate-600">PDF attached</span>
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t border-[#1f1f1f] flex items-center gap-2 justify-end">
+              <Dialog.Close className="px-3 py-1.5 text-[12px] text-slate-400 hover:text-slate-100 rounded-md hover:bg-[#141414] transition-colors">
+                Cancel
+              </Dialog.Close>
+              <button
+                type="button"
+                onClick={sendEmailFromPreview}
+                disabled={sendingEmail}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors bg-teal-600 text-white hover:bg-teal-500 disabled:bg-[#141414] disabled:text-slate-600"
+              >
+                {sendingEmail
+                  ? <Loader2 size={12} className="animate-spin" />
+                  : <Send size={12} />}
+                {sendingEmail ? 'Sending…' : 'Send email'}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 };
