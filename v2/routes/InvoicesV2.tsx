@@ -69,6 +69,13 @@ const buildColumns = (
         {r.invoiceNumber}
       </span>
     ) },
+  { id: 'date', header: 'Issued', align: 'right', sortable: true, width: '90px',
+    value: r => r.invoiceDate ?? '',
+    cell: r => (
+      <span className="text-slate-500 font-mono tabular-nums text-[11px]">
+        {fmtDate(r.invoiceDate)}
+      </span>
+    ) },
   { id: 'sold', header: 'Sold to', sortable: true, filterable: true, width: '126px',
     value: r => r.soldTo ?? r.billToName ?? '',
     cell: r => {
@@ -107,13 +114,6 @@ const buildColumns = (
   { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true, width: '36px',
     value: r => r.totalAmount,
     cell: r => fmtMoney(r.totalAmount, r.currency) },
-  { id: 'date', header: 'Issued', align: 'right', sortable: true, width: '90px',
-    value: r => r.invoiceDate ?? '',
-    cell: r => (
-      <span className="text-slate-500 font-mono tabular-nums text-[11px]">
-        {fmtDate(r.invoiceDate)}
-      </span>
-    ) },
 ];
 
 // The row action now opens the native v2 Delivery Docs modal instead of
