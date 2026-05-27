@@ -76,7 +76,7 @@ const buildColumns = (
         {fmtDate(r.invoiceDate)}
       </span>
     ) },
-  { id: 'sold', header: 'Sold to', sortable: true, filterable: true, width: '126px',
+  { id: 'sold', header: 'Sold to', sortable: true, filterable: true, width: '97px',
     value: r => r.soldTo ?? r.billToName ?? '',
     cell: r => {
       const full = r.soldTo ?? r.billToName;
