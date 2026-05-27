@@ -140,12 +140,14 @@ export const packingListFields: FieldDef[] = [
     source: {
       table: 'customers', valueColumn: 'name', labelColumn: 'name',
       secondaryColumn: 'country', scopeByCompany: true,
+      sharedWithColumn: 'sharedWith',
     } },
   { key: 'supplier',          label: 'Supplier' },
   { key: 'consignee', label: 'Consignee',
     source: {
       table: 'customers', valueColumn: 'name', labelColumn: 'name',
       secondaryColumn: 'country', scopeByCompany: true,
+      sharedWithColumn: 'sharedWith',
     } },
   { key: 'carrier', label: 'Carrier',
     source: {

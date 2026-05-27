@@ -31,6 +31,12 @@ export interface FieldSource {
   /** Column to scope on when `scopeByCompany` is true. Defaults to
    *  `companyId`. Use `company_id` for snake_case tables. */
   companyIdColumn?: string;
+  /** Optional array column that lists additional companies which can
+   *  see this row (cross-company sharing). When set, the scope query
+   *  also matches rows whose `sharedWithColumn` array contains the
+   *  current companyId. Used for the `customers.sharedWith` pattern
+   *  where a customer of company A can be made visible to company B. */
+  sharedWithColumn?: string;
   /**
    * After the user picks a row, write these additional source-row
    * columns into sibling FieldDef keys on the form. Lets a single
@@ -118,7 +124,19 @@ export const SupabaseSelectField: React.FC<Props> = ({
         .limit(source.limit ?? 500);
       if (source.scopeByCompany && currentCompanyId && currentCompanyId !== 'ALL') {
         const col = source.companyIdColumn ?? 'companyId';
-        q = q.or(`${col}.eq.${currentCompanyId},${col}.eq.ALL`) as typeof q;
+        // Default: match this company OR untagged ALL legacy rows.
+        // When sharedWithColumn is set (or implicit for the customers
+        // table — its sharedWith array column is the cross-company
+        // sharing mechanism), also match rows that have been shared
+        // with the current company. Mirrors v2/queries/useCustomers.ts
+        // so the picker and the listing page agree on what's visible.
+        const sharedCol = source.sharedWithColumn
+          ?? (source.table === 'customers' ? 'sharedWith' : undefined);
+        let orClause = `${col}.eq.${currentCompanyId},${col}.eq.ALL`;
+        if (sharedCol) {
+          orClause += `,"${sharedCol}".cs.{${currentCompanyId}}`;
+        }
+        q = q.or(orClause) as typeof q;
       }
       if (source.equalsFilter) {
         for (const [col, val] of Object.entries(source.equalsFilter)) {
