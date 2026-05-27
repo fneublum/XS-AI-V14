@@ -285,11 +285,114 @@ export function useCreateTransaction() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['transactions_for_target'] });
       qc.invalidateQueries({ queryKey: ['ar_invoice_balances'] });
       qc.invalidateQueries({ queryKey: ['ap_supplier_invoice_balances'] });
       qc.invalidateQueries({ queryKey: ['ap_po_balances'] });
     },
   });
+}
+
+/** Pull every non-voided transaction that has an allocation against a
+ *  given target row (AR invoice, AP supplier invoice, or PO). Used by
+ *  the Record-receipt / Record-payment drawer to show the history of
+ *  payments already booked against the row, so the user can view the
+ *  receipt file or delete a mistaken entry without leaving the drawer.
+ *  Pass exactly ONE of the target id options. */
+export interface UseTxnsForTargetOpts {
+  invoiceId?: string;          // AR
+  supplierInvoiceId?: string;  // AP bill
+  purchaseOrderId?: string;    // AP PO advance
+}
+
+export function useTransactionsForTarget(opts: UseTxnsForTargetOpts) {
+  const { currentCompanyId } = useCompany();
+  const targetKey = opts.invoiceId
+    ?? opts.supplierInvoiceId
+    ?? opts.purchaseOrderId
+    ?? '';
+  const enabled = !!targetKey;
+  return useSupabaseQuery<Transaction[]>(
+    ['transactions_for_target', currentCompanyId, targetKey],
+    async () => {
+      if (!enabled) return [];
+      const supabase = getSupabaseClient();
+      // Step 1 — find the allocation rows pointing at this target.
+      let allocQ = supabase
+        .from('transaction_allocations')
+        .select('*');
+      if (opts.invoiceId)          allocQ = allocQ.eq('"invoiceId"', opts.invoiceId) as typeof allocQ;
+      if (opts.supplierInvoiceId)  allocQ = allocQ.eq('"supplierInvoiceId"', opts.supplierInvoiceId) as typeof allocQ;
+      if (opts.purchaseOrderId)    allocQ = allocQ.eq('"purchaseOrderId"', opts.purchaseOrderId) as typeof allocQ;
+      const { data: allocs, error: allocErr } = await allocQ;
+      if (allocErr) throw new Error(allocErr.message);
+      const txnIds = Array.from(new Set(((allocs as RawAlloc[] | null) ?? []).map(a => a.transactionId)));
+      if (txnIds.length === 0) return [];
+
+      // Step 2 — fetch the transactions themselves.
+      let txnQ = scopeByCompany(
+        supabase.from('transactions')
+          .select('*')
+          .neq('status', 'VOIDED')
+          .in('id', txnIds)
+          .order('"txnDate"', { ascending: false })
+          .order('"createdAt"', { ascending: false }),
+        currentCompanyId,
+      );
+      const { data: txns, error: txnErr } = await txnQ;
+      if (txnErr) throw new Error(txnErr.message);
+
+      // Hydrate allocations for these txns (re-fetch by txn ids so
+      // we include all allocations, not just the one matching the target).
+      const { data: allAllocs, error: allErr } = await supabase
+        .from('transaction_allocations')
+        .select('*')
+        .in('"transactionId"', txnIds);
+      if (allErr) throw new Error(allErr.message);
+      const byTxn = new Map<string, Allocation[]>();
+      for (const a of (allAllocs as RawAlloc[] | null) ?? []) {
+        const arr = byTxn.get(a.transactionId) ?? [];
+        arr.push({
+          id: a.id,
+          transactionId: a.transactionId,
+          invoiceId: a.invoiceId,
+          supplierInvoiceId: a.supplierInvoiceId,
+          purchaseOrderId: a.purchaseOrderId,
+          amount: Number(a.amount) || 0,
+          memo: a.memo,
+          createdAt: a.createdAt,
+        });
+        byTxn.set(a.transactionId, arr);
+      }
+      return (txns as RawTxn[]).map(t => ({
+        id: t.id,
+        companyId: t.companyId,
+        source: t.source,
+        kind: t.kind,
+        txnDate: t.txnDate,
+        amount: Number(t.amount) || 0,
+        currency: t.currency ?? 'USD',
+        method: t.method,
+        counterpartyType: t.counterpartyType,
+        counterpartyId: t.counterpartyId,
+        counterpartyName: t.counterpartyName,
+        reference: t.reference,
+        memo: t.memo,
+        status: t.status,
+        receiptUrl: t.receiptUrl,
+        ocrConfidence: t.ocrConfidence != null ? Number(t.ocrConfidence) : null,
+        ai_status: (t.ai_status === 'ai_draft' || t.ai_status === 'rejected' || t.ai_status === 'approved')
+          ? t.ai_status as Transaction['ai_status']
+          : null,
+        qbId: t.qbId,
+        qbSyncedAt: t.qbSyncedAt,
+        createdAt: t.createdAt,
+        createdBy: t.createdBy,
+        updatedAt: t.updatedAt,
+        allocations: byTxn.get(t.id) ?? [],
+      }));
+    },
+  );
 }
 
 /** Soft-delete (set status = 'VOIDED'). Allocations stay for audit. */
@@ -305,6 +408,7 @@ export function useVoidTransaction() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['transactions_for_target'] });
       qc.invalidateQueries({ queryKey: ['ar_invoice_balances'] });
       qc.invalidateQueries({ queryKey: ['ap_supplier_invoice_balances'] });
       qc.invalidateQueries({ queryKey: ['ap_po_balances'] });
