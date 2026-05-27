@@ -764,9 +764,35 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
                 <Trash2 size={13} />
               </button>
               {i === 0 && (a.invoiceId || a.supplierInvoiceId || a.purchaseOrderId) && (
-                <div className="col-span-3 text-[10.5px] text-slate-500 -mt-1 pl-1">
-                  Locked — pre-filled from row. Add more lines below to split across additional {mode === 'receipt' ? 'invoices' : 'POs'}.
-                </div>
+                (() => {
+                  // Surface the partial-vs-full status of THIS
+                  // allocation inline so the user sees at a glance
+                  // whether the receipt fully settles the invoice or
+                  // leaves a balance. `originalOutstanding` was
+                  // captured when the drawer opened, so the hint
+                  // doesn't drift as the user edits.
+                  const thisAlloc = Number(a.amount) || 0;
+                  const remaining = originalOutstanding - thisAlloc;
+                  const isPartial = thisAlloc > 0 && remaining > 0.005;
+                  const isFull = thisAlloc > 0 && Math.abs(remaining) < 0.005;
+                  return (
+                    <div className={
+                      'col-span-3 text-[10.5px] -mt-1 pl-1 ' +
+                      (isPartial ? 'text-amber-400' : isFull ? 'text-emerald-400' : 'text-slate-500')
+                    }>
+                      {isPartial ? (
+                        <>
+                          Partial {mode === 'receipt' ? 'payment' : 'payment'} —
+                          {' '}{fmtMoney(remaining)} will remain on the {mode === 'receipt' ? 'invoice' : 'bill'} after this {mode === 'receipt' ? 'receipt' : 'payment'}.
+                        </>
+                      ) : isFull ? (
+                        <>Fully settles the {mode === 'receipt' ? 'invoice' : 'bill'}.</>
+                      ) : (
+                        <>Locked — pre-filled from row. Add more lines below to split across additional {mode === 'receipt' ? 'invoices' : 'POs'}.</>
+                      )}
+                    </div>
+                  );
+                })()
               )}
             </div>
           ))}
@@ -780,37 +806,87 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
             </button>
           )}
 
-          {/* Allocation summary */}
-          {allocations.length > 0 && (
-            <div className="mt-3 rounded border border-[#1f1f1f] bg-[#0f0f0f] p-2.5 text-[11.5px]">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500">Total payment</span>
-                <span className="text-slate-200 font-mono tabular-nums">{fmtMoney(amountNum)}</span>
+          {/* Allocation summary
+              The status row distinguishes three orthogonal questions:
+              1. Is the receipt fully attributed to invoices?
+                 (allocated == total payment)  → handled by `unallocated`
+              2. If a single invoice is in scope, does this payment
+                 fully settle it, or leave a balance?  → handled by
+                 `invoiceRemaining` (only meaningful when a row-locked
+                 allocation is in play).
+              Earlier the only readout was (1), so a $8,100 receipt on
+              a $22K invoice read "Fully allocated" (true) without
+              hinting that $14K still owed on the invoice. */}
+          {allocations.length > 0 && (() => {
+            const fullyAllocated = Math.abs(unallocated) < 0.001;
+            const overAllocated  = unallocated < -0.001;
+            const lockedAlloc = allocations.length === 1
+              ? allocations[0]
+              : null;
+            const lockedToInvoice = lockedAlloc
+              && (lockedAlloc.invoiceId || lockedAlloc.supplierInvoiceId || lockedAlloc.purchaseOrderId)
+              ? Number(lockedAlloc.amount) || 0
+              : 0;
+            const invoiceRemaining = lockedToInvoice > 0 && originalOutstanding > 0
+              ? Math.max(0, originalOutstanding - lockedToInvoice)
+              : 0;
+            const isPartialOnInvoice = lockedToInvoice > 0
+              && invoiceRemaining > 0.005;
+
+            // Headline status (line 1 of the summary footer):
+            //   Over-allocated > Credit on account > Partial payment > Fully settles invoice > Fully allocated
+            let statusText: string;
+            let statusColor: string;
+            if (overAllocated) {
+              statusText = `Over-allocated · ${fmtMoney(Math.abs(unallocated))}`;
+              statusColor = 'text-red-400';
+            } else if (!fullyAllocated) {
+              statusText = 'Credit on account';
+              statusColor = 'text-amber-400';
+            } else if (isPartialOnInvoice) {
+              statusText = `Partial ${mode === 'receipt' ? 'receipt' : 'payment'}`;
+              statusColor = 'text-amber-400';
+            } else if (lockedToInvoice > 0) {
+              statusText = `Fully settles ${mode === 'receipt' ? 'invoice' : 'bill'}`;
+              statusColor = 'text-emerald-400';
+            } else {
+              statusText = 'Fully allocated';
+              statusColor = 'text-emerald-400';
+            }
+
+            return (
+              <div className="mt-3 rounded border border-[#1f1f1f] bg-[#0f0f0f] p-2.5 text-[11.5px]">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Total payment</span>
+                  <span className="text-slate-200 font-mono tabular-nums">{fmtMoney(amountNum)}</span>
+                </div>
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-slate-500">Allocated</span>
+                  <span className="text-slate-200 font-mono tabular-nums">{fmtMoney(allocatedSum)}</span>
+                </div>
+                <div className="flex items-center justify-between mt-1 pt-1 border-t border-[#1f1f1f]">
+                  <span className={`font-medium ${statusColor}`}>{statusText}</span>
+                  <span
+                    className={`font-mono tabular-nums font-medium ${
+                      fullyAllocated ? 'text-emerald-400'
+                        : overAllocated ? 'text-red-400'
+                        : 'text-amber-400'
+                    }`}
+                  >
+                    {fmtMoney(unallocated)}
+                  </span>
+                </div>
+                {isPartialOnInvoice && (
+                  <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-[#1f1f1f] text-amber-300/90">
+                    <span>
+                      {mode === 'receipt' ? 'Invoice' : 'Bill'} balance after this {mode === 'receipt' ? 'receipt' : 'payment'}
+                    </span>
+                    <span className="font-mono tabular-nums">{fmtMoney(invoiceRemaining)}</span>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center justify-between mt-1">
-                <span className="text-slate-500">Allocated</span>
-                <span className="text-slate-200 font-mono tabular-nums">{fmtMoney(allocatedSum)}</span>
-              </div>
-              <div className="flex items-center justify-between mt-1 pt-1 border-t border-[#1f1f1f]">
-                <span className="text-slate-400 font-medium">
-                  {unallocated > 0.001
-                    ? `Credit on account`
-                    : unallocated < -0.001
-                      ? `Over-allocated · ${fmtMoney(Math.abs(unallocated))}`
-                      : 'Fully allocated'}
-                </span>
-                <span
-                  className={`font-mono tabular-nums font-medium ${
-                    Math.abs(unallocated) < 0.001 ? 'text-emerald-400'
-                      : unallocated < 0 ? 'text-red-400'
-                      : 'text-amber-400'
-                  }`}
-                >
-                  {fmtMoney(unallocated)}
-                </span>
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Memo */}
