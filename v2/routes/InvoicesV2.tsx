@@ -54,7 +54,7 @@ const buildColumns = (
   termsCodeByDescription: Map<string, string>,
   etdByBookingNumber: Map<string, string | null>,
 ): DataTableColumn<Invoice>[] => [
-  { id: 'inv', header: 'Invoice', mono: true, sortable: true, filterable: true, width: '90px',
+  { id: 'inv', header: 'Invoice', mono: true, sortable: true, filterable: true, width: '110px',
     value: r => r.invoiceNumber,
     cell: r => (
       <span className="inline-flex items-center gap-1.5">
@@ -70,18 +70,19 @@ const buildColumns = (
       </span>
     ) },
   { id: 'sold', header: 'Sold to', sortable: true, filterable: true,
+    // No width — this is the flex column that absorbs leftover space.
     value: r => r.soldTo ?? r.billToName ?? '',
     cell: r => {
       const full = r.soldTo ?? r.billToName;
       return <span className="text-slate-100" title={tooltipName(full)}>{shortName(full)}</span>;
     } },
-  { id: 'so', header: 'SO', mono: true, sortable: true, filterable: true,
+  { id: 'so', header: 'SO', mono: true, sortable: true, filterable: true, width: '120px',
     value: r => r.soNumber ?? '',
     cell: r => <span className="text-slate-500">{r.soNumber ?? '—'}</span> },
-  { id: 'incoterm', header: 'Incoterm', sortable: true, filterable: true,
+  { id: 'incoterm', header: 'Incoterm', sortable: true, filterable: true, width: '90px',
     value: r => r.incoterm ?? '',
     cell: r => <span className="font-mono text-[11.5px] text-slate-400">{r.incoterm ?? '—'}</span> },
-  { id: 'terms', header: 'Terms', sortable: true, filterable: true,
+  { id: 'terms', header: 'Terms', sortable: true, filterable: true, width: '90px',
     // Lookup the reference row so the column shows the short code
     // (NET60, CAD, …) instead of the long description that is stored
     // on the invoice row.
@@ -90,10 +91,10 @@ const buildColumns = (
       const code = r.paymentTerms ? termsCodeByDescription.get(r.paymentTerms.trim()) : null;
       return <span className="font-mono text-[11.5px] text-slate-400" title={r.paymentTerms ?? ''}>{code ?? r.paymentTerms ?? '—'}</span>;
     } },
-  { id: 'pod', header: 'POD', mono: true, sortable: true, filterable: true,
+  { id: 'pod', header: 'POD', mono: true, sortable: true, filterable: true, width: '80px',
     value: r => podShort(r.pod),
     cell: r => <span className="font-mono text-[11.5px] text-slate-400" title={r.pod ?? ''}>{podShort(r.pod)}</span> },
-  { id: 'etd', header: 'ETD', align: 'right', sortable: true,
+  { id: 'etd', header: 'ETD', align: 'right', sortable: true, width: '80px',
     // Resolve via the booking row — invoices don't store ETD directly.
     value: r => (r.bookingNumber ? etdByBookingNumber.get(r.bookingNumber) ?? '' : ''),
     cell: r => {
@@ -104,10 +105,10 @@ const buildColumns = (
         </span>
       );
     } },
-  { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true,
+  { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true, width: '110px',
     value: r => r.totalAmount,
     cell: r => fmtMoney(r.totalAmount, r.currency) },
-  { id: 'date', header: 'Issued', align: 'right', sortable: true,
+  { id: 'date', header: 'Issued', align: 'right', sortable: true, width: '90px',
     value: r => r.invoiceDate ?? '',
     cell: r => (
       <span className="text-slate-500 font-mono tabular-nums text-[11px]">
