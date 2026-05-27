@@ -241,7 +241,18 @@ const InvoicesV2: React.FC = () => {
       return (data as PdfBankRow[] | null) ?? [];
     },
   );
-  const total = (invoices.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
+  // Only ERP-issued sales invoices belong on this surface — AI-extracted
+  // drafts (uploaded supplier PDFs, BLs, packing-lists in transit) sit
+  // in the `invoices` table with `ai_status = 'ai_draft'` because the
+  // OCR pipeline writes there first, but they are NOT sales invoices
+  // and shouldn't pollute the AR ledger view. Rejected drafts are also
+  // filtered out — they're trash. Approved (and untagged, the legacy
+  // default) are real sales invoices.
+  const ledgerInvoices = useMemo(
+    () => (invoices.data ?? []).filter(i => i.ai_status !== 'ai_draft' && i.ai_status !== 'rejected'),
+    [invoices.data],
+  );
+  const total = ledgerInvoices.reduce((s, r) => s + r.totalAmount, 0);
 
   // Track per-row Save state so the Save icon shows a spinner only for
   // the row the user clicked. Keyed by invoice.id.
@@ -417,7 +428,7 @@ const InvoicesV2: React.FC = () => {
         title="Invoices"
         subtitle={
           invoices.data
-            ? `${invoices.data.length} shown${total > 0 ? ` · ${fmtMoney(total)}` : ''}${search ? ` · "${search}"` : ''}`
+            ? `${ledgerInvoices.length} shown${total > 0 ? ` · ${fmtMoney(total)}` : ''}${search ? ` · "${search}"` : ''}`
             : 'Loading…'
         }
         headerAction={
@@ -438,7 +449,7 @@ const InvoicesV2: React.FC = () => {
         searchPlaceholder="Invoice # or customer"
         columns={columns}
         getRowId={r => r.id}
-        data={invoices.data}
+        data={invoices.data ? ledgerInvoices : undefined}
         isLoading={invoices.isLoading}
         error={invoices.error}
         onRetry={invoices.refetch}
