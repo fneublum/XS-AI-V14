@@ -802,21 +802,20 @@ const AgentSalesOrdersV2: React.FC = () => {
   }, [orders.data, rows]);
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex items-baseline justify-between mb-4 shrink-0">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
-              Agent Sales Orders
-            </h1>
-            <Badge variant="info">v2</Badge>
-          </div>
-          <p className="text-[13px] text-slate-500 mt-0.5">
-            Offer → Proposal → Proforma → Invoiced → Paid → Commission.
-            Click any order to walk the six-tab workflow.
-          </p>
-        </div>
+    <div className="bento-scope h-full flex flex-col p-4 gap-3">
+      <div className="flex items-center gap-3 flex-wrap shrink-0">
+        <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
+          Agent Sales Orders
+        </h1>
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
+              style={{ background: 'var(--b-teal-soft)', color: 'var(--b-teal-2)' }}>
+          v2
+        </span>
       </div>
+      <p className="text-[13px] -mt-1 shrink-0" style={{ color: 'var(--b-text-mute)' }}>
+        Offer → Proposal → Proforma → Invoiced → Paid → Commission.
+        Click any order to walk the six-tab workflow.
+      </p>
 
       <div className="grid grid-cols-4 gap-px bg-[#1f1f1f] border border-[#1f1f1f] rounded-md overflow-hidden mb-4 shrink-0">
         <Stat label="Orders"             value={orders.isLoading ? '—' : String(stats.orders)} />

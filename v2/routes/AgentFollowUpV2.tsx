@@ -103,31 +103,31 @@ const AgentFollowUpV2: React.FC<Props> = ({ navigate }) => {
   };
 
   return (
-    <div className="max-w-[1200px] space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <Users size={18} className="text-indigo-300" />
-            <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
-              Agent Follow Up
-            </h1>
-            <Badge variant="info">live</Badge>
-          </div>
-          <p className="text-[13px] text-slate-500 mt-1">
-            Per-agent rollups and outstanding commissions sourced from the agent sales pipeline.
-          </p>
-        </div>
-        <Button
-          variant="secondary"
-          size="sm"
+    <div className="bento-scope p-4 space-y-4" style={{ maxWidth: '1200px' }}>
+      <div className="flex items-center gap-3 flex-wrap">
+        <Users size={18} style={{ color: 'var(--b-c-gem)' }} />
+        <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
+          Agent Follow Up
+        </h1>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
+              style={{ background: 'var(--b-teal-soft)', color: 'var(--b-teal-2)' }}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+          live
+        </span>
+        <span className="ml-auto" />
+        <button
           onClick={() => orders.refetch()}
           disabled={orders.isFetching}
-          className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616] h-8 px-3 text-[12px]"
+          className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-full transition-colors disabled:opacity-50"
+          style={{ background: 'var(--b-surface)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}
         >
-          <RefreshCw size={13} className="mr-1.5" />
+          <RefreshCw size={12} />
           Refresh
-        </Button>
+        </button>
       </div>
+      <p className="text-[13px] -mt-2" style={{ color: 'var(--b-text-mute)' }}>
+        Per-agent rollups and outstanding commissions sourced from the agent sales pipeline.
+      </p>
 
       {/* KPI cards */}
       <StatGrid columns={4}>
