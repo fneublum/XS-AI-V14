@@ -13,16 +13,23 @@
 // already powers the other V14 statement PDFs (Trading Follow Up,
 // Logistics Follow Up).
 
-import React, { useMemo, useState } from 'react';
-import { FileText, Download, ChevronDown, RefreshCw } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { FileText, Download, ChevronDown, RefreshCw, Database, Cloud } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { useStatement, useCounterpartyBalances, type StatementKind } from '../queries/useStatement';
+import {
+  useStatement, useCounterpartyBalances,
+  type StatementKind, type Statement, type StatementLine,
+} from '../queries/useStatement';
 import { useCompany } from '../providers/CompanyProvider';
 import { useCompanies } from '../queries/useCompanies';
 import { useToast } from '../primitives/Toast';
 import { invokeEdgeFunction } from '../../services/edgeAuth';
 import { useQueryClient } from '@tanstack/react-query';
+import {
+  fetchQBCustomers, fetchCustomerStatement,
+  type QBCustomer, type QBCustomerStatement,
+} from '../../services/quickbooksService';
 
 function fmtMoney(n: number, c: string = 'USD'): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 2 }).format(n);
@@ -32,6 +39,85 @@ function fmtDate(d: string | null | undefined): string {
   if (!d) return '—';
   try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' }); }
   catch { return d; }
+}
+
+// ── QB ⇄ Statement adapter ──────────────────────────────────────────
+// Normalize a QBCustomerStatement into the local Statement shape so the
+// existing render path (aging tiles + ledger table + PDF export) works
+// regardless of source. Aging is computed client-side from the QB
+// invoices' dueDate / balance because the QB statement only returns
+// gross totals.
+function ageInDays(date: string, asOf: string): number {
+  const d = new Date(date);
+  const a = new Date(asOf);
+  const ms = a.getTime() - d.getTime();
+  return Math.floor(ms / 86_400_000);
+}
+
+function adaptQbStatementToLocal(
+  qb: QBCustomerStatement,
+  asOf: string,
+  companyId: string,
+): Statement {
+  const lines: StatementLine[] = [];
+  // Invoices → debit lines
+  for (const inv of qb.invoices) {
+    lines.push({
+      id: `qb-inv-${inv.id}`,
+      kind: 'INVOICE',
+      date: inv.txnDate,
+      ref: inv.docNumber || inv.id,
+      description: `Invoice ${inv.docNumber || inv.id}`,
+      debit: inv.totalAmount,
+      credit: 0,
+    });
+  }
+  // Receipts (grouped deposits) or raw payments → credit lines.
+  const receipts = qb.receipts && qb.receipts.length > 0
+    ? qb.receipts.map(r => ({
+        id: r.id, txnDate: r.txnDate, totalAmount: r.totalAmount,
+        ref: r.paymentRefNum || r.id, method: r.paymentMethod,
+        currency: r.currency,
+      }))
+    : qb.payments.map(p => ({
+        id: p.id, txnDate: p.txnDate, totalAmount: p.totalAmount,
+        ref: p.paymentRefNum || p.id, method: p.paymentMethod,
+        currency: p.currency,
+      }));
+  for (const r of receipts) {
+    lines.push({
+      id: `qb-pay-${r.id}`,
+      kind: 'PAYMENT',
+      date: r.txnDate,
+      ref: r.ref,
+      description: `Payment · ${r.method || 'QB'} · ${r.ref}`,
+      debit: 0,
+      credit: r.totalAmount,
+    });
+  }
+  lines.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  // Aging — bucket by invoice age (from txnDate) on the open balance.
+  const aging = { bucket_0_30: 0, bucket_31_60: 0, bucket_61_90: 0, bucket_90_plus: 0, total: 0 };
+  for (const inv of qb.invoices) {
+    const open = inv.balance;
+    if (open <= 0.005) continue;
+    const age = ageInDays(inv.txnDate, asOf);
+    if (age <= 30) aging.bucket_0_30 += open;
+    else if (age <= 60) aging.bucket_31_60 += open;
+    else if (age <= 90) aging.bucket_61_90 += open;
+    else aging.bucket_90_plus += open;
+    aging.total += open;
+  }
+  return {
+    kind: 'AR',
+    counterpartyName: qb.customerName,
+    companyId,
+    asOf,
+    lines,
+    openingBalance: 0,
+    closingBalance: qb.totals.outstandingBalance,
+    aging,
+  };
 }
 
 const StatementsV2: React.FC = () => {
@@ -50,8 +136,114 @@ const StatementsV2: React.FC = () => {
   const [asOf, setAsOf] = useState(today);
   const [qbSyncing, setQbSyncing] = useState(false);
 
+  // ── Source: Local ledger vs QuickBooks ────────────────────────────
+  // Mirrors the FinanceBalancesV2 pattern. When EC4 (which uses QB
+  // for source-of-truth) has the company connected, the user can flip
+  // to source='qb' to pull statements straight from QuickBooks the
+  // same way Customer Balances does. AP (supplier) statements always
+  // use the local ledger — QB's vendor side has a different shape
+  // and FinanceBalancesV2 doesn't cover it either.
+  const [source, setSource] = useState<'local' | 'qb'>('local');
+  const [qbConnected, setQbConnected] = useState<boolean | null>(null);
+  const [qbCustomers, setQbCustomers] = useState<QBCustomer[]>([]);
+  const [qbLoadingCustomers, setQbLoadingCustomers] = useState(false);
+  const [qbStatement, setQbStatement] = useState<QBCustomerStatement | null>(null);
+  const [qbLoadingStatement, setQbLoadingStatement] = useState(false);
+  const [qbError, setQbError] = useState<string | null>(null);
+
+  // Auto-detect QB connection on company change. Mirrors the load
+  // path in FinanceBalancesV2 — a 'not connected' / 'reconnect'
+  // error means the company isn't linked, anything else is a real
+  // failure we surface in the UI.
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentCompanyId || currentCompanyId === 'ALL') {
+      setQbConnected(false);
+      setQbCustomers([]);
+      return;
+    }
+    setQbLoadingCustomers(true);
+    setQbError(null);
+    (async () => {
+      try {
+        const list = await fetchQBCustomers(currentCompanyId, /* forceRefresh */ true);
+        if (cancelled) return;
+        list.sort((a, b) => a.displayName.localeCompare(b.displayName));
+        setQbCustomers(list);
+        setQbConnected(true);
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('not connected') || msg.includes('reconnect')) {
+          setQbConnected(false);
+        } else {
+          setQbConnected(true);
+          setQbError(msg);
+        }
+      } finally {
+        if (!cancelled) setQbLoadingCustomers(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentCompanyId]);
+
+  // Re-fetch the QB statement whenever the user picks a customer or
+  // changes the as-of date in QB source mode.
+  useEffect(() => {
+    let cancelled = false;
+    if (source !== 'qb') return;
+    if (!counterpartyName) { setQbStatement(null); return; }
+    if (!currentCompanyId || currentCompanyId === 'ALL') return;
+    setQbLoadingStatement(true);
+    setQbError(null);
+    (async () => {
+      try {
+        // No start date — pull everything up to asOf so the running
+        // balance is correct from inception. QB caps to roughly the
+        // last 5 years internally, which matches what FinanceBalances
+        // shows.
+        const result = await fetchCustomerStatement(
+          currentCompanyId,
+          counterpartyName,
+          undefined,
+          asOf,
+        );
+        if (cancelled) return;
+        setQbStatement(result);
+      } catch (err) {
+        if (cancelled) return;
+        setQbError(err instanceof Error ? err.message : String(err));
+        setQbStatement(null);
+      } finally {
+        if (!cancelled) setQbLoadingStatement(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [source, counterpartyName, asOf, currentCompanyId]);
+
   const counterparties = useCounterpartyBalances(kind);
-  const statement = useStatement({ kind, counterpartyName, asOf });
+  const localStatement = useStatement({
+    kind,
+    // Skip the local fetch entirely when sourcing from QB.
+    counterpartyName: source === 'qb' ? '' : counterpartyName,
+    asOf,
+  });
+
+  // Adapt the QB statement into the local shape so the rest of the
+  // render code is source-agnostic.
+  const statement = useMemo(() => {
+    if (source === 'qb') {
+      const data = qbStatement
+        ? adaptQbStatementToLocal(qbStatement, asOf, currentCompanyId || 'ALL')
+        : null;
+      return {
+        data,
+        isLoading: qbLoadingStatement,
+        error: qbError ? new Error(qbError) : null,
+      } as { data: Statement | null; isLoading: boolean; error: Error | null };
+    }
+    return localStatement;
+  }, [source, qbStatement, qbLoadingStatement, qbError, asOf, currentCompanyId, localStatement]);
 
   // ── QuickBooks pull-sync ───────────────────────────────────────
   async function syncFromQb() {
@@ -204,7 +396,13 @@ const StatementsV2: React.FC = () => {
               {(['AR', 'AP'] as StatementKind[]).map(k => (
                 <button
                   key={k}
-                  onClick={() => { setKind(k); setCounterpartyName(''); }}
+                  onClick={() => {
+                    setKind(k);
+                    setCounterpartyName('');
+                    // QB source covers AR only — flip back to local
+                    // when the user switches to AP.
+                    if (k === 'AP') setSource('local');
+                  }}
                   className="px-3 py-1 rounded-full text-[12px] font-medium transition-colors"
                   style={{
                     background: kind === k ? 'var(--b-teal-2)' : 'transparent',
@@ -217,6 +415,37 @@ const StatementsV2: React.FC = () => {
             </div>
           </div>
 
+          {/* Source toggle (only when QB connected + AR mode) */}
+          {kind === 'AR' && qbConnected && (
+            <div>
+              <div className="text-[10.5px] uppercase tracking-[0.14em] mb-1.5" style={{ color: 'var(--b-text-mute)' }}>Source</div>
+              <div className="flex items-center gap-1 p-1 rounded-full" style={{ background: 'var(--b-surface-2)', border: '1px solid var(--b-line)' }}>
+                <button
+                  onClick={() => { setSource('local'); setCounterpartyName(''); }}
+                  title="Read invoices + payments from the ERP ledger (Supabase)"
+                  className="px-3 py-1 rounded-full text-[12px] font-medium transition-colors inline-flex items-center gap-1.5"
+                  style={{
+                    background: source === 'local' ? 'var(--b-teal-2)' : 'transparent',
+                    color: source === 'local' ? 'white' : 'var(--b-text-mute)',
+                  }}
+                >
+                  <Database size={11} /> Local
+                </button>
+                <button
+                  onClick={() => { setSource('qb'); setCounterpartyName(''); }}
+                  title="Pull customers and statements live from QuickBooks (same source as Customer Balances)"
+                  className="px-3 py-1 rounded-full text-[12px] font-medium transition-colors inline-flex items-center gap-1.5"
+                  style={{
+                    background: source === 'qb' ? 'var(--b-teal-2)' : 'transparent',
+                    color: source === 'qb' ? 'white' : 'var(--b-text-mute)',
+                  }}
+                >
+                  <Cloud size={11} /> QuickBooks
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Counterparty picker */}
           <div className="flex-1 min-w-[280px]">
             <div className="text-[10.5px] uppercase tracking-[0.14em] mb-1.5" style={{ color: 'var(--b-text-mute)' }}>
@@ -226,15 +455,26 @@ const StatementsV2: React.FC = () => {
               <select
                 value={counterpartyName}
                 onChange={e => setCounterpartyName(e.target.value)}
+                disabled={source === 'qb' && qbLoadingCustomers}
                 className="block w-full appearance-none rounded-[10px] px-3 py-2 pr-8 text-[13px]"
                 style={{ background: 'var(--b-surface-2)', border: '1px solid var(--b-line)', color: 'var(--b-text)' }}
               >
-                <option value="">— pick one —</option>
-                {(counterparties.data ?? []).map(c => (
-                  <option key={c.name} value={c.name}>
-                    {c.name} · {c.invoices} invoice{c.invoices === 1 ? '' : 's'} · {fmtMoney(c.outstanding)}
-                  </option>
-                ))}
+                <option value="">
+                  {source === 'qb' && qbLoadingCustomers
+                    ? 'Loading QB customers…'
+                    : '— pick one —'}
+                </option>
+                {source === 'qb'
+                  ? qbCustomers.map(c => (
+                      <option key={c.id} value={c.displayName}>
+                        {c.displayName}{c.balance ? ` · ${fmtMoney(c.balance)} open` : ''}
+                      </option>
+                    ))
+                  : (counterparties.data ?? []).map(c => (
+                      <option key={c.name} value={c.name}>
+                        {c.name} · {c.invoices} invoice{c.invoices === 1 ? '' : 's'} · {fmtMoney(c.outstanding)}
+                      </option>
+                    ))}
               </select>
               <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--b-text-mute)' }} />
             </div>
