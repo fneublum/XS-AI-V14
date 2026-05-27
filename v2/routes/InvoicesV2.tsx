@@ -78,7 +78,7 @@ const buildColumns = (
   { id: 'so', header: 'SO', mono: true, sortable: true, filterable: true, width: '120px',
     value: r => r.soNumber ?? '',
     cell: r => <span className="text-slate-500">{r.soNumber ?? '—'}</span> },
-  { id: 'incoterm', header: 'Incoterm', sortable: true, filterable: true, width: '90px',
+  { id: 'incoterm', header: 'Incoterm', sortable: true, filterable: true, width: '70px',
     value: r => r.incoterm ?? '',
     cell: r => <span className="font-mono text-[11.5px] text-slate-400">{r.incoterm ?? '—'}</span> },
   { id: 'terms', header: 'Terms', sortable: true, filterable: true, width: '90px',
@@ -93,7 +93,7 @@ const buildColumns = (
   { id: 'pod', header: 'POD', mono: true, sortable: true, filterable: true, width: '62px',
     value: r => podShort(r.pod),
     cell: r => <span className="font-mono text-[11.5px] text-slate-400" title={r.pod ?? ''}>{podShort(r.pod)}</span> },
-  { id: 'etd', header: 'ETD', align: 'right', sortable: true, width: '37px',
+  { id: 'etd', header: 'ETD', align: 'right', sortable: true, width: '41px',
     // Resolve via the booking row — invoices don't store ETD directly.
     value: r => (r.bookingNumber ? etdByBookingNumber.get(r.bookingNumber) ?? '' : ''),
     cell: r => {
