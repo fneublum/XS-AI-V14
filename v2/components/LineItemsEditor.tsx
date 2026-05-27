@@ -18,7 +18,16 @@ export interface LineItem {
   customerDescription?: string;
   hsCode?: string;
   grade?: string;
+  /** Quantity in lbs (canonical for pricing math, which uses $/lb). */
   quantity: number;
+  /** Quantity in kgs — saved INDEPENDENTLY of `quantity` so the value
+   *  the user typed (or OCR captured) on the kgs side round-trips
+   *  exactly. Earlier code derived this as `quantity * 0.453592` and
+   *  saved the converted value, which caused drift (42,659 lbs would
+   *  re-emerge as 19,349.78 kgs even when the user had entered
+   *  19,350.00). When absent, downstream code may fall back to the
+   *  conversion for read-only display. */
+  netKg?: number;
   unitPrice: number;
   total: number;
 }
@@ -113,6 +122,21 @@ export const LineItemsEditor: React.FC<Props> = ({
     () => round2(items.reduce((s, it) => s + (Number(it.quantity) || 0), 0)),
     [items],
   );
+
+  // Sum the saved netKg per row independently from lbs — so the kgs
+  // total reflects the actual values typed/OCR'd into the kgs column,
+  // not a lbs↔kg conversion of the lbs total. Falls back to converting
+  // the lbs value only for rows that have no kg side at all (legacy
+  // rows where only `quantity` was ever captured).
+  const totalKg = useMemo(() => {
+    const sum = items.reduce((s, it) => {
+      const kg = Number(it.netKg);
+      if (Number.isFinite(kg) && kg > 0) return s + kg;
+      const lbs = Number(it.quantity) || 0;
+      return s + lbs * LB_TO_KG;
+    }, 0);
+    return round2(sum);
+  }, [items]);
 
   const update = (idx: number, patch: Partial<LineItem>) => {
     const next = items.map((it, i) => {
@@ -286,7 +310,14 @@ export const LineItemsEditor: React.FC<Props> = ({
                     <div className="font-mono tabular-nums text-slate-200">
                       <div>{fmtQty(Number(it.quantity) || 0)} lbs</div>
                       <div className="text-slate-500 text-[10.5px]">
-                        {fmtQty(lbsToKgs(Number(it.quantity) || 0))} kgs
+                        {(() => {
+                          // Prefer the saved netKg; only fall back to
+                          // the converted lbs value when the row
+                          // doesn't carry an independent kg side.
+                          const kg = Number(it.netKg);
+                          if (Number.isFinite(kg) && kg > 0) return fmtQty(kg);
+                          return fmtQty(lbsToKgs(Number(it.quantity) || 0));
+                        })()} kgs
                       </div>
                     </div>
                   ) : (
@@ -294,7 +325,18 @@ export const LineItemsEditor: React.FC<Props> = ({
                       <div className="flex items-center gap-1">
                         <QtyInput
                           value={Number(it.quantity) || 0}
-                          onChange={(n) => update(i, { quantity: n })}
+                          onChange={(n) => {
+                            // When the user types a lbs value and the
+                            // row has NO independent kg side yet,
+                            // auto-fill kgs from the conversion so the
+                            // row isn't half-empty. Once both sides
+                            // have values, edits to one side leave the
+                            // other alone — preserving the typed kgs.
+                            const hasKg = Number(it.netKg) > 0;
+                            const patch: Partial<LineItem> = { quantity: n };
+                            if (!hasKg) patch.netKg = round2(n * LB_TO_KG);
+                            update(i, patch);
+                          }}
                           className={cellInputMono + ' text-right flex-1'}
                           title="Quantity in pounds"
                         />
@@ -302,10 +344,27 @@ export const LineItemsEditor: React.FC<Props> = ({
                       </div>
                       <div className="flex items-center gap-1">
                         <QtyInput
-                          value={lbsToKgs(Number(it.quantity) || 0)}
-                          onChange={(kgs) => update(i, { quantity: kgsToLbs(kgs) })}
+                          value={(() => {
+                            const kg = Number(it.netKg);
+                            if (Number.isFinite(kg) && kg > 0) return kg;
+                            // No saved kg → show the converted lbs as
+                            // a hint, but typing in the field will
+                            // overwrite netKg directly.
+                            return lbsToKgs(Number(it.quantity) || 0);
+                          })()}
+                          onChange={(kgs) => {
+                            // Persist the typed kgs verbatim. If the
+                            // lbs side is still empty, auto-fill it
+                            // from the conversion so the row isn't
+                            // half-empty; otherwise leave lbs as the
+                            // user entered it (no implicit overwrite).
+                            const hasLbs = Number(it.quantity) > 0;
+                            const patch: Partial<LineItem> = { netKg: kgs };
+                            if (!hasLbs) patch.quantity = kgsToLbs(kgs);
+                            update(i, patch);
+                          }}
                           className={cellInputMono + ' text-right flex-1'}
-                          title="Quantity in kilograms"
+                          title="Quantity in kilograms (saved independently of lbs — no auto-conversion)"
                         />
                         <span className="text-[10px] text-slate-500 w-6 text-left">kgs</span>
                       </div>
@@ -378,7 +437,12 @@ export const LineItemsEditor: React.FC<Props> = ({
               } />
               <td className="px-2 py-1 text-right text-slate-500 uppercase tracking-wider text-[10px]">
                 <div>Total {totalQty.toLocaleString('en-US')} lbs</div>
-                <div>{lbsToKgs(totalQty).toLocaleString('en-US')} kgs</div>
+                <div>
+                  {totalKg.toLocaleString('en-US', {
+                    minimumFractionDigits: totalKg % 1 === 0 ? 0 : 2,
+                    maximumFractionDigits: 2,
+                  })} kgs
+                </div>
               </td>
               <td className="px-2 py-1 text-right text-[10px] text-slate-500 uppercase tracking-wider">Subtotal</td>
               <td className="px-2 py-1 text-right font-mono tabular-nums text-indigo-300 font-semibold">
@@ -428,6 +492,15 @@ export const sanitizeItems = (items: LineItem[]): LineItem[] =>
       const q = Number(it.quantity) || 0;
       const p = Number(it.unitPrice) || 0;
       const total = round2(q * p);
+      // Preserve the netKg that the user actually entered. The
+      // earlier sanitiser overwrote it with `q * 0.453592`, which
+      // introduced the 19,350 → 19,349.78 drift that GENRYO flagged.
+      // Only auto-derive from lbs when no kg value was captured at
+      // all (legacy rows / lbs-only OCR).
+      const savedKg = Number(it.netKg);
+      const kg = Number.isFinite(savedKg) && savedKg > 0
+        ? round2(savedKg)
+        : round2(q * LB_TO_KG);
       return {
         ...it,
         productId: it.productId,
@@ -443,7 +516,7 @@ export const sanitizeItems = (items: LineItem[]): LineItem[] =>
         // quantity / total; without this sync, drawer edits wouldn't
         // flow into the generated PDF.
         netLbs: q,
-        netKg: round2(q * LB_TO_KG),
+        netKg: kg,
         amount: total,
       };
     });

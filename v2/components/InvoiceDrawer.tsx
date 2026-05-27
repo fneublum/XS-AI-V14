@@ -508,17 +508,26 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
   const subtotal = useMemo(() => computeSubtotal(items), [items]);
   const total = subtotal;
 
-  // Derive net weight from line items. Each line item's `quantity` is
-  // the product weight in lbs (sanitizeItems also mirrors this into
-  // `netLbs`/`netKg`). Net weight is, by definition, the sum of line
-  // item quantities — keeping these in sync prevents the drift we saw
-  // when legacy rows had lbs stored in the kg column.
+  // Derive net weight from line items. Each line item carries both
+  // `netLbs` and `netKg` independently — they're entered by the user
+  // (or extracted by OCR) per side, not derived by lbs↔kg conversion.
+  // The earlier code summed lbs and then multiplied by 0.453592 to
+  // get kgs, which gave 19,349.78 when the rows actually said
+  // 19,350.00 — visible drift on every invoice. Sum each side directly
+  // from the saved per-item values; fall back to the lbs ↔ kg
+  // conversion ONLY when one side is missing.
   const itemsNetLbs = useMemo(
     () => items.reduce((s, it: any) => s + (Number(it?.netLbs ?? it?.quantity) || 0), 0),
     [items],
   );
-  const itemsNetKg = useMemo(() => itemsNetLbs * 0.453592, [itemsNetLbs]);
-  const hasItemsWeight = itemsNetLbs > 0;
+  const itemsNetKgSaved = useMemo(
+    () => items.reduce((s, it: any) => s + (Number(it?.netKg) || 0), 0),
+    [items],
+  );
+  // Prefer the authoritative saved kg sum; only fall back to the
+  // conversion when no row carried a kg value.
+  const itemsNetKg = itemsNetKgSaved > 0 ? itemsNetKgSaved : itemsNetLbs * 0.453592;
+  const hasItemsWeight = itemsNetLbs > 0 || itemsNetKgSaved > 0;
   const derivedNetKg  = hasItemsWeight ? itemsNetKg.toFixed(2)  : netWeight;
   const derivedNetLbs = hasItemsWeight ? itemsNetLbs.toFixed(2) : netLbsMirror;
 
