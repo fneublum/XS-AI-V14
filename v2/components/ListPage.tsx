@@ -64,25 +64,41 @@ export function ListPage<T>({
     // body scrolls. Matches modern CRUD dashboards (Linear, Vercel).
     <div className="bento-scope h-full flex flex-col p-4 gap-4">
 
-      {/* PAGE HEADER — Bricolage display title + subtitle pill, action on right */}
-      <div className="flex items-center gap-3 flex-wrap shrink-0">
-        <div className="min-w-0">
-          <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
-            {title}
-          </h1>
-          {subtitle && (
-            <div className="text-[12.5px] mt-1.5" style={{ color: 'var(--b-text-mute)' }}>
-              {subtitle}
-            </div>
-          )}
+      {/* PAGE HEADER — large Bricolage display title + accent stripe */}
+      <div className="flex items-end gap-4 flex-wrap shrink-0 pb-2">
+        <div className="min-w-0 flex items-center gap-3">
+          {/* Accent stripe — vertical bar in teal to anchor the eye */}
+          <span className="block w-1 h-9 rounded-full" style={{ background: 'var(--b-teal-2)' }} />
+          <div className="min-w-0">
+            <h1
+              className="b-display font-semibold leading-none"
+              style={{
+                color: 'var(--b-text)',
+                fontSize: '32px',
+                fontVariationSettings: "'opsz' 64, 'wght' 600",
+                letterSpacing: '-0.02em',
+              }}
+            >
+              {title}
+            </h1>
+            {subtitle && (
+              <div className="text-[13px] mt-1.5" style={{ color: 'var(--b-text-mute)' }}>
+                {subtitle}
+              </div>
+            )}
+          </div>
         </div>
-        <div className="ml-auto">{headerAction}</div>
+        <div className="ml-auto flex items-center gap-2">{headerAction}</div>
       </div>
 
-      {/* DATA CARD — bento surface, rounded-[18px], holds search + table */}
+      {/* DATA CARD — bento surface, rounded-[18px], elevated shadow */}
       <div
         className="flex-1 min-h-0 flex flex-col rounded-[18px] border overflow-hidden"
-        style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}
+        style={{
+          background: 'var(--b-surface)',
+          borderColor: 'var(--b-line)',
+          boxShadow: '0 1px 0 rgba(13, 17, 23, 0.02), 0 12px 32px -20px rgba(13, 17, 23, 0.1)',
+        }}
       >
         <div
           className="flex items-center gap-3 px-5 py-3.5 border-b shrink-0 flex-wrap"
