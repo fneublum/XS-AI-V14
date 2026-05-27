@@ -75,7 +75,7 @@ const buildColumns = (
       const full = r.soldTo ?? r.billToName;
       return <span className="text-slate-100" title={tooltipName(full)}>{shortName(full)}</span>;
     } },
-  { id: 'so', header: 'SO', mono: true, sortable: true, filterable: true, width: '120px',
+  { id: 'so', header: 'SO', mono: true, sortable: true, filterable: true, width: '80px',
     value: r => r.soNumber ?? '',
     cell: r => <span className="text-slate-500">{r.soNumber ?? '—'}</span> },
   { id: 'incoterm', header: 'Incoterm', sortable: true, filterable: true, width: '70px',
