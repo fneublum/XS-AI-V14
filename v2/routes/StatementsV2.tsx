@@ -31,6 +31,18 @@ import {
   type QBCustomer, type QBCustomerStatement,
 } from '../../services/quickbooksService';
 import { isEc4Company } from '../services/pdf/isEc4Company';
+import { useCustomers } from '../queries/useCustomers';
+
+// Same normalisation FinanceBalancesV2 uses to intersect the QB
+// customer book against ERP customers — strips punctuation and
+// folds whitespace so "JP MORGAN" / "Jp Morgan, NA" / "jp-morgan"
+// all collide on the same key.
+const normalizeCustomerName = (s: string | undefined | null): string =>
+  (s || '')
+    .toLowerCase()
+    .replace(/[.,'"`()\-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 function fmtMoney(n: number, c: string = 'USD'): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 2 }).format(n);
@@ -289,11 +301,32 @@ const StatementsV2: React.FC = () => {
     } as { data: Statement | null; isLoading: boolean; error: Error | null };
   }, [useQbSource, qbStatement, qbLoading, localStatement, asOf, currentCompanyId]);
 
-  // Counterparty options shown in the dropdown — QB list for EC4,
-  // local list for everyone else.
+  // Intersect QB customer list against the ERP customer book — the
+  // raw QB book carries hundreds of customers (every account ever
+  // sold to), but the user only wants to see the ones present in
+  // this ERP install. Same pattern + name normaliser as
+  // FinanceBalancesV2. Falls back to the full QB list when the ERP
+  // hasn't loaded yet so the page is never empty.
+  const erpCustomersQ = useCustomers();
+  const erpNameSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of (erpCustomersQ.data ?? [])) {
+      const n = normalizeCustomerName(c.name);
+      if (n) set.add(n);
+      const nick = normalizeCustomerName(c.nickname);
+      if (nick) set.add(nick);
+    }
+    return set;
+  }, [erpCustomersQ.data]);
+
+  // Counterparty options shown in the dropdown — QB list (filtered
+  // to ERP customers) for EC4, local list for everyone else.
   const counterpartyOptions = useMemo(() => {
     if (useQbSource && qbStatus === 'connected') {
-      return qbCustomers.map(c => ({
+      const filtered = erpNameSet.size === 0
+        ? qbCustomers
+        : qbCustomers.filter(c => erpNameSet.has(normalizeCustomerName(c.displayName)));
+      return filtered.map(c => ({
         value: c.displayName,
         label: c.displayName + (c.balance ? ` · ${fmtMoney(c.balance)} open` : ''),
       }));
@@ -302,7 +335,7 @@ const StatementsV2: React.FC = () => {
       value: c.name,
       label: `${c.name} · ${c.invoices} invoice${c.invoices === 1 ? '' : 's'} · ${fmtMoney(c.outstanding)}`,
     }));
-  }, [useQbSource, qbStatus, qbCustomers, counterparties.data]);
+  }, [useQbSource, qbStatus, qbCustomers, erpNameSet, counterparties.data]);
 
   // ── QuickBooks pull-sync ───────────────────────────────────────
   async function syncFromQb() {
