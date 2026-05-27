@@ -42,6 +42,8 @@ interface ListPageProps<T> {
   density?: 'default' | 'compact';
   /** Optional per-row className passthrough — e.g. for AI-draft yellow ring. */
   rowClassName?: (row: T) => string;
+  /** Forwarded to DataTable. Use 'fixed' to respect col.width hints. */
+  tableLayout?: 'auto' | 'fixed';
 }
 
 export function ListPage<T>({
@@ -49,7 +51,7 @@ export function ListPage<T>({
   cardTitle, cardAction, headerAction, columns, getRowId, data, isLoading, error, onRetry,
   onRowClick, emptyTitle, emptyDescription, emptyAction,
   skeletonRows = 6, skeletonCols = [160, 220, 100, 60], rowActions, zebra,
-  density, rowClassName,
+  density, rowClassName, tableLayout,
 }: ListPageProps<T>) {
   return (
     // `h-full flex flex-col` — lock the list view to the main content
@@ -131,6 +133,7 @@ export function ListPage<T>({
               zebra={zebra}
               density={density}
               rowClassName={rowClassName}
+              tableLayout={tableLayout}
             />
           )}
         </div>

@@ -54,7 +54,7 @@ const buildColumns = (
   termsCodeByDescription: Map<string, string>,
   etdByBookingNumber: Map<string, string | null>,
 ): DataTableColumn<Invoice>[] => [
-  { id: 'inv', header: 'Invoice', mono: true, sortable: true, filterable: true, width: '120px',
+  { id: 'inv', header: 'Invoice', mono: true, sortable: true, filterable: true, width: '90px',
     value: r => r.invoiceNumber,
     cell: r => (
       <span className="inline-flex items-center gap-1.5">
@@ -454,6 +454,7 @@ const InvoicesV2: React.FC = () => {
         emptyAction={{ label: '+ New invoice', onClick: openInvoiceCreate }}
         skeletonCols={[100, 200, 80, 80, 80, 60, 60, 70, 80, 70]}
         zebra
+        tableLayout="fixed"
       />
       {deleteDialog}
       <DeliveryDocsModal

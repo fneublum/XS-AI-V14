@@ -65,6 +65,10 @@ interface DataTableProps<T> {
    *  yellow left border + tinted background so they stand out from
    *  user-approved rows. */
   rowClassName?: (row: T) => string;
+  /** When 'fixed', browser respects col.width hints instead of
+   *  auto-sizing by content. Required if you want narrow columns to
+   *  actually be narrow. Default 'auto'. */
+  tableLayout?: 'auto' | 'fixed';
 }
 
 const alignClass: Record<NonNullable<DataTableColumn<unknown>['align']>, string> = {
@@ -211,7 +215,7 @@ function HeaderFilterMenu<T>({ col, values, activeSet, onToggle, onClear, onClos
 
 export function DataTable<T>({
   columns, rows, getRowId, onRowClick, emptyMessage = 'No rows', rowActions, defaultSort, zebra = true,
-  density = 'default', rowClassName,
+  density = 'default', rowClassName, tableLayout = 'auto',
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<SortState>(defaultSort ?? null);
   const [filters, setFilters] = useState<Record<string, Set<string>>>({});
@@ -287,7 +291,10 @@ export function DataTable<T>({
     // No overflow-x-auto here — it breaks the sticky-thead chain.
     // Horizontal scrolling is delegated to ListPage's scroll container.
     <div className="w-full">
-      <table className={cn('w-full', tableFontClass)}>
+      <table
+        className={cn('w-full', tableFontClass)}
+        style={tableLayout === 'fixed' ? { tableLayout: 'fixed' } : undefined}
+      >
         {/* Sticky header stays visible while the table body scrolls inside
          *  its ListPage container. Opaque bg-[#0a0a0a] (flipped to white
          *  via globals.css in light mode) so scrolled rows don't show
