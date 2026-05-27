@@ -887,6 +887,146 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
               </div>
             );
           })()}
+
+          {/* ── Statement view ────────────────────────────────────────
+              When the drawer is row-locked to a specific invoice / bill
+              / PO, render the full payment trail as a statement: total
+              owed, every prior payment, this in-progress payment, and
+              the resulting balance. The earlier per-block summaries
+              (Prior receipts list, allocation summary) show the same
+              numbers piecewise; this collapses them into the single
+              T-account view accountants think in.                     */}
+          {(invoice || supplierInvoice || po) && (() => {
+            const targetId = invoice?.invoiceId
+              ?? supplierInvoice?.supplierInvoiceId
+              ?? po?.purchaseOrderId;
+            const targetLabel = invoice?.invoiceNumber
+              ?? supplierInvoice?.invoiceNumber
+              ?? po?.poNumber
+              ?? 'Document';
+            // Sum the prior history's allocations that hit THIS target.
+            // The history hook returns all allocations on each txn —
+            // split payments may include amounts on other invoices we
+            // mustn't count here.
+            const priorRows = (history.data ?? []);
+            const priorOnTarget = priorRows.flatMap(t =>
+              t.allocations
+                .filter(a =>
+                  (!!invoice          && a.invoiceId === targetId) ||
+                  (!!supplierInvoice  && a.supplierInvoiceId === targetId) ||
+                  (!!po               && a.purchaseOrderId === targetId)
+                )
+                .map(a => ({ txn: t, alloc: a }))
+            );
+            const priorPaid = priorOnTarget.reduce((s, x) => s + x.alloc.amount, 0);
+            // originalOutstanding is the balance at drawer open, so:
+            //   invoiceTotal = balance_at_open + everything already paid
+            // This stays correct even if the user voids a prior receipt
+            // mid-drawer, because the history hook re-fetches and
+            // priorPaid drops by the voided amount.
+            const invoiceTotal = originalOutstanding + priorPaid;
+            // What THIS payment will apply to the target. When the
+            // drawer is row-locked, that's the locked allocation's
+            // amount; otherwise zero.
+            const thisPaymentOnTarget = allocations.length === 1
+              && (allocations[0].invoiceId === targetId
+                || allocations[0].supplierInvoiceId === targetId
+                || allocations[0].purchaseOrderId === targetId)
+              ? (Number(allocations[0].amount) || 0)
+              : 0;
+            const balanceAfter = Math.max(0, invoiceTotal - priorPaid - thisPaymentOnTarget);
+            const fullySettled = balanceAfter < 0.005 && thisPaymentOnTarget > 0;
+            const currency = invoice?.currency ?? supplierInvoice?.currency ?? po?.currency ?? 'USD';
+
+            return (
+              <div className="mt-3 rounded border border-[#1f1f1f] bg-[#0a0a0a] p-3 text-[11.5px]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10.5px] text-slate-500 uppercase tracking-wider">
+                    Statement · {targetLabel}
+                  </span>
+                  <span className={
+                    'text-[10px] uppercase tracking-wider font-semibold ' +
+                    (fullySettled ? 'text-emerald-400' : 'text-amber-400')
+                  }>
+                    {fullySettled ? 'Paid in full' : 'Open'}
+                  </span>
+                </div>
+
+                {/* Invoice total */}
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-slate-300">
+                    {mode === 'receipt' ? 'Invoice total' : 'Bill total'}
+                  </span>
+                  <span className="text-slate-100 font-mono tabular-nums">
+                    {fmtMoney(invoiceTotal, currency)}
+                  </span>
+                </div>
+
+                {/* Prior payments, one row each */}
+                {priorOnTarget.length > 0 ? (
+                  <>
+                    <div className="mt-1.5 pt-1.5 border-t border-[#1f1f1f] text-[10.5px] text-slate-500 uppercase tracking-wider mb-1">
+                      Prior {mode === 'receipt' ? 'receipts' : 'payments'} · {priorOnTarget.length}
+                    </div>
+                    {priorOnTarget.map(({ txn, alloc }) => (
+                      <div key={alloc.id} className="flex items-center justify-between py-0.5 text-[11px]">
+                        <span className="text-slate-400 font-mono tabular-nums">
+                          {(txn.txnDate ?? '').slice(0, 10)}
+                          <span className="text-slate-600 mx-1.5">·</span>
+                          <span className="uppercase">{txn.method ?? '—'}</span>
+                          {txn.reference && (
+                            <>
+                              <span className="text-slate-600 mx-1.5">·</span>
+                              <span className="text-slate-500">{txn.reference}</span>
+                            </>
+                          )}
+                        </span>
+                        <span className="text-slate-300 font-mono tabular-nums">
+                          −{fmtMoney(alloc.amount, txn.currency)}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between py-0.5 mt-0.5 border-t border-dashed border-[#1a1a1a] text-slate-400">
+                      <span className="text-[10.5px] uppercase tracking-wider">Total prior</span>
+                      <span className="font-mono tabular-nums">−{fmtMoney(priorPaid, currency)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-1 py-0.5 text-[11px] text-slate-600 italic">
+                    No prior {mode === 'receipt' ? 'receipts' : 'payments'} on this {mode === 'receipt' ? 'invoice' : 'bill'}.
+                  </div>
+                )}
+
+                {/* This in-progress payment */}
+                {thisPaymentOnTarget > 0 && (
+                  <div className="flex items-center justify-between py-1 mt-1.5 pt-1.5 border-t border-[#1f1f1f] text-indigo-300">
+                    <span>
+                      This {mode === 'receipt' ? 'receipt' : 'payment'}
+                      <span className="text-[10px] text-indigo-400/70 ml-2 normal-case">(pending save)</span>
+                    </span>
+                    <span className="font-mono tabular-nums">
+                      −{fmtMoney(thisPaymentOnTarget, currency)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Resulting balance */}
+                <div className={
+                  'flex items-center justify-between py-1.5 mt-1.5 border-t-2 ' +
+                  (fullySettled
+                    ? 'border-emerald-500/40 text-emerald-300 font-semibold'
+                    : 'border-[#1f1f1f] text-amber-300 font-semibold')
+                }>
+                  <span>
+                    Balance after this {mode === 'receipt' ? 'receipt' : 'payment'}
+                  </span>
+                  <span className="font-mono tabular-nums">
+                    {fmtMoney(balanceAfter, currency)}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Memo */}
