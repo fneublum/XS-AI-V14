@@ -9,7 +9,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Sparkles, Check, X, ExternalLink, Eye } from 'lucide-react';
-import { Badge, Button, Card, CardBody, EmptyState, Skeleton } from '../primitives';
+import { Badge, Button, EmptyState, Skeleton } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 import { useToast } from '../primitives/Toast';
 import { useAiDrafts, type AiDraft, type AiDraftSource } from '../queries/useAiDrafts';
@@ -158,60 +158,70 @@ const AiDraftsV2: React.FC = () => {
   ];
 
   return (
-    <div className="h-full flex flex-col max-w-6xl">
-      <div className="flex items-baseline justify-between mb-4 shrink-0">
-        <div>
-          <div className="flex items-center gap-2">
-            <Sparkles size={18} className="text-amber-400" />
-            <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
-              AI Drafts
-            </h1>
-            <Badge variant="info">Hermes</Badge>
-          </div>
-          <p className="text-[13px] text-slate-500 mt-1">
-            Packing lists + commercial invoices auto-extracted from supplier
-            emails. Review the fields, then Approve to flip into live data —
-            or Reject if the extraction is wrong.
-          </p>
-        </div>
-        <Button
-          variant="secondary" size="sm"
+    <div className="bento-scope h-full flex flex-col p-4 gap-4">
+      {/* PAGE HEADER */}
+      <div className="flex items-center gap-3 flex-wrap shrink-0">
+        <Sparkles size={18} style={{ color: 'var(--b-gold)' }} />
+        <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
+          AI Drafts
+        </h1>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
+              style={{ background: 'var(--b-teal-soft)', color: 'var(--b-teal-2)' }}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+          Hermes
+        </span>
+        <span className="ml-auto" />
+        <button
           onClick={() => drafts.refetch()}
           disabled={drafts.isFetching}
-          className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616] h-8 px-3 text-[12px]"
+          className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-full transition-colors disabled:opacity-50"
+          style={{ background: 'var(--b-surface)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}
         >
           Refresh
-        </Button>
+        </button>
       </div>
 
-      <Card className="flex-1 min-h-0 flex flex-col">
-        <CardBody className="shrink-0">
+      {/* BLURB */}
+      <p className="text-[13px] -mt-1 shrink-0" style={{ color: 'var(--b-text-mute)' }}>
+        Packing lists + commercial invoices auto-extracted from supplier
+        emails. Review the fields, then Approve to flip into live data — or
+        Reject if the extraction is wrong.
+      </p>
+
+      {/* DATA CARD */}
+      <div
+        className="flex-1 min-h-0 flex flex-col rounded-[18px] border overflow-hidden"
+        style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}
+      >
+        <div className="shrink-0 px-5 py-3.5 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] text-slate-500 uppercase tracking-wider mr-1">Source</span>
-            {(['ALL', 'PL', 'CI'] as SourceFilter[]).map(s => (
-              <button
-                key={s}
-                onClick={() => setSourceFilter(s)}
-                className={
-                  'h-7 px-2.5 text-[11.5px] font-medium rounded-md border transition-colors ' +
-                  (sourceFilter === s
-                    ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-200'
-                    : 'bg-transparent border-[#1f1f1f] text-slate-400 hover:bg-[#161616]')
-                }
-              >
-                {s === 'ALL' ? 'All' : s}{' '}
-                <span className="ml-1 text-slate-500">{counts[s]}</span>
-              </button>
-            ))}
+            <span className="text-[10.5px] uppercase tracking-[0.14em] mr-1" style={{ color: 'var(--b-text-mute)' }}>Source</span>
+            <div className="flex items-center gap-1 p-1 rounded-full" style={{ background: 'var(--b-surface-2)', border: '1px solid var(--b-line)' }}>
+              {(['ALL', 'PL', 'CI'] as SourceFilter[]).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setSourceFilter(s)}
+                  className="px-3 py-1 rounded-full text-[12px] font-medium transition-colors flex items-center gap-1.5"
+                  style={{
+                    background: sourceFilter === s ? 'var(--b-teal-2)' : 'transparent',
+                    color: sourceFilter === s ? 'white' : 'var(--b-text-mute)',
+                  }}
+                >
+                  {s === 'ALL' ? 'All' : s}
+                  <span className="b-mono text-[10.5px]" style={{ opacity: 0.8 }}>{counts[s]}</span>
+                </button>
+              ))}
+            </div>
             <input
               type="search"
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Doc #, shipper, consignee"
-              className="ml-auto h-7 text-[12px] bg-[#111111] border border-[#1f1f1f] text-slate-200 placeholder:text-slate-500 rounded-md px-2 outline-none focus:ring-1 focus:ring-indigo-500 w-72"
+              className="ml-auto h-7 text-[12px] rounded-full px-3 outline-none focus:ring-2 w-72"
+              style={{ background: 'var(--b-page)', border: '1px solid var(--b-line)', color: 'var(--b-text)' }}
             />
           </div>
-        </CardBody>
+        </div>
 
         <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
           {drafts.isLoading ? (
@@ -251,7 +261,7 @@ const AiDraftsV2: React.FC = () => {
             />
           )}
         </div>
-      </Card>
+      </div>
     </div>
   );
 };

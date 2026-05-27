@@ -400,30 +400,31 @@ const DocumentAuditV2: React.FC = () => {
   ];
 
   return (
-    <div className="max-w-[1400px] space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <ShieldAlert size={18} className="text-rose-400" />
-            <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
-              Document Audit
-            </h1>
-            <Badge variant="info">Hermes</Badge>
-          </div>
-          <p className="text-[13px] text-slate-500 mt-1">
-            Audit results from the Hermes Agent — draft BLs compared against CI + PL. Authorize the correction email or dismiss it from here.
-          </p>
-        </div>
-        <Button
-          variant="secondary" size="sm"
+    <div className="bento-scope p-4 space-y-4" style={{ maxWidth: '1400px' }}>
+      <div className="flex items-center gap-3 flex-wrap">
+        <ShieldAlert size={18} style={{ color: 'var(--b-rose)' }} />
+        <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
+          Document Audit
+        </h1>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
+              style={{ background: 'var(--b-teal-soft)', color: 'var(--b-teal-2)' }}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+          Hermes
+        </span>
+        <span className="ml-auto" />
+        <button
           onClick={() => audits.refetch()}
           disabled={audits.isFetching}
-          className="bg-transparent border border-[#1f1f1f] text-slate-300 hover:bg-[#161616] h-8 px-3 text-[12px]"
+          className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-full transition-colors disabled:opacity-50"
+          style={{ background: 'var(--b-surface)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}
         >
-          <RefreshCw size={13} className={`mr-1.5 ${audits.isFetching ? 'animate-spin' : ''}`} />
+          <RefreshCw size={12} className={audits.isFetching ? 'animate-spin' : ''} />
           Refresh
-        </Button>
+        </button>
       </div>
+      <p className="text-[13px] -mt-2" style={{ color: 'var(--b-text-mute)' }}>
+        Audit results from the Hermes Agent — draft BLs compared against CI + PL. Authorize the correction email or dismiss it from here.
+      </p>
 
       {/* Filters */}
       <Card>

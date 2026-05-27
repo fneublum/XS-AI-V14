@@ -4,11 +4,15 @@
 // table with skeleton / error / empty states. This component hosts
 // that boilerplate so each route file only declares title, columns,
 // and data source.
+//
+// Visual chrome is the Bento design language (same tokens as the
+// Dashboard + Agents Console). Wraps in `.bento-scope` so all
+// `--b-*` CSS vars apply, and uses Bricolage Grotesque for the page
+// title. Inner DataTable still uses V14 primitives, which already
+// theme via globals.css so light/dark flip in lockstep.
 
 import React from 'react';
-import {
-  Card, CardHeader, CardTitle, Input, Skeleton, EmptyState,
-} from '../primitives';
+import { Input, Skeleton, EmptyState } from '../primitives';
 import { DataTable, DataTableColumn } from '../primitives/DataTable';
 
 interface ListPageProps<T> {
@@ -54,25 +58,39 @@ export function ListPage<T>({
   density, rowClassName, tableLayout,
 }: ListPageProps<T>) {
   return (
-    // `h-full flex flex-col` — lock the list view to the main content
-    // viewport so the title + search stay pinned and only the table
+    // `bento-scope` activates the Bento CSS vars defined in
+    // styles/globals.css; `h-full flex flex-col` locks the page to
+    // the viewport so title + search stay pinned and only the table
     // body scrolls. Matches modern CRUD dashboards (Linear, Vercel).
-    <div className="h-full flex flex-col max-w-6xl">
-      <div className="flex items-baseline justify-between mb-6 shrink-0">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
+    <div className="bento-scope h-full flex flex-col p-4 gap-4">
+
+      {/* PAGE HEADER — Bricolage display title + subtitle pill, action on right */}
+      <div className="flex items-center gap-3 flex-wrap shrink-0">
+        <div className="min-w-0">
+          <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
             {title}
           </h1>
-          <p className="text-[13px] text-slate-500 mt-0.5">
-            {subtitle}
-          </p>
+          {subtitle && (
+            <div className="text-[12.5px] mt-1.5" style={{ color: 'var(--b-text-mute)' }}>
+              {subtitle}
+            </div>
+          )}
         </div>
-        {headerAction}
+        <div className="ml-auto">{headerAction}</div>
       </div>
 
-      <Card className="flex-1 min-h-0 flex flex-col">
-        <CardHeader className="shrink-0">
-          <CardTitle>{cardTitle ?? `All ${title.toLowerCase()}`}</CardTitle>
+      {/* DATA CARD — bento surface, rounded-[18px], holds search + table */}
+      <div
+        className="flex-1 min-h-0 flex flex-col rounded-[18px] border overflow-hidden"
+        style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}
+      >
+        <div
+          className="flex items-center gap-3 px-5 py-3.5 border-b shrink-0 flex-wrap"
+          style={{ borderColor: 'var(--b-line-soft)' }}
+        >
+          <span className="b-display text-[13px] font-semibold" style={{ color: 'var(--b-text)' }}>
+            {cardTitle ?? `All ${title.toLowerCase()}`}
+          </span>
           <div className="flex items-center gap-2 flex-1 max-w-xs ml-auto">
             {cardAction}
             <Input
@@ -80,10 +98,15 @@ export function ListPage<T>({
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder={searchPlaceholder}
-              className="h-7 text-[12px] bg-[#111111] border-[#1f1f1f] text-slate-200 placeholder:text-slate-500"
+              className="h-7 text-[12px]"
+              style={{
+                background: 'var(--b-page)',
+                border: '1px solid var(--b-line)',
+                color: 'var(--b-text)',
+              }}
             />
           </div>
-        </CardHeader>
+        </div>
 
         <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
           {isLoading ? (
@@ -137,7 +160,7 @@ export function ListPage<T>({
             />
           )}
         </div>
-      </Card>
+      </div>
     </div>
   );
 }
