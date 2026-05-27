@@ -124,15 +124,20 @@ export const SupabaseSelectField: React.FC<Props> = ({
         .limit(source.limit ?? 500);
       if (source.scopeByCompany && currentCompanyId && currentCompanyId !== 'ALL') {
         const col = source.companyIdColumn ?? 'companyId';
-        // Default: match this company OR untagged ALL legacy rows.
-        // When sharedWithColumn is set (or implicit for the customers
-        // table — its sharedWith array column is the cross-company
-        // sharing mechanism), also match rows that have been shared
-        // with the current company. Mirrors v2/queries/useCustomers.ts
-        // so the picker and the listing page agree on what's visible.
+        // Strict scoping: only rows tagged to this company OR explicitly
+        // shared via the sharedWith array. The OR companyId.eq.ALL legacy
+        // fallback used to widen the query to surface untagged rows, but
+        // it leaked customers across every company (COTTON PROCESSING
+        // tagged 'ALL' showed up in GENRYO, etc.) — see commits fb864d7
+        // and the matching companion fix in v2/queries/useCustomers.ts.
+        //
+        // To make a customer visible to multiple companies, use the
+        // CustomerDrawer "Shared with" picker (writes to sharedWith).
+        // Untagged ALL rows now need a one-time reassignment to a real
+        // companyId; the Customers listing surfaces this for cleanup.
         const sharedCol = source.sharedWithColumn
           ?? (source.table === 'customers' ? 'sharedWith' : undefined);
-        let orClause = `${col}.eq.${currentCompanyId},${col}.eq.ALL`;
+        let orClause = `${col}.eq.${currentCompanyId}`;
         if (sharedCol) {
           orClause += `,"${sharedCol}".cs.{${currentCompanyId}}`;
         }
