@@ -395,6 +395,82 @@ export function useTransactionsForTarget(opts: UseTxnsForTargetOpts) {
   );
 }
 
+/** Edit an existing transaction's fields + (optionally) the amount on
+ *  one of its allocations. Used by the per-invoice transactions
+ *  editor on Receivables / Payables — the user can fix a wrong date,
+ *  method, reference, or amount without voiding + recreating.
+ *
+ *  If `allocationId` + `allocationAmount` are passed, the matching
+ *  transaction_allocations row is updated AND the parent transaction
+ *  amount is set to the sum of all its allocations (so the AR/AP
+ *  balance views recompute correctly).
+ */
+export interface UpdateTransactionInput {
+  id: string;
+  txnDate?: string;
+  amount?: number;
+  method?: TxnMethod | null;
+  reference?: string | null;
+  memo?: string | null;
+  receiptUrl?: string | null;
+  allocationEdit?: {
+    allocationId: string;
+    amount: number;
+  };
+}
+
+export function useUpdateTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: UpdateTransactionInput) => {
+      const supabase = getSupabaseClient();
+      const patch: Record<string, unknown> = {
+        updatedAt: new Date().toISOString(),
+      };
+      if (input.txnDate  !== undefined) patch.txnDate  = input.txnDate;
+      if (input.method   !== undefined) patch.method   = input.method;
+      if (input.reference !== undefined) patch.reference = input.reference;
+      if (input.memo     !== undefined) patch.memo     = input.memo;
+      if (input.receiptUrl !== undefined) patch.receiptUrl = input.receiptUrl;
+      if (input.amount !== undefined) patch.amount = input.amount;
+
+      // If editing an allocation, write that first so the txn-amount
+      // sync below sees the new value.
+      if (input.allocationEdit) {
+        const { error: allocErr } = await supabase
+          .from('transaction_allocations')
+          .update({ amount: input.allocationEdit.amount })
+          .eq('id', input.allocationEdit.allocationId);
+        if (allocErr) throw new Error(allocErr.message);
+        // Re-fetch all allocations for this txn and sum them so the
+        // parent amount stays consistent — otherwise the AR balance
+        // view shows the OLD payment total even after the edit.
+        const { data: allocs, error: fetchErr } = await supabase
+          .from('transaction_allocations')
+          .select('amount')
+          .eq('"transactionId"', input.id);
+        if (fetchErr) throw new Error(fetchErr.message);
+        const newAmount = ((allocs as Array<{ amount: number | string }> | null) ?? [])
+          .reduce((s, a) => s + (Number(a.amount) || 0), 0);
+        patch.amount = newAmount;
+      }
+
+      const { error } = await supabase
+        .from('transactions')
+        .update(patch)
+        .eq('id', input.id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['transactions_for_target'] });
+      qc.invalidateQueries({ queryKey: ['ar_invoice_balances'] });
+      qc.invalidateQueries({ queryKey: ['ap_supplier_invoice_balances'] });
+      qc.invalidateQueries({ queryKey: ['ap_po_balances'] });
+    },
+  });
+}
+
 /** Soft-delete (set status = 'VOIDED'). Allocations stay for audit. */
 export function useVoidTransaction() {
   const qc = useQueryClient();

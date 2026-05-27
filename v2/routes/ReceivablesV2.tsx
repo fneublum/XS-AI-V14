@@ -15,6 +15,8 @@ import { useReceivables, Receivable } from '../queries/useReceivables';
 import { useArBalances } from '../queries/useTransactions';
 import { RecordPaymentDrawer, type PrefillInvoice, type OcrPrefill } from '../components/RecordPaymentDrawer';
 import { ReceiptUploadModal, type ReceiptExtracted } from '../components/ReceiptUploadModal';
+import { InvoiceStatementModal } from '../components/InvoiceStatementModal';
+import { InvoiceTransactionsEditModal } from '../components/InvoiceTransactionsEditModal';
 import { Wallet, Sparkles } from 'lucide-react';
 import { useEditor } from '../providers/EditorProvider';
 import { useCompany } from '../providers/CompanyProvider';
@@ -283,11 +285,22 @@ const ReceivablesV2: React.FC = () => {
     });
   }, []);
 
+  // View action shows the statement (T-account: invoice total ·
+  // receipts · balance) in a modal. Edit action opens the
+  // transactions editor where every receipt allocated to this
+  // invoice can have its date / amount / method / reference fixed
+  // or be voided. Both are overrides on useRowCrud — the rest of
+  // the row-actions cluster (Delete confirm, etc.) stays unchanged.
+  const [statementRow, setStatementRow] = useState<Receivable | null>(null);
+  const [editTxnsRow, setEditTxnsRow]   = useState<Receivable | null>(null);
+
   const { rowActions: crudActions, drawers, openView } = useRowCrud<Receivable>({
     table: 'invoices',
     listQueryKeys: ['receivables', 'invoices'],
     rowLabel: r => `${r.invoiceNumber} → ${r.customerName}`,
     fields,
+    onView: (row) => setStatementRow(row),
+    onEdit: (row) => setEditTxnsRow(row),
   });
 
   // Compose: prepend a Receipt button, then the existing View/Edit/Delete.
@@ -391,6 +404,41 @@ const ReceivablesV2: React.FC = () => {
         ocrPrefill={ocrPrefill ?? undefined}
         onSuccess={() => { ar.refetch(); rec.refetch(); }}
       />
+
+      {/* View modal — invoice statement (T-account). Reads the
+          AR-view's authoritative totals so figures match the row in
+          the list exactly. */}
+      {statementRow && (() => {
+        const b = balances[statementRow.id];
+        const paid = b ? b.paid : Math.max(0, statementRow.totalAmount - (b?.balance ?? statementRow.totalAmount));
+        return (
+          <InvoiceStatementModal
+            open={true}
+            onOpenChange={(v) => { if (!v) setStatementRow(null); }}
+            invoiceId={statementRow.id}
+            documentLabel={statementRow.invoiceNumber}
+            counterpartyName={statementRow.customerName}
+            invoiceTotal={statementRow.totalAmount}
+            paid={paid}
+            currency={statementRow.currency}
+          />
+        );
+      })()}
+
+      {/* Edit modal — receipts allocated to this invoice. Each row
+          can be edited (date / amount / method / reference) or
+          voided. Mutations invalidate the AR balance view so the
+          Receivables list reflects changes automatically. */}
+      {editTxnsRow && (
+        <InvoiceTransactionsEditModal
+          open={true}
+          onOpenChange={(v) => { if (!v) setEditTxnsRow(null); }}
+          invoiceId={editTxnsRow.id}
+          documentLabel={editTxnsRow.invoiceNumber}
+          counterpartyName={editTxnsRow.customerName}
+          currency={editTxnsRow.currency}
+        />
+      )}
     </>
   );
 };

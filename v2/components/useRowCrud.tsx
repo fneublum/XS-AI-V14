@@ -33,6 +33,13 @@ interface Config<T extends { id: string }> {
    *  (e.g. row has no PDF attached). When omitted, eye opens the
    *  drawer as before. */
   onView?: (row: T, openDrawer: () => void) => void;
+  /** Override the pencil-icon behavior. Same fallback contract as
+   *  onView — when omitted, edit opens the default inspect drawer in
+   *  edit mode. Pages that need a bespoke editor (e.g. Receivables
+   *  editing the linked transactions rather than the invoice fields)
+   *  use this to take over without losing the rest of the row-actions
+   *  cluster. */
+  onEdit?: (row: T, openDrawer: () => void) => void;
 }
 
 interface Result<T> {
@@ -45,7 +52,7 @@ interface Result<T> {
 }
 
 export function useRowCrud<T extends { id: string }>({
-  table, listQueryKeys, rowLabel, fields, title, onDeleted, onEmail, onDuplicate, onView,
+  table, listQueryKeys, rowLabel, fields, title, onDeleted, onEmail, onDuplicate, onView, onEdit,
 }: Config<T>): Result<T> {
   const toast = useToast();
   const [inspectRow, setInspectRow] = useState<T | null>(null);
@@ -55,13 +62,17 @@ export function useRowCrud<T extends { id: string }>({
   const del = useEntityDelete({ table, listQueryKeys });
 
   const openDrawerView = (row: T) => { setInspectRow(row); setInspectMode('view'); };
-  const openEdit = (row: T) => { setInspectRow(row); setInspectMode('edit'); };
-  // When the caller provided an onView override, run it and let it
-  // decide whether to also open the drawer. Otherwise default to the
-  // drawer-only behavior the hook always had.
+  const openDrawerEdit = (row: T) => { setInspectRow(row); setInspectMode('edit'); };
+  // When the caller provided an override, run it and let it decide
+  // whether to also open the default drawer. Otherwise fall back to
+  // the drawer-only behavior the hook always had.
   const openView = (row: T) => {
     if (onView) onView(row, () => openDrawerView(row));
     else openDrawerView(row);
+  };
+  const openEdit = (row: T) => {
+    if (onEdit) onEdit(row, () => openDrawerEdit(row));
+    else openDrawerEdit(row);
   };
 
   const rowActions = (row: T): React.ReactNode => (
