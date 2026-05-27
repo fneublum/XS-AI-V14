@@ -135,15 +135,22 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-// Open a stored receipt — handles both data URLs (small files inlined
-// into the txn row) and regular URLs (eventually Supabase storage).
-// Data URLs are opened via a Blob so Safari/Chrome treat them as
-// downloadable PDFs rather than navigation noise.
-function openReceiptInNewTab(receiptUrl: string): void {
-  if (!receiptUrl) return;
+// Resolve a stored receiptUrl to a previewable URL. Data URLs (small
+// files inlined into the txn row) are decoded into a Blob and exposed
+// as an object URL so <iframe> and <img> render them correctly; plain
+// URLs (eventual Supabase storage paths) pass through unchanged. Also
+// returns the detected MIME so the viewer knows whether to render as
+// <img> (image/*) or <iframe> (PDF / other).
+function resolveReceiptToObjectUrl(receiptUrl: string): { url: string; mime: string; revoke: () => void } | null {
+  if (!receiptUrl) return null;
   if (!receiptUrl.startsWith('data:')) {
-    window.open(receiptUrl, '_blank', 'noopener');
-    return;
+    // Best-effort MIME detection from extension; iframe will render
+    // PDFs natively and most browsers also render images inline.
+    const ext = receiptUrl.split('.').pop()?.toLowerCase() ?? '';
+    const mime = ext === 'pdf' ? 'application/pdf'
+      : ['png','jpg','jpeg','gif','webp','heic'].includes(ext) ? `image/${ext}`
+      : 'application/octet-stream';
+    return { url: receiptUrl, mime, revoke: () => {} };
   }
   try {
     const [meta, b64] = receiptUrl.split(',');
@@ -152,14 +159,10 @@ function openReceiptInNewTab(receiptUrl: string): void {
     const arr = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
     const blob = new Blob([arr], { type: mime });
-    const objectUrl = URL.createObjectURL(blob);
-    window.open(objectUrl, '_blank', 'noopener');
-    // Revoke after a few minutes so we don't leak; the tab will have
-    // already cached the file by then.
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60_000);
+    const url = URL.createObjectURL(blob);
+    return { url, mime, revoke: () => URL.revokeObjectURL(url) };
   } catch {
-    // Fallback: try a direct open even if the decoding failed.
-    window.open(receiptUrl, '_blank', 'noopener');
+    return null;
   }
 }
 
@@ -266,6 +269,27 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
   const [dragOver, setDragOver] = useState(false);
   const [ocrError, setOcrError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Receipt viewer modal ─────────────────────────────────────────
+  // The Eye button (history rows + attached-receipt chip) opens this
+  // in-app modal instead of spawning a new browser tab. The modal
+  // holds the resolved object URL so we can revoke it on close to
+  // avoid leaking Blob memory across sequential views.
+  const [viewerReceiptUrl, setViewerReceiptUrl] = useState<string | null>(null);
+  const [viewerResolved, setViewerResolved] = useState<{ url: string; mime: string; revoke: () => void } | null>(null);
+  useEffect(() => {
+    if (!viewerReceiptUrl) {
+      // Closing: revoke any object URL from the previous open.
+      if (viewerResolved) viewerResolved.revoke();
+      setViewerResolved(null);
+      return;
+    }
+    const resolved = resolveReceiptToObjectUrl(viewerReceiptUrl);
+    setViewerResolved(resolved);
+    return () => { resolved?.revoke(); };
+  }, [viewerReceiptUrl]);
+  function openReceiptViewer(url: string): void { setViewerReceiptUrl(url); }
+  function closeReceiptViewer(): void { setViewerReceiptUrl(null); }
 
   // ── Existing receipts/payments for this target ───────────────────
   // Shows the history of payments already booked against this row so
@@ -567,6 +591,7 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
     : 'Outgoing payment to a supplier. Logs an AP payment and allocates to one or more purchase orders.';
 
   return (
+    <>
     <Drawer
       open={open}
       onOpenChange={onOpenChange}
@@ -616,7 +641,7 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
             isLoading={history.isLoading}
             error={history.error}
             pendingDeleteId={pendingDeleteId}
-            onView={openReceiptInNewTab}
+            onView={openReceiptViewer}
             onDelete={deleteHistoryEntry}
           />
         )}
@@ -648,7 +673,7 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
               </div>
               <button
                 type="button"
-                onClick={() => openReceiptInNewTab(receiptDataUrl)}
+                onClick={() => openReceiptViewer(receiptDataUrl)}
                 className="text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1 text-[11.5px] shrink-0 ml-2"
               >
                 <Eye size={11} /> View
@@ -1054,6 +1079,78 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
         </div>
       </div>
     </Drawer>
+
+    {/* ── Receipt viewer modal ───────────────────────────────────────
+        Renders the attached receipt file in-app (image inline, PDF in
+        an iframe) instead of spawning a new browser tab. Closes on
+        backdrop click, X button, or Escape. Object URLs are revoked
+        in the useEffect cleanup so we don't leak Blob memory. */}
+    {viewerReceiptUrl && (
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => { if (e.target === e.currentTarget) closeReceiptViewer(); }}
+        onKeyDown={(e) => { if (e.key === 'Escape') closeReceiptViewer(); }}
+        className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      >
+        <div
+          className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg shadow-2xl flex flex-col w-full"
+          style={{ maxWidth: '900px', height: 'min(900px, 90vh)' }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#1f1f1f] shrink-0">
+            <div className="flex items-center gap-2 text-slate-200 text-[13px] truncate">
+              <FileText size={14} className="text-emerald-400 shrink-0" />
+              <span className="truncate">Receipt</span>
+              {viewerResolved && (
+                <span className="text-slate-600 text-[11px] uppercase tracking-wider ml-2">
+                  {viewerResolved.mime.split('/')[1]?.toUpperCase() ?? viewerResolved.mime}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {viewerResolved && (
+                <a
+                  href={viewerResolved.url}
+                  download={`receipt.${viewerResolved.mime.split('/')[1] || 'bin'}`}
+                  className="text-[11.5px] text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1 px-2 py-1 rounded border border-emerald-500/30 hover:bg-emerald-500/10"
+                >
+                  Download
+                </a>
+              )}
+              <button
+                onClick={closeReceiptViewer}
+                title="Close (Esc)"
+                aria-label="Close"
+                className="text-slate-400 hover:text-slate-100 text-xl leading-none w-7 h-7 inline-flex items-center justify-center rounded hover:bg-slate-700/40"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+
+          {/* Body — image or iframe based on detected MIME */}
+          <div className="flex-1 overflow-auto bg-[#050505] flex items-center justify-center">
+            {!viewerResolved ? (
+              <div className="text-slate-500 text-[12.5px] p-8">Could not load receipt.</div>
+            ) : viewerResolved.mime.startsWith('image/') ? (
+              <img
+                src={viewerResolved.url}
+                alt="Receipt"
+                className="max-w-full max-h-full object-contain"
+              />
+            ) : (
+              <iframe
+                src={viewerResolved.url}
+                title="Receipt"
+                className="w-full h-full border-0 bg-white"
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 };
 
