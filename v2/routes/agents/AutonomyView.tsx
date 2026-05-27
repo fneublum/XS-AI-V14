@@ -132,7 +132,10 @@ export default function AutonomyView() {
         </CardBody>
       </Card>
 
-      {agents.map(a => {
+      {/* Beth is Ana Paula's personal assistant (gmail/gcal scope) and
+        * doesn't propose business actions through the queue — omit her
+        * here so the Autonomy view stays focused on operational agents. */}
+      {agents.filter(a => a.id !== 'beth').map(a => {
         const rows = byAgent.get(a.id) ?? [];
         return (
           <Card key={a.id}>

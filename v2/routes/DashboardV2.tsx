@@ -1129,17 +1129,17 @@ function BentoMessage({ m, personas }: { m: ChatMessage; personas: Personas }) {
   const display = isUser ? 'You' : (personas[author]?.display ?? AGENT_LABELS[author]?.display ?? author);
   const color = `var(--b-c-${author}, var(--b-text-soft))`;
   return (
-    <div className={cn('flex gap-3 px-5 py-3.5 border-b', isUser && 'flex-row-reverse')} style={{ borderColor: 'var(--b-line-soft)' }}>
-      <div className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center b-display text-[11px] font-bold text-white" style={{ background: color }}>
+    <div className={cn('flex gap-2 px-4 py-1.5', isUser && 'flex-row-reverse')}>
+      <div className="w-5 h-5 mt-1 shrink-0 rounded-md flex items-center justify-center b-display text-[10px] font-bold text-white" style={{ background: color }}>
         {initials(display)}
       </div>
-      <div className={cn('min-w-0 flex flex-col', isUser ? 'items-end' : 'items-start')} style={{ maxWidth: '76%' }}>
-        <div className="flex items-baseline gap-2 mb-1.5">
-          <span className="b-display text-[13px] font-semibold" style={{ color }}>{display}</span>
-          <span className="b-mono text-[11px]" style={{ color: 'var(--b-text-mute)' }}>{fmtTime(m.created_at)}</span>
+      <div className={cn('min-w-0 flex flex-col', isUser ? 'items-end' : 'items-start')} style={{ maxWidth: '80%' }}>
+        <div className="flex items-baseline gap-2 mb-0.5 leading-none">
+          <span className="b-display text-[12px] font-semibold" style={{ color }}>{display}</span>
+          <span className="b-mono text-[10px]" style={{ color: 'var(--b-text-mute)' }}>{fmtTime(m.created_at)}</span>
         </div>
         <div
-          className="rounded-xl border px-3.5 py-2.5 text-[13.5px] leading-[1.6] whitespace-pre-wrap w-fit"
+          className="rounded-lg border px-2.5 py-1.5 text-[13px] leading-[1.45] whitespace-pre-wrap w-fit"
           style={{
             background: isUser ? 'var(--b-teal-soft)' : 'var(--b-surface-2)',
             borderColor: isUser ? 'var(--b-teal-soft)' : 'var(--b-line)',
