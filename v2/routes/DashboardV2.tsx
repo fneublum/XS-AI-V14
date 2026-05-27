@@ -606,7 +606,8 @@ export default function DashboardV2() {
 
       {/* COMPACT HEADER — title + status (left), mode pills + theme toggle (right) */}
       <div className="flex shrink-0 items-center gap-3 flex-wrap">
-        <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
+        <span className="block w-1 h-9 rounded-full mr-0.5" style={{ background: 'var(--b-teal-2)' }} />
+        <h1 className="b-display font-semibold leading-none" style={{ color: 'var(--b-text)', fontSize: '32px', fontVariationSettings: "'opsz' 64, 'wght' 600", letterSpacing: '-0.02em' }}>
           Team room
         </h1>
         <div className="flex items-center gap-2 text-[12.5px]" style={{ color: 'var(--b-text-mute)' }}>

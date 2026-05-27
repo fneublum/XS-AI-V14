@@ -403,7 +403,8 @@ const DocumentAuditV2: React.FC = () => {
     <div className="bento-scope p-4 space-y-4" style={{ maxWidth: '1400px' }}>
       <div className="flex items-center gap-3 flex-wrap">
         <ShieldAlert size={18} style={{ color: 'var(--b-rose)' }} />
-        <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
+        <span className="block w-1 h-9 rounded-full mr-0.5" style={{ background: 'var(--b-teal-2)' }} />
+        <h1 className="b-display font-semibold leading-none" style={{ color: 'var(--b-text)', fontSize: '32px', fontVariationSettings: "'opsz' 64, 'wght' 600", letterSpacing: '-0.02em' }}>
           Document Audit
         </h1>
         <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
