@@ -653,7 +653,13 @@ const InlineCombo: React.FC<{
   }, [open]);
 
   const needle = value.trim().toLowerCase();
-  const substringMatches = needle
+  // When the current value EXACTLY matches one of the options, treat
+  // that as "the user already picked something" and show the full
+  // list so they can switch to a different option. Only filter when
+  // the value is a partial/intermediate typed string. Avoids the
+  // dropdown collapsing to one entry after every selection.
+  const valueMatchesAnOption = !!needle && options.some(o => o.toLowerCase() === needle);
+  const substringMatches = needle && !valueMatchesAnOption
     ? options.filter(o => o.toLowerCase().includes(needle))
     : options;
   // If the user typed something that doesn't match any option via
