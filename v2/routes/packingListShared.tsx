@@ -718,11 +718,23 @@ const CardField: React.FC<{ label: string; children: React.ReactNode }> = ({ lab
 const DualWeight: React.FC<{
   lbs: string;
   onChangeLbs: (v: string) => void;
-}> = ({ lbs, onChangeLbs }) => {
+  /** Optional authoritative KG value. When provided, the KG cell shows
+   *  this verbatim instead of converting from LBS. Used for totals
+   *  rows where summing actual container KG entries is more accurate
+   *  than converting the LBS sum (a 1 lb rounding gap on each
+   *  container compounds into ~0.5 kg of drift on a full PL). */
+  kgs?: string | number | null;
+}> = ({ lbs, onChangeLbs, kgs }) => {
   const [lbsFocus, setLbsFocus] = React.useState(false);
   const [kgFocus, setKgFocus] = React.useState(false);
   const lbsNum = lbs === '' ? null : Number(lbs);
-  const kgsNum = lbsNum == null ? null : lbsNum * LB_TO_KG;
+  const kgsOverride = kgs != null && kgs !== ''
+    ? (typeof kgs === 'number' ? kgs : Number(kgs))
+    : null;
+  // Override wins. When no override, derive from LBS as before.
+  const kgsNum = kgsOverride != null && !Number.isNaN(kgsOverride)
+    ? kgsOverride
+    : (lbsNum == null ? null : lbsNum * LB_TO_KG);
   const lbsDisplay = lbsFocus ? lbs : fmtWeightStr(lbsNum);
   const kgsDisplay = kgFocus
     ? (kgsNum == null ? '' : String(Math.round(kgsNum)))
@@ -1076,20 +1088,28 @@ export const PLReviewForm: React.FC<{
         {(() => {
           const sumGrossLbs = d.containers.reduce((s, c) => s + (c.grossLbs ?? 0), 0);
           const sumNetLbs   = d.containers.reduce((s, c) => s + (c.netLbs   ?? 0), 0);
+          const sumGrossKg  = d.containers.reduce((s, c) => s + (c.grossKg  ?? 0), 0);
+          const sumNetKg    = d.containers.reduce((s, c) => s + (c.netKg    ?? 0), 0);
           const sumVolumes  = d.containers.reduce((s, c) => s + (c.volumes  ?? 0), 0);
           // Prefer the per-container sum; fall back to the header-level
-          // OCR value when containers haven't supplied weights yet.
+          // OCR value when containers haven't supplied weights yet. When
+          // we have container sums for KG too (the common case), pass
+          // them to DualWeight so the KG cell shows the exact sum of
+          // each container's KG field — not LBS-converted-to-KG, which
+          // accumulates rounding drift.
           const grossLbs = sumGrossLbs > 0 ? String(Math.round(sumGrossLbs)) : stripToNumber(d.grossWeight);
           const netLbs   = sumNetLbs   > 0 ? String(Math.round(sumNetLbs))   : stripToNumber(d.netWeight);
+          const grossKg  = sumGrossKg > 0 ? sumGrossKg : null;
+          const netKg    = sumNetKg   > 0 ? sumNetKg   : null;
           return (
             <div className="col-span-2 grid grid-cols-[1fr_1fr_auto] gap-3 items-end">
               <FormField>
                 <FieldLabel>Gross weight (total)</FieldLabel>
-                <DualWeight lbs={grossLbs} onChangeLbs={v => set('grossWeight', v)} />
+                <DualWeight lbs={grossLbs} kgs={grossKg} onChangeLbs={v => set('grossWeight', v)} />
               </FormField>
               <FormField>
                 <FieldLabel>Net weight (total)</FieldLabel>
-                <DualWeight lbs={netLbs} onChangeLbs={v => set('netWeight', v)} />
+                <DualWeight lbs={netLbs} kgs={netKg} onChangeLbs={v => set('netWeight', v)} />
               </FormField>
               <FormField>
                 <FieldLabel>Total volumes</FieldLabel>
