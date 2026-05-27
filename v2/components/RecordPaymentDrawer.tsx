@@ -310,9 +310,15 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
 
   // Handle a file dropped/picked into the embedded OCR zone — runs
   // Gemini, fills the form, and attaches the data URL so it persists
-  // as receiptUrl on save. Pre-filled fields (counterparty when
-  // opened from a row) are left untouched so the OCR can't overwrite
-  // a row-locked customer.
+  // as receiptUrl on save.
+  //
+  // The user explicitly uploaded a receipt to OCR, so the extracted
+  // values WIN over the drawer's defaults (which are placeholders
+  // like today's date / the invoice's outstanding balance / "Wire").
+  // The only field we won't overwrite is a row-locked counterparty —
+  // when opened from an invoice/PO row, the customer/supplier is
+  // structurally fixed and Gemini's guess (often the bank name) must
+  // not replace it.
   async function runOcrOnFile(file: File): Promise<void> {
     setOcrError(null);
     try {
@@ -320,31 +326,54 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
       setReceiptDataUrl(dataUrl);
       setReceiptFileName(file.name);
       const result = await ocr.mutateAsync({ kind: 'file', file });
-      // Only overwrite fields that are currently empty or default —
-      // never replace a row-locked counterparty.
-      if (!invoice && !po && !counterpartyName.trim() && result.counterpartyName) {
+
+      // Track which fields actually changed so the success toast tells
+      // the user exactly what got filled — and the empty case is
+      // surfaced as a warning instead of a silent success.
+      const filled: string[] = [];
+      const isRowLocked = !!(invoice || po);
+      if (!isRowLocked && result.counterpartyName) {
         setCounterpartyName(result.counterpartyName);
+        filled.push('customer');
       }
-      if (result.txnDate) setTxnDate(result.txnDate);
-      if (result.amount > 0 && (!amount || amount === '0.00')) {
+      if (result.txnDate)  { setTxnDate(result.txnDate);  filled.push('date'); }
+      if (result.amount > 0) {
         setAmount(result.amount.toFixed(2));
+        filled.push('amount');
       }
-      if (result.method) setMethod(result.method);
-      if (result.reference && !reference) setReference(result.reference);
-      if (result.memo && !memo) setMemo(result.memo);
-      toast.push({
-        kind: 'success',
-        title: 'Receipt parsed',
-        description: `Filled ${[
-          result.amount ? 'amount' : null,
-          result.txnDate ? 'date' : null,
-          result.method ? 'method' : null,
-          result.reference ? 'reference' : null,
-        ].filter(Boolean).join(' · ') || 'receipt attached'}`,
-      });
+      if (result.method)   { setMethod(result.method);    filled.push('method'); }
+      if (result.reference){ setReference(result.reference); filled.push('reference'); }
+      if (result.memo)     { setMemo(result.memo);        filled.push('memo'); }
+
+      // Mirror to the console so the user can inspect exactly what
+      // Gemini saw vs. what made it onto the form — invaluable when a
+      // receipt is half-extracted ("amount missing but ref ok" etc).
+      // eslint-disable-next-line no-console
+      console.log('[RecordPaymentDrawer] OCR result:', result, 'filled:', filled);
+
+      if (filled.length === 0) {
+        setOcrError(
+          'Gemini returned an empty extraction — the file may be a low-quality scan, '
+          + 'a non-receipt document, or in a format Gemini couldn\'t parse. The file '
+          + 'is still attached; fill the fields manually.',
+        );
+        toast.push({
+          kind: 'error',
+          title: 'No fields extracted',
+          description: 'Receipt attached, but Gemini couldn\'t read any fields. Enter values manually.',
+        });
+      } else {
+        toast.push({
+          kind: 'success',
+          title: 'Receipt parsed',
+          description: `Filled ${filled.join(' · ')}`,
+        });
+      }
     } catch (e: any) {
       const msg = e?.message ?? 'extraction failed';
       setOcrError(msg);
+      // eslint-disable-next-line no-console
+      console.error('[RecordPaymentDrawer] OCR failed:', e);
       toast.push({ kind: 'error', title: 'OCR failed', description: msg.slice(0, 200) });
     }
   }
