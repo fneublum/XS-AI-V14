@@ -67,13 +67,16 @@ interface RawRow {
   bookingNumber: string | null;
 }
 
-function scopeByCompany<Q extends { eq: Function; or: Function }>(q: Q, companyId: string): Q {
-  // 'ALL' scope means no filter. Otherwise include rows scoped to the
-  // current company AND system-wide rows (companyId='ALL') so legacy /
-  // imported sales orders that weren't tagged with a specific company
-  // still surface in the list.
-  if (companyId === 'ALL') return q;
-  return (q.or(`"companyId".eq.${companyId},"companyId".eq.ALL`) as Q);
+function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
+  // Strict company scoping — only rows tagged to the current company.
+  // 'ALL' scope still means no filter at all. We used to widen with
+  // `OR companyId.eq.ALL` to surface legacy/imported rows under every
+  // company, but that bled orders from other companies into the list
+  // (FORT FLEX / GREEN IND showed up under GENRYO INTERNATIONAL even
+  // though they belonged elsewhere). Strict eq matches the pattern
+  // every other query in v2/queries already uses (Bookings, BLs,
+  // Commissions, …).
+  return companyId === 'ALL' ? q : (q.eq('"companyId"', companyId) as Q);
 }
 
 const parseItems = (raw: unknown): LineItem[] => {
