@@ -5,7 +5,7 @@
 
 import React from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X as XIcon, Settings, Building, Users, Plug, ShieldAlert } from 'lucide-react';
+import { X as XIcon, Settings, Building, Users, Plug } from 'lucide-react';
 import { useAuth } from '../providers/AuthProvider';
 import { isAdminRole } from '../lib/roles';
 
@@ -22,17 +22,30 @@ interface Item {
   routeId: string;
 }
 
-const ITEMS: Item[] = [
+// Item.adminOnly gates the entry — non-admin users get a filtered
+// list that only includes the Connections card so they can connect
+// their personal email automation (M365 / Gmail). Companies + Users
+// stay admin-tier-only.
+interface AdminItem extends Item {
+  adminOnly?: boolean;
+  /** Description shown for non-admins. When omitted, the admin
+   *  description is used unchanged. */
+  descriptionForUser?: string;
+}
+
+const ITEMS: AdminItem[] = [
   {
     label: 'Companies', description: 'Legal entities, addresses, EIN',
-    icon: <Building size={16} />, routeId: 'companies',
+    icon: <Building size={16} />, routeId: 'companies', adminOnly: true,
   },
   {
     label: 'Users', description: 'Roles, module access, allowed companies',
-    icon: <Users size={16} />, routeId: 'users',
+    icon: <Users size={16} />, routeId: 'users', adminOnly: true,
   },
   {
-    label: 'Connections', description: 'Outlook / Gmail / QuickBooks / WhatsApp',
+    label: 'Connections',
+    description: 'Outlook / Gmail / QuickBooks / WhatsApp',
+    descriptionForUser: 'Connect your Microsoft 365 or Google Gmail account for email automation',
     icon: <Plug size={16} />, routeId: 'connections',
   },
 ];
@@ -64,44 +77,32 @@ export const SettingsMenuModal: React.FC<Props> = ({ open, onOpenChange, navigat
         </div>
 
         <div className="px-3 py-3 space-y-1.5">
-          {adminTier ? ITEMS.map(it => (
-            <button
-              key={it.routeId}
-              type="button"
-              onClick={() => { onOpenChange(false); navigate(it.routeId); }}
-              className="w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-md border border-[#1f1f1f] bg-[#0f0f0f] hover:border-[#2a2a2a] hover:bg-[#141414] transition-colors"
-            >
-              <span className="p-1.5 rounded-sm bg-[#161616] text-indigo-300 shrink-0">
-                {it.icon}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] text-slate-100 font-medium">
-                  {it.label}
+          {ITEMS
+            // Non-admins only see the cards without `adminOnly`.
+            // Companies / Users stay admin-tier-only; Connections is
+            // shown to everyone so users can hook up their personal
+            // email automation.
+            .filter(it => adminTier || !it.adminOnly)
+            .map(it => (
+              <button
+                key={it.routeId}
+                type="button"
+                onClick={() => { onOpenChange(false); navigate(it.routeId); }}
+                className="w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-md border border-[#1f1f1f] bg-[#0f0f0f] hover:border-[#2a2a2a] hover:bg-[#141414] transition-colors"
+              >
+                <span className="p-1.5 rounded-sm bg-[#161616] text-indigo-300 shrink-0">
+                  {it.icon}
                 </span>
-                <span className="block text-[11.5px] text-slate-500 truncate">
-                  {it.description}
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] text-slate-100 font-medium">
+                    {it.label}
+                  </span>
+                  <span className="block text-[11.5px] text-slate-500 truncate">
+                    {adminTier ? it.description : (it.descriptionForUser ?? it.description)}
+                  </span>
                 </span>
-              </span>
-            </button>
-          )) : (
-            // Defence-in-depth: the sidebar already hides this entry
-            // for non-admins, but if the modal somehow gets opened
-            // (deep-link, programmatic call, future regression),
-            // render a clean access-denied state instead of leaking
-            // the admin route ids via the navigation buttons.
-            <div className="flex flex-col items-center text-center px-4 py-8 gap-3">
-              <span className="p-2.5 rounded-full bg-amber-500/10 text-amber-300">
-                <ShieldAlert size={18} />
-              </span>
-              <div>
-                <div className="text-[13px] font-semibold text-slate-100">Admin access required</div>
-                <div className="text-[11.5px] text-slate-500 mt-1">
-                  Companies, Users, and Connections are restricted to ADMIN / OWNER roles.
-                  Ask a workspace administrator if you need to manage these settings.
-                </div>
-              </div>
-            </div>
-          )}
+              </button>
+            ))}
         </div>
       </Dialog.Content>
     </Dialog.Portal>

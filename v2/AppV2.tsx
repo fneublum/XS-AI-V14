@@ -109,8 +109,6 @@ const buildSections = (
   openSettingsMenu: () => void,
   userRole?: string,
 ): import('./layout/Sidebar').SidebarSection[] => {
-  const adminTier = isAdminRole(userRole);
-
   // Cargo Agent users get a scoped sidebar — only their portal.
   if (userRole === 'Cargo Agent') {
     return [{
@@ -198,13 +196,13 @@ const buildSections = (
     icon: Wrench,
     items: [
       { id: '__data',     label: 'Data',     icon: Database,    onClick: openDataMenu },
-      // Settings (Companies / Users / Connections) is admin-only —
-      // hidden from the sidebar for non-admin tiers. The route
-      // renders below ALSO gate on isAdminRole so a URL deep-link
-      // can't bypass the menu hide.
-      ...(adminTier
-        ? [{ id: '__settings', label: 'Settings', icon: SettingsIcon, onClick: openSettingsMenu }]
-        : []),
+      // Settings is visible to ALL users so everyone can connect
+      // their personal email automation (M365 / Gmail). The modal
+      // itself filters the items shown — non-admins see only the
+      // Connections card; admins see Companies + Users + Connections.
+      // Route-level gates on /users and /companies still block
+      // non-admin URL deep-links.
+      { id: '__settings', label: 'Settings', icon: SettingsIcon, onClick: openSettingsMenu },
     ],
   },
   ];
@@ -698,8 +696,7 @@ const AppV2Inner: React.FC = () => {
         breadcrumbs={breadcrumbs}
         onSearch={() => setPaletteOpen(true)}
         onOpenSettings={() => navigate('settings')}
-        // TopBar plug icon hidden for non-admins (Connections is admin-only).
-        onOpenConnections={isAdminRole(user?.role) ? () => navigate('connections') : undefined}
+        onOpenConnections={() => navigate('connections')}
       >
         <Suspense fallback={<Fallback />}>
           {activeId === 'dashboard'       && <DashboardV2 />}
@@ -742,7 +739,11 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'ai-logistics'    && <AiLogisticsManagerV2 />}
           {activeId === 'email-agent'     && <EmailAgentV2 />}
           {activeId === 'settings'        && <SettingsV2 />}
-          {activeId === 'connections'     && (isAdminRole(user?.role) ? <ConnectionsV2 />    : <AdminAccessDenied label="Connections" />)}
+          {/* Connections is open to all users so everyone can
+              connect their personal email automation (M365 / Gmail).
+              The page itself filters out admin-only connection cards
+              (QuickBooks, shared mailbox) for non-admins. */}
+          {activeId === 'connections'     && <ConnectionsV2 />}
           {activeId === 'connections-hub'  && <ConnectionsHubV2 />}
           {activeId === 'ai-inbox'         && <AiInboxV2 />}
           {activeId === 'sopici'          && <AgentSalesOrdersV2 />}

@@ -20,6 +20,8 @@ import { Card, CardBody, Badge } from '../primitives';
 import { cn } from '../primitives/utils';
 import { useToast } from '../primitives/Toast';
 import { useCompany } from '../providers/CompanyProvider';
+import { useAuth } from '../providers/AuthProvider';
+import { isAdminRole } from '../lib/roles';
 import {
   connectToQuickBooks, disconnectQuickBooks, getQBConnectionStatus,
   fetchQBCustomers,
@@ -60,6 +62,12 @@ const ConnectionsV2: React.FC = () => {
   const toast = useToast();
   const { currentCompanyId } = useCompany();
   const companyId = currentCompanyId || 'ALL';
+  // Non-admin users only need to connect their own email automation
+  // (M365 Primary or Gmail). QuickBooks, Supabase login, and the
+  // shared "Automation" mailbox are workspace-wide and stay
+  // admin-only via the filter applied to `cards` below.
+  const { user } = useAuth();
+  const adminTier = isAdminRole(user?.role);
 
   const [supabase,   setSupabase]   = useState<IntegrationState>(EMPTY_STATE);
   const [qb,         setQb]         = useState<IntegrationState>(EMPTY_STATE);
@@ -445,6 +453,9 @@ const ConnectionsV2: React.FC = () => {
 
   // ── Render ───────────────────────────────────────────────────
 
+  // Each card flags whether it's an admin-only workspace
+  // integration. The filter at the end of the array keeps only
+  // user-personal email connections for non-admins.
   const panels = useMemo(() => ([
     {
       id: 'supabase',
@@ -459,6 +470,7 @@ const ConnectionsV2: React.FC = () => {
       onRefresh: refreshSupabase,
       connectDisabled: true,
       connectLabel: 'Sign in (use login screen)',
+      adminOnly: true,
     },
     {
       id: 'qb',
@@ -471,6 +483,7 @@ const ConnectionsV2: React.FC = () => {
       onDisconnect: disconnectQb,
       onTest: testQb,
       onRefresh: refreshQb,
+      adminOnly: true,
     },
     {
       id: 'ms-my',
@@ -483,6 +496,7 @@ const ConnectionsV2: React.FC = () => {
       onDisconnect: () => disconnectMs('my'),
       onTest: () => testMs('my'),
       onRefresh: () => refreshMs('my'),
+      adminOnly: false,
     },
     {
       id: 'ms-automation',
@@ -495,6 +509,7 @@ const ConnectionsV2: React.FC = () => {
       onDisconnect: () => disconnectMs('automation'),
       onTest: () => testMs('automation'),
       onRefresh: () => refreshMs('automation'),
+      adminOnly: true,
     },
     {
       id: 'gmail',
@@ -507,6 +522,7 @@ const ConnectionsV2: React.FC = () => {
       onDisconnect: disconnectGmail,
       onTest: testGmail,
       onRefresh: refreshGmail,
+      adminOnly: false,
     },
   ] as const), [
     supabase, qb, msPrimary, msAuto, gmail,
@@ -521,17 +537,18 @@ const ConnectionsV2: React.FC = () => {
       <div>
         <div className="flex items-center gap-2">
           <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
-            Connections
+            {adminTier ? 'Connections' : 'Email automation'}
           </h1>
           <Badge variant="info">Live</Badge>
         </div>
         <p className="text-[13px] text-slate-500 mt-1">
-          Per-integration connect, disconnect, test, and scope inspection.
-          All actions route through the existing v1 service layer — no new OAuth code.
+          {adminTier
+            ? 'Per-integration connect, disconnect, test, and scope inspection. All actions route through the existing v1 service layer — no new OAuth code.'
+            : 'Connect your Microsoft 365 or Google Gmail account so the AI Email Assistant can read and send messages on your behalf. Disconnect any time.'}
         </p>
       </div>
 
-      {panels.map(p => (
+      {panels.filter(p => adminTier || !p.adminOnly).map(p => (
         <IntegrationPanel
           key={p.id}
           id={p.id}
