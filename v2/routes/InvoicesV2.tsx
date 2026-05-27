@@ -241,15 +241,27 @@ const InvoicesV2: React.FC = () => {
       return (data as PdfBankRow[] | null) ?? [];
     },
   );
-  // Only ERP-issued sales invoices belong on this surface — AI-extracted
-  // drafts (uploaded supplier PDFs, BLs, packing-lists in transit) sit
-  // in the `invoices` table with `ai_status = 'ai_draft'` because the
-  // OCR pipeline writes there first, but they are NOT sales invoices
-  // and shouldn't pollute the AR ledger view. Rejected drafts are also
-  // filtered out — they're trash. Approved (and untagged, the legacy
-  // default) are real sales invoices.
+  // Only ERP-issued sales invoices belong on this surface. The raw
+  // `invoices` table mixes three kinds of rows:
+  //   (a) ERP-issued sales invoices — created via "New invoice" or
+  //       the Packing list & Invoice wizard. Always have a soldTo +
+  //       a positive totalAmount.
+  //   (b) AI-extracted drafts from uploaded supplier PDFs / BLs /
+  //       packing-lists — ai_status = 'ai_draft'.
+  //   (c) Legacy / orphaned rows from historical AI flows that got
+  //       "approved" but never had their fields filled in — they sit
+  //       around with $0.00 amounts and most columns empty.
+  //
+  // Filter keeps (a): rows that have a positive amount AND a customer
+  // name (soldTo or billToName). Drops (b) and (c) outright.
   const ledgerInvoices = useMemo(
-    () => (invoices.data ?? []).filter(i => i.ai_status !== 'ai_draft' && i.ai_status !== 'rejected'),
+    () => (invoices.data ?? []).filter(i => {
+      if (i.ai_status === 'ai_draft' || i.ai_status === 'rejected') return false;
+      if (!(i.totalAmount > 0)) return false;
+      const customer = (i.soldTo || i.billToName || '').trim();
+      if (!customer) return false;
+      return true;
+    }),
     [invoices.data],
   );
   const total = ledgerInvoices.reduce((s, r) => s + r.totalAmount, 0);
