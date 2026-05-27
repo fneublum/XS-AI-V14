@@ -56,6 +56,22 @@ interface AllocationRow {
   amount: string;               // string while editing
 }
 
+/** Initial values from OCR extraction. Pre-fills the form so the user
+ *  just reviews + confirms. All fields optional — the user can edit. */
+export interface OcrPrefill {
+  counterpartyName?: string;
+  txnDate?: string;
+  amount?: number;
+  currency?: string;
+  method?: TxnMethod;
+  reference?: string;
+  memo?: string;
+  receiptDataUrl?: string;
+  /** Hint for matching to an open invoice. Currently informational
+   *  — Phase 2 doesn't auto-link; user picks allocation manually. */
+  invoiceNumberHint?: string;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -67,6 +83,10 @@ interface Props {
   supplierInvoice?: PrefillSupplierInvoice;
   /** Single-PO flow (AP, rarer — direct PO advance). */
   po?: PrefillPo;
+  /** OCR-extracted values from a receipt PDF. Mutually exclusive with
+   *  invoice/supplierInvoice/po — those are row-context flows; this is
+   *  the upload flow. */
+  ocrPrefill?: OcrPrefill;
   onSuccess?: () => void;
 }
 
@@ -88,7 +108,7 @@ function newAllocId(): string {
 }
 
 export const RecordPaymentDrawer: React.FC<Props> = ({
-  open, onOpenChange, mode, invoice, supplierInvoice, po, onSuccess,
+  open, onOpenChange, mode, invoice, supplierInvoice, po, ocrPrefill, onSuccess,
 }) => {
   const toast = useToast();
   const create = useCreateTransaction();
@@ -138,18 +158,25 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
         label: `${po.poNumber}${po.supplierName ? ` · ${po.supplierName}` : ''}`,
         amount: po.outstanding.toFixed(2),
       }]);
+    } else if (ocrPrefill) {
+      // OCR-extracted values — seed the form, leave allocations empty so
+      // the user can pick which invoice / bill this payment settles.
+      setAmount(ocrPrefill.amount != null ? ocrPrefill.amount.toFixed(2) : '');
+      setCounterpartyName(ocrPrefill.counterpartyName ?? '');
+      setCounterpartyId(undefined);
+      setAllocations([]);
     } else {
       setAmount('');
       setCounterpartyName('');
       setCounterpartyId(undefined);
       setAllocations([]);
     }
-    setTxnDate(today);
-    setMethod('WIRE');
-    setReference('');
-    setMemo('');
+    setTxnDate(ocrPrefill?.txnDate ?? today);
+    setMethod(ocrPrefill?.method ?? 'WIRE');
+    setReference(ocrPrefill?.reference ?? '');
+    setMemo(ocrPrefill?.memo ?? '');
     setAdvanced(false);
-  }, [open, invoice, supplierInvoice, po]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, invoice, supplierInvoice, po, ocrPrefill]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived ─────────────────────────────────────────────────────
   const amountNum = Number(amount) || 0;
@@ -185,17 +212,18 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
     const counterpartyType: CounterpartyType = mode === 'receipt' ? 'CUSTOMER' : 'SUPPLIER';
     try {
       await create.mutateAsync({
-        source: 'MANUAL',
+        source: ocrPrefill ? 'OCR' : 'MANUAL',
         kind,
         txnDate,
         amount: amountNum,
-        currency: invoice?.currency ?? supplierInvoice?.currency ?? po?.currency ?? 'USD',
+        currency: invoice?.currency ?? supplierInvoice?.currency ?? po?.currency ?? ocrPrefill?.currency ?? 'USD',
         method,
         counterpartyType,
         counterpartyId,
         counterpartyName: counterpartyName.trim(),
         reference: reference.trim() || undefined,
         memo: memo.trim() || undefined,
+        receiptUrl: ocrPrefill?.receiptDataUrl,
         allocations: allocations
           .filter(a => (Number(a.amount) || 0) > 0)
           .map(a => ({

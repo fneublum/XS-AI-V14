@@ -13,8 +13,9 @@ import { useRowCrud } from '../components/useRowCrud';
 import { FieldDef } from '../components/QuickCreateDrawer';
 import { useReceivables, Receivable } from '../queries/useReceivables';
 import { useArBalances } from '../queries/useTransactions';
-import { RecordPaymentDrawer, type PrefillInvoice } from '../components/RecordPaymentDrawer';
-import { Wallet } from 'lucide-react';
+import { RecordPaymentDrawer, type PrefillInvoice, type OcrPrefill } from '../components/RecordPaymentDrawer';
+import { ReceiptUploadModal, type ReceiptExtracted } from '../components/ReceiptUploadModal';
+import { Wallet, Sparkles } from 'lucide-react';
 import { useEditor } from '../providers/EditorProvider';
 import { useCompany } from '../providers/CompanyProvider';
 import { useToast } from '../primitives/Toast';
@@ -265,6 +266,22 @@ const ReceivablesV2: React.FC = () => {
 
   // Record-receipt drawer state — opened from the per-row "Receipt" action.
   const [receiptInvoice, setReceiptInvoice] = useState<PrefillInvoice | null>(null);
+  // OCR upload modal + the prefill it produces.
+  const [ocrOpen, setOcrOpen] = useState(false);
+  const [ocrPrefill, setOcrPrefill] = useState<OcrPrefill | null>(null);
+  const handleOcrExtracted = useCallback((e: ReceiptExtracted) => {
+    setOcrPrefill({
+      counterpartyName: e.counterpartyName,
+      txnDate: e.txnDate,
+      amount: e.amount,
+      currency: e.currency,
+      method: e.method ?? undefined,
+      reference: e.reference ?? undefined,
+      memo: e.memo ?? undefined,
+      receiptDataUrl: e.receiptDataUrl ?? undefined,
+      invoiceNumberHint: e.invoiceNumberHint ?? undefined,
+    });
+  }, []);
 
   const { rowActions: crudActions, drawers, openView } = useRowCrud<Receivable>({
     table: 'invoices',
@@ -327,10 +344,17 @@ const ReceivablesV2: React.FC = () => {
         onRowClick={openView}
         rowActions={rowActions}
         headerAction={
-          <Button size="sm" onClick={() => openInvoiceCreate()}
-            className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
-            + New invoice
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => openInvoiceCreate()}
+              className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
+              + New invoice
+            </Button>
+            <Button size="sm" onClick={() => setOcrOpen(true)}
+              className="bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border border-emerald-500/40 text-emerald-200 hover:from-emerald-500/30 hover:to-teal-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
+              <Sparkles size={12} />
+              OCR Receipt
+            </Button>
+          </div>
         }
         emptyTitle="No invoices"
         emptyDescription="No customer invoices in the current scope."
@@ -343,6 +367,22 @@ const ReceivablesV2: React.FC = () => {
         onOpenChange={(v) => { if (!v) setReceiptInvoice(null); }}
         mode="receipt"
         invoice={receiptInvoice ?? undefined}
+        onSuccess={() => { ar.refetch(); rec.refetch(); }}
+      />
+      <ReceiptUploadModal
+        open={ocrOpen}
+        onOpenChange={setOcrOpen}
+        mode="receipt"
+        onExtracted={handleOcrExtracted}
+      />
+      {/* OCR-driven instance — opens after extraction with the parsed
+        * values pre-filled. Separate from the per-row receipt drawer
+        * so the two flows don't share state. */}
+      <RecordPaymentDrawer
+        open={!!ocrPrefill}
+        onOpenChange={(v) => { if (!v) setOcrPrefill(null); }}
+        mode="receipt"
+        ocrPrefill={ocrPrefill ?? undefined}
         onSuccess={() => { ar.refetch(); rec.refetch(); }}
       />
     </>

@@ -10,7 +10,8 @@ import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { useRowCrud } from '../components/useRowCrud';
 import { useApSupplierBalances } from '../queries/useTransactions';
-import { RecordPaymentDrawer, type PrefillSupplierInvoice } from '../components/RecordPaymentDrawer';
+import { RecordPaymentDrawer, type PrefillSupplierInvoice, type OcrPrefill } from '../components/RecordPaymentDrawer';
+import { ReceiptUploadModal, type ReceiptExtracted } from '../components/ReceiptUploadModal';
 import { Wallet, CheckCircle as CheckCircleIcon } from 'lucide-react';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useCompany } from '../providers/CompanyProvider';
@@ -375,6 +376,22 @@ const PayablesV2: React.FC = () => {
 
   // Record-payment drawer state — opened from per-row "Pay" action.
   const [paySupplierInvoice, setPaySupplierInvoice] = useState<PrefillSupplierInvoice | null>(null);
+  // OCR upload modal + the prefill it produces.
+  const [ocrOpen, setOcrOpen] = useState(false);
+  const [ocrPrefill, setOcrPrefill] = useState<OcrPrefill | null>(null);
+  const handleOcrExtracted = React.useCallback((e: ReceiptExtracted) => {
+    setOcrPrefill({
+      counterpartyName: e.counterpartyName,
+      txnDate: e.txnDate,
+      amount: e.amount,
+      currency: e.currency,
+      method: e.method ?? undefined,
+      reference: e.reference ?? undefined,
+      memo: e.memo ?? undefined,
+      receiptDataUrl: e.receiptDataUrl ?? undefined,
+      invoiceNumberHint: e.invoiceNumberHint ?? undefined,
+    });
+  }, []);
 
   const { rowActions: crudActions, drawers, openView } = useRowCrud<Payable>({
     table: 'invoices_suppliers',
@@ -446,7 +463,12 @@ const PayablesV2: React.FC = () => {
             <Button size="sm" onClick={() => setAiUploadOpen(true)}
               className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
               <Sparkles size={12} />
-              AI Upload
+              AI Upload Bill
+            </Button>
+            <Button size="sm" onClick={() => setOcrOpen(true)}
+              className="bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border border-emerald-500/40 text-emerald-200 hover:from-emerald-500/30 hover:to-teal-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
+              <Sparkles size={12} />
+              OCR Receipt
             </Button>
           </div>
         }
@@ -470,6 +492,19 @@ const PayablesV2: React.FC = () => {
         onOpenChange={(v) => { if (!v) setPaySupplierInvoice(null); }}
         mode="payment"
         supplierInvoice={paySupplierInvoice ?? undefined}
+        onSuccess={() => { ap.refetch(); pay.refetch(); }}
+      />
+      <ReceiptUploadModal
+        open={ocrOpen}
+        onOpenChange={setOcrOpen}
+        mode="payment"
+        onExtracted={handleOcrExtracted}
+      />
+      <RecordPaymentDrawer
+        open={!!ocrPrefill}
+        onOpenChange={(v) => { if (!v) setOcrPrefill(null); }}
+        mode="payment"
+        ocrPrefill={ocrPrefill ?? undefined}
         onSuccess={() => { ap.refetch(); pay.refetch(); }}
       />
       {aiUploadOpen && (
