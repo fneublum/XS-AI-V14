@@ -9,6 +9,9 @@ import { QuickCreateDrawer, FieldDef } from '../components/QuickCreateDrawer';
 import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { useRowCrud } from '../components/useRowCrud';
+import { useApSupplierBalances } from '../queries/useTransactions';
+import { RecordPaymentDrawer, type PrefillSupplierInvoice } from '../components/RecordPaymentDrawer';
+import { Wallet, CheckCircle as CheckCircleIcon } from 'lucide-react';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useCompany } from '../providers/CompanyProvider';
 import { useToast } from '../primitives/Toast';
@@ -76,10 +79,15 @@ const StatusPill: React.FC<{ label: StatusLabel }> = ({ label }) => {
   );
 };
 
+interface PayableBalanceMap {
+  [supplierInvoiceId: string]: { paid: number; balance: number };
+}
+
 const buildColumns = (
   qbStatuses: Record<string, QBSyncStatus>,
   qbSyncingId: string | null,
   onSendToQb: (row: Payable) => void,
+  balances: PayableBalanceMap,
 ): DataTableColumn<Payable>[] => [
   { id: 'inv', header: 'Invoice #', mono: true, sortable: true, filterable: true,
     value: r => r.invoiceNumber, cell: r => r.invoiceNumber },
@@ -92,6 +100,28 @@ const buildColumns = (
   { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true,
     value: r => r.totalAmount,
     cell: r => fmtMoney(r.totalAmount, r.currency) },
+  { id: 'paid', header: 'Paid', align: 'right', mono: true, sortable: true,
+    value: r => balances[r.id]?.paid ?? 0,
+    cell: r => {
+      const b = balances[r.id];
+      if (!b || b.paid <= 0) return <span className="text-slate-700">—</span>;
+      return <span className="text-emerald-300 tabular-nums">{fmtMoney(b.paid, r.currency)}</span>;
+    } },
+  { id: 'balance', header: 'Balance', align: 'right', mono: true, sortable: true,
+    value: r => balances[r.id]?.balance ?? r.totalAmount,
+    cell: r => {
+      const b = balances[r.id];
+      const bal = b ? b.balance : r.totalAmount;
+      if (bal <= 0.001) {
+        return (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+            <CheckCircleIcon size={10} /> PAID
+          </span>
+        );
+      }
+      const cls = b && b.paid > 0 ? 'text-amber-300' : 'text-slate-200';
+      return <span className={`tabular-nums ${cls}`}>{fmtMoney(bal, r.currency)}</span>;
+    } },
   { id: 'date', header: 'Issued', align: 'right', sortable: true,
     value: r => r.invoiceDate ?? '',
     cell: r => (
@@ -257,7 +287,7 @@ const PayablesV2: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
   const pay = usePayables(search);
-  const total = (pay.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
+  // Headline total — computed below once balances are in scope.
   const insert = useEntityInsert<Record<string, unknown>>({
     table: 'invoices_suppliers',
     listQueryKeys: ['payables'],
@@ -324,17 +354,65 @@ const PayablesV2: React.FC = () => {
     }
   }, [currentCompanyId, qbSyncingId, toast]);
 
-  const columns = React.useMemo(
-    () => buildColumns(qbStatuses, qbSyncingId, handleSendToQb),
-    [qbStatuses, qbSyncingId, handleSendToQb],
+  // AP balances: paid/outstanding per supplier invoice from the ledger.
+  const ap = useApSupplierBalances();
+  const balances = React.useMemo(() => {
+    const m: Record<string, { paid: number; balance: number }> = {};
+    for (const b of ap.data ?? []) m[b.supplierInvoiceId] = { paid: b.paid, balance: b.balance };
+    return m;
+  }, [ap.data]);
+  // Balance-aware headline total. Falls back to gross totalAmount per row
+  // until the ap_supplier_invoice_balances view returns.
+  const total = React.useMemo(
+    () => (pay.data ?? []).reduce((s, r) => s + (balances[r.id]?.balance ?? r.totalAmount), 0),
+    [pay.data, balances],
   );
 
-  const { rowActions, drawers, openView } = useRowCrud<Payable>({
+  const columns = React.useMemo(
+    () => buildColumns(qbStatuses, qbSyncingId, handleSendToQb, balances),
+    [qbStatuses, qbSyncingId, handleSendToQb, balances],
+  );
+
+  // Record-payment drawer state — opened from per-row "Pay" action.
+  const [paySupplierInvoice, setPaySupplierInvoice] = useState<PrefillSupplierInvoice | null>(null);
+
+  const { rowActions: crudActions, drawers, openView } = useRowCrud<Payable>({
     table: 'invoices_suppliers',
     listQueryKeys: ['payables'],
     rowLabel: r => r.invoiceNumber,
     fields,
   });
+
+  // Compose: prepend a Pay button on unpaid rows, then existing actions.
+  const rowActions = React.useCallback((r: Payable) => {
+    const b = balances[r.id];
+    const bal = b ? b.balance : r.totalAmount;
+    const paid = bal <= 0.001;
+    return (
+      <div className="flex items-center gap-1 justify-end">
+        {!paid && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPaySupplierInvoice({
+                supplierInvoiceId: r.id,
+                invoiceNumber: r.invoiceNumber,
+                supplierName: r.supplier ?? null,
+                outstanding: bal,
+                currency: r.currency,
+              });
+            }}
+            title="Record supplier payment"
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
+          >
+            <Wallet size={10} /> Pay
+          </button>
+        )}
+        {crudActions(r)}
+      </div>
+    );
+  }, [balances, crudActions]);
 
   const openCreate = () => setCreateOpen(true);
 
@@ -387,6 +465,13 @@ const PayablesV2: React.FC = () => {
         fields={fields}
       />
       {drawers}
+      <RecordPaymentDrawer
+        open={!!paySupplierInvoice}
+        onOpenChange={(v) => { if (!v) setPaySupplierInvoice(null); }}
+        mode="payment"
+        supplierInvoice={paySupplierInvoice ?? undefined}
+        onSuccess={() => { ap.refetch(); pay.refetch(); }}
+      />
       {aiUploadOpen && (
         <AiUploadModal<PayableDraft>
           open={aiUploadOpen}

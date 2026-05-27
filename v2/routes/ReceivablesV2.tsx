@@ -12,6 +12,9 @@ import { ListPage } from '../components/ListPage';
 import { useRowCrud } from '../components/useRowCrud';
 import { FieldDef } from '../components/QuickCreateDrawer';
 import { useReceivables, Receivable } from '../queries/useReceivables';
+import { useArBalances } from '../queries/useTransactions';
+import { RecordPaymentDrawer, type PrefillInvoice } from '../components/RecordPaymentDrawer';
+import { Wallet } from 'lucide-react';
 import { useEditor } from '../providers/EditorProvider';
 import { useCompany } from '../providers/CompanyProvider';
 import { useToast } from '../primitives/Toast';
@@ -57,10 +60,15 @@ const StatusPill: React.FC<{ label: DueLabel }> = ({ label }) => {
   );
 };
 
+interface BalanceMap {
+  [invoiceId: string]: { paid: number; balance: number };
+}
+
 const buildColumns = (
   qbStatuses: Record<string, QBSyncStatus>,
   qbSyncingId: string | null,
   onSendToQb: (row: Receivable) => void,
+  balances: BalanceMap,
 ): DataTableColumn<Receivable>[] => [
   { id: 'invoice', header: 'Invoice #', mono: true, sortable: true, filterable: true,
     value: r => r.invoiceNumber,
@@ -81,6 +89,28 @@ const buildColumns = (
   { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true,
     value: r => r.totalAmount,
     cell: r => formatMoney(r.totalAmount, r.currency) },
+  { id: 'paid', header: 'Paid', align: 'right', mono: true, sortable: true,
+    value: r => balances[r.id]?.paid ?? 0,
+    cell: r => {
+      const b = balances[r.id];
+      if (!b || b.paid <= 0) return <span className="text-slate-700">—</span>;
+      return <span className="text-emerald-300 tabular-nums">{formatMoney(b.paid, r.currency)}</span>;
+    } },
+  { id: 'balance', header: 'Balance', align: 'right', mono: true, sortable: true,
+    value: r => balances[r.id]?.balance ?? r.totalAmount,
+    cell: r => {
+      const b = balances[r.id];
+      const bal = b ? b.balance : r.totalAmount;
+      if (bal <= 0.001) {
+        return (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+            <CheckCircle size={10} /> PAID
+          </span>
+        );
+      }
+      const cls = b && b.paid > 0 ? 'text-amber-300' : 'text-slate-200';
+      return <span className={`tabular-nums ${cls}`}>{formatMoney(bal, r.currency)}</span>;
+    } },
   { id: 'due', header: 'Due', align: 'right', sortable: true,
     value: r => {
       const d = getDueStatus(r).dueDate;
@@ -154,7 +184,6 @@ const ReceivablesV2: React.FC = () => {
   const [search, setSearch] = useState('');
   const rec = useReceivables(search);
   const { openInvoiceCreate } = useEditor();
-  const outstanding = (rec.data ?? []).reduce((s, r) => s + r.totalAmount, 0);
 
   // ─── QuickBooks sync state ────────────────────────────────────
   const [qbStatuses, setQbStatuses] = useState<Record<string, QBSyncStatus>>({});
@@ -213,17 +242,68 @@ const ReceivablesV2: React.FC = () => {
     }
   }, [currentCompanyId, qbSyncingId, toast]);
 
-  const columns = useMemo(
-    () => buildColumns(qbStatuses, qbSyncingId, handleSendToQb),
-    [qbStatuses, qbSyncingId, handleSendToQb],
+  // AR balances: paid/outstanding per invoice from the transactions ledger.
+  const ar = useArBalances();
+  const balances = useMemo(() => {
+    const m: Record<string, { paid: number; balance: number }> = {};
+    for (const b of ar.data ?? []) m[b.invoiceId] = { paid: b.paid, balance: b.balance };
+    return m;
+  }, [ar.data]);
+  // Headline total — outstanding balance across all visible invoices
+  // (gross totalAmount minus any payments allocated). Until the
+  // balances view has loaded, fall back to gross so the subtitle
+  // doesn't render zero on first paint.
+  const outstanding = useMemo(
+    () => (rec.data ?? []).reduce((s, r) => s + (balances[r.id]?.balance ?? r.totalAmount), 0),
+    [rec.data, balances],
   );
 
-  const { rowActions, drawers, openView } = useRowCrud<Receivable>({
+  const columns = useMemo(
+    () => buildColumns(qbStatuses, qbSyncingId, handleSendToQb, balances),
+    [qbStatuses, qbSyncingId, handleSendToQb, balances],
+  );
+
+  // Record-receipt drawer state — opened from the per-row "Receipt" action.
+  const [receiptInvoice, setReceiptInvoice] = useState<PrefillInvoice | null>(null);
+
+  const { rowActions: crudActions, drawers, openView } = useRowCrud<Receivable>({
     table: 'invoices',
     listQueryKeys: ['receivables', 'invoices'],
     rowLabel: r => `${r.invoiceNumber} → ${r.customerName}`,
     fields,
   });
+
+  // Compose: prepend a Receipt button, then the existing View/Edit/Delete.
+  const rowActions = useCallback((r: Receivable) => {
+    const b = balances[r.id];
+    const bal = b ? b.balance : r.totalAmount;
+    const paid = bal <= 0.001;
+    return (
+      <div className="flex items-center gap-1 justify-end">
+        {!paid && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setReceiptInvoice({
+                invoiceId: r.id,
+                invoiceNumber: r.invoiceNumber,
+                customerName: r.customerName ?? null,
+                customerId: null,
+                outstanding: bal,
+                currency: r.currency,
+              });
+            }}
+            title="Record customer receipt"
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
+          >
+            <Wallet size={10} /> Receipt
+          </button>
+        )}
+        {crudActions(r)}
+      </div>
+    );
+  }, [balances, crudActions]);
 
   return (
     <>
@@ -258,6 +338,13 @@ const ReceivablesV2: React.FC = () => {
         skeletonCols={[100, 200, 80, 100, 80, 80, 80, 80]}
       />
       {drawers}
+      <RecordPaymentDrawer
+        open={!!receiptInvoice}
+        onOpenChange={(v) => { if (!v) setReceiptInvoice(null); }}
+        mode="receipt"
+        invoice={receiptInvoice ?? undefined}
+        onSuccess={() => { ar.refetch(); rec.refetch(); }}
+      />
     </>
   );
 };
