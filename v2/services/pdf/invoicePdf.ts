@@ -156,11 +156,19 @@ export function generateInvoicePdf(
   doc.setFont('helvetica', 'normal');
   doc.text(inv.bookingNumber || inv.transportRef || '-', 175, y);
 
-  // Consignee (bill to) content
-  const contentLineHeight = 4;
+  // Consignee (bill to) content.
+  //
+  // contentLineHeight must match jsPDF's *actual* per-line advance
+  // for the current font size — otherwise multi-line text (the
+  // address, typically 5 wrapped lines) drifts and creates a visible
+  // gap before the next field (email, CNPJ).
+  // Math: fontSize=9pt × lineHeightFactor=1.15 = 10.35pt × 25.4/72
+  // ≈ 3.65 mm/line. Pull the values from the doc so it stays correct
+  // if the font/factor changes upstream.
   y = 74;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
+  const contentLineHeight = doc.getFontSize() * doc.getLineHeightFactor() * 25.4 / 72;
   let consigneeY = y;
 
   doc.setFont('helvetica', 'bold');

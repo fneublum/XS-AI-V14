@@ -131,23 +131,28 @@ export function generatePackingListPdf(
   doc.text(inv.bookingNumber || inv.transportRef || '-', 170, y);
 
   // Consignee (bill to) content
+  // Match jsPDF's actual line height for the current font so a
+  // multi-line address doesn't drift and create a visible gap
+  // before the email / CNPJ line. See invoicePdf.ts for the same
+  // fix and the math (fontSize × lineHeightFactor × 25.4/72).
   y = 74;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
+  const lh = doc.getFontSize() * doc.getLineHeightFactor() * 25.4 / 72;
   let consigneeY = y;
 
   doc.setFont('helvetica', 'bold');
   const consigneeLines = wrapByChars(consigneeName, 30);
   doc.text(consigneeLines, 14, consigneeY);
-  consigneeY += consigneeLines.length * 4;
+  consigneeY += consigneeLines.length * lh;
 
   doc.setFont('helvetica', 'normal');
   if (consigneeAddress) {
     const lines = wrapByChars(consigneeAddress, 30);
     doc.text(lines, 14, consigneeY);
-    consigneeY += lines.length * 4;
+    consigneeY += lines.length * lh;
   }
-  if (consigneeCust?.email) { doc.text(consigneeCust.email, 14, consigneeY); consigneeY += 4; }
+  if (consigneeCust?.email) { doc.text(consigneeCust.email, 14, consigneeY); consigneeY += lh; }
   if (consigneeCust?.taxId) { doc.text(`CNPJ : ${consigneeCust.taxId}`, 14, consigneeY); }
 
   // Notify (ship to)
@@ -155,15 +160,15 @@ export function generatePackingListPdf(
   doc.setFont('helvetica', 'bold');
   const notifyLines = wrapByChars(notifyName, 30);
   doc.text(notifyLines, 75, notifyY);
-  notifyY += notifyLines.length * 4;
+  notifyY += notifyLines.length * lh;
 
   doc.setFont('helvetica', 'normal');
   if (notifyAddress) {
     const lines = wrapByChars(notifyAddress, 30);
     doc.text(lines, 75, notifyY);
-    notifyY += lines.length * 4;
+    notifyY += lines.length * lh;
   }
-  if (notifyCust?.email) { doc.text(notifyCust.email, 75, notifyY); notifyY += 4; }
+  if (notifyCust?.email) { doc.text(notifyCust.email, 75, notifyY); notifyY += lh; }
   if (notifyCust?.taxId) { doc.text(`CNPJ : ${notifyCust.taxId}`, 75, notifyY); }
 
   // Terms / Incoterm / POD
