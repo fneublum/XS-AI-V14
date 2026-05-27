@@ -24,6 +24,8 @@ export interface DataTableColumn<T> {
   header: React.ReactNode;
   cell: (row: T) => React.ReactNode;
   align?: 'left' | 'right' | 'center';
+  /** Override alignment for the header cell only. If omitted, header uses `align`. */
+  headerAlign?: 'left' | 'right' | 'center';
   width?: string;
   mono?: boolean;
   /** Enable the ↕ sort button in the header. */
@@ -310,19 +312,21 @@ export function DataTable<T>({
                   ? rows.map(r => coerce(col.value!(r))).filter(v => v !== '')
                   : [];
 
+              const headerAlign = col.headerAlign ?? col.align ?? 'left';
+              const headerJustify =
+                headerAlign === 'right'  ? 'justify-end'
+                : headerAlign === 'center' ? 'justify-center'
+                : 'justify-between';
               return (
                 <th
                   key={col.id}
                   className={cn(
                     'relative px-3 py-1 text-[10px] font-normal text-slate-500 uppercase tracking-wider select-none',
-                    alignClass[col.align ?? 'left'],
+                    alignClass[headerAlign],
                   )}
                   style={col.width ? { width: col.width } : undefined}
                 >
-                  <div className={cn(
-                    'flex items-center gap-1',
-                    col.align === 'right' ? 'justify-end' : 'justify-between',
-                  )}>
+                  <div className={cn('flex items-center gap-1', headerJustify)}>
                     {col.sortable ? (
                       <button
                         type="button"
