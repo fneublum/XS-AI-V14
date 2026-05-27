@@ -642,6 +642,12 @@ const InlineCombo: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
   const [open, setOpen] = React.useState(false);
+  // Distinguishes "opened via chevron / focus" (browse all) from
+  // "opened because the user is typing" (narrow to what they typed).
+  // A chevron click resets this so the user always sees the full
+  // option list when they click the picker, even if the input has
+  // a value mid-typed or fully selected.
+  const [browseMode, setBrowseMode] = React.useState(false);
   const rootRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     if (!open) return;
@@ -653,19 +659,13 @@ const InlineCombo: React.FC<{
   }, [open]);
 
   const needle = value.trim().toLowerCase();
-  // When the current value EXACTLY matches one of the options, treat
-  // that as "the user already picked something" and show the full
-  // list so they can switch to a different option. Only filter when
-  // the value is a partial/intermediate typed string. Avoids the
-  // dropdown collapsing to one entry after every selection.
-  const valueMatchesAnOption = !!needle && options.some(o => o.toLowerCase() === needle);
-  const substringMatches = needle && !valueMatchesAnOption
-    ? options.filter(o => o.toLowerCase().includes(needle))
-    : options;
-  // If the user typed something that doesn't match any option via
-  // substring (e.g. OCR returned "EXWORKS"), still show the full list
-  // so they can pick the canonical form instead of living with the
-  // unnormalized value.
+  // In browse mode, always show the full list. Otherwise narrow by
+  // substring as the user types — but if nothing matches (e.g. OCR
+  // gave us a non-canonical "EXWORKS"), fall back to the full list
+  // so the user can still pick a canonical option.
+  const substringMatches = browseMode || !needle
+    ? options
+    : options.filter(o => o.toLowerCase().includes(needle));
   const filtered = substringMatches.length > 0 ? substringMatches : options;
 
   return (
@@ -673,13 +673,13 @@ const InlineCombo: React.FC<{
       <div className="flex items-stretch">
         <Input
           value={value}
-          onChange={e => { onChange(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
+          onChange={e => { onChange(e.target.value); setOpen(true); setBrowseMode(false); }}
+          onFocus={() => { setOpen(true); setBrowseMode(true); }}
           placeholder={placeholder}
           className={inputCls + ' flex-1 pr-7'} />
         <button
           type="button"
-          onClick={() => setOpen(o => !o)}
+          onClick={() => { setOpen(o => !o); setBrowseMode(true); }}
           className="-ml-6 relative z-10 flex items-center justify-center w-6 text-slate-500 hover:text-slate-100"
           aria-label="Toggle options"
         >
