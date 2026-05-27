@@ -38,6 +38,7 @@ import { formatMoney as fmtMoney } from '../lib/formatMoney';
 import { saveToDropbox, dropboxFolderName } from '../services/saveToDropbox';
 import { findCompany, InvoicePdfCtx, PdfInvoice, PdfBankRow } from '../services/pdf/types';
 import { isEc4Company } from '../services/pdf/isEc4Company';
+import { generateNextInvoiceNumber } from '../services/invoiceNumbering';
 import { useSupabaseQuery } from '../queries/useSupabaseQuery';
 import { getSupabaseClient } from '../../services/supabase';
 
@@ -445,7 +446,19 @@ const InvoicesV2: React.FC = () => {
         }
         headerAction={
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => openInvoiceCreate()}
+            <Button size="sm" onClick={async () => {
+              // Pre-seed the next per-company INV-#### so the drawer
+              // opens with GENRYO's own sequence (INV-0001, INV-0002…)
+              // instead of inheriting EC4's numbering. User can still
+              // overwrite manually.
+              const nextNumber = await generateNextInvoiceNumber(
+                currentCompanyId && currentCompanyId !== 'ALL' ? currentCompanyId : null,
+              );
+              openInvoiceCreate({
+                invoiceNumber: nextNumber,
+                companyId: currentCompanyId && currentCompanyId !== 'ALL' ? currentCompanyId : null,
+              });
+            }}
               className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
               + New invoice
             </Button>

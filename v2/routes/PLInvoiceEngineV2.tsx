@@ -33,34 +33,10 @@ import {
 } from './packingListShared';
 import { generatePLPerProductPdf, generatePLPerContainerPdf } from '../services/pdf/plResumePdf';
 
-/** Auto-generate the next invoice number in the format INV-99999 —
- *  pulls the highest numeric suffix across existing invoices and adds
- *  1. Falls back to INV-00001 when the table is empty or the query
- *  fails. Always returns a 5-digit padded suffix. */
-async function generateNextInvoiceNumber(): Promise<string> {
-  try {
-    // Order by creation so the "last invoice" matches what the user
-    // sees in the invoices list (not the max number across legacy
-    // records). Scan the first few rows until we find one that matches
-    // the canonical INV-#### shape.
-    const { data } = await getSupabaseClient()
-      .from('invoices')
-      .select('invoiceNumber, invoiceDate, createdAt')
-      .order('invoiceDate', { ascending: false, nullsFirst: false })
-      .order('createdAt',   { ascending: false, nullsFirst: false })
-      .limit(100);
-    const rows = (data as Array<{ invoiceNumber: string | null }> | null) ?? [];
-    for (const r of rows) {
-      const m = (r.invoiceNumber ?? '').match(/^INV-(\d{1,6})$/i);
-      if (!m) continue;
-      // No zero-padding — e.g. INV-8013 → INV-8014.
-      return `INV-${Number(m[1]) + 1}`;
-    }
-    return 'INV-1';
-  } catch {
-    return 'INV-1';
-  }
-}
+// Per-company INV-#### generator lives in v2/services/invoiceNumbering
+// so both this PL → Invoice flow and the "+ New invoice" button in
+// InvoicesV2 share one sequence-per-company implementation.
+import { generateNextInvoiceNumber } from '../services/invoiceNumbering';
 
 const fmt = (n: number, c: string = 'USD') => {
   try {
@@ -689,17 +665,23 @@ const InvoicePreview: React.FC<InvoicePreviewProps> = ({ pl, onInvoiced }) => {
                     };
                   });
                   const incotermCode = (plDraft.freightTerms || '').split(' ')[0] || 'FOB';
-                  // Auto-generate INV-##### as last-invoice + 1.
-                  const nextInvoiceNumber = await generateNextInvoiceNumber();
                   // Company defaults to the PL's shipper (which is one
                   // of the user's own companies). Fall back to the
                   // current scoped company if the shipper name doesn't
-                  // match a company row.
+                  // match a company row. Must be resolved BEFORE the
+                  // invoice-number generator runs so each company keeps
+                  // its own INV sequence (GENRYO must NOT pull from
+                  // EC4's pool — see commit fixing the cross-company
+                  // numbering leak).
                   const companyByShipper = (companies.data ?? []).find(
                     c => c.name.trim().toLowerCase() === (plDraft.shipper || '').trim().toLowerCase(),
                   );
                   const seedCompanyId = companyByShipper?.id
                     ?? (currentCompanyId && currentCompanyId !== 'ALL' ? currentCompanyId : null);
+                  // Auto-generate INV-#### scoped to the resolved
+                  // company so each tenant has an independent sequence
+                  // starting at INV-0001.
+                  const nextInvoiceNumber = await generateNextInvoiceNumber(seedCompanyId);
                   openInvoiceCreate({
                     companyId: seedCompanyId,
                     invoiceNumber: nextInvoiceNumber,
