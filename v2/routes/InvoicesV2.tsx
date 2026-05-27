@@ -69,8 +69,7 @@ const buildColumns = (
         {r.invoiceNumber}
       </span>
     ) },
-  { id: 'sold', header: 'Sold to', sortable: true, filterable: true,
-    // No width — this is the flex column that absorbs leftover space.
+  { id: 'sold', header: 'Sold to', sortable: true, filterable: true, width: '165px',
     value: r => r.soldTo ?? r.billToName ?? '',
     cell: r => {
       const full = r.soldTo ?? r.billToName;
