@@ -18,10 +18,55 @@ import { cn } from '../primitives/utils';
 
 // ─── Config ────────────────────────────────────────────────────────────
 
-const CONTROL_PLANE_URL =
-  (typeof window !== 'undefined' && (window as any).XS_AGENTIC_URL) ||
-  import.meta.env.VITE_AGENTIC_URL ||
-  '/xs-agentic';
+import { getEdgeToken } from '@/services/edgeAuth';
+import { getSupabaseConfig } from '@/services/supabase';
+
+// Where the dashboard sends its /chat/* calls. Three modes, picked at
+// call-time per request:
+//
+// 1. ESCAPE HATCH — if window.XS_AGENTIC_URL or VITE_AGENTIC_URL is set,
+//    use it verbatim. Useful for hitting a local control-plane
+//    (http://localhost:7878) during backend dev.
+//
+// 2. SUPABASE PROXY (production) — route through the `agentic-proxy`
+//    Edge Function. Browser only talks to *.supabase.co (which is known
+//    to reach every user / network). The function forwards server-side
+//    to the Tailscale Funnel. This is the path for any logged-in user
+//    in deployed builds.
+//
+// 3. VITE DEV PROXY — `/xs-agentic` rewritten in vite.config.ts to the
+//    funnel. Only works in `npm run dev` since prod has no server-side
+//    proxy.
+//
+// The Supabase proxy ALSO removes the need for the control-plane to do
+// CORS or accept the funnel URL on App Engine's CSP — every call is
+// same-origin from the page's perspective (the function URL is on
+// *.supabase.co which is already in connect-src).
+function getAgenticBase(): { base: string; mode: 'escape' | 'supabase' | 'vite' } {
+  const escape =
+    (typeof window !== 'undefined' && (window as any).XS_AGENTIC_URL) ||
+    import.meta.env.VITE_AGENTIC_URL;
+  if (escape) return { base: escape, mode: 'escape' };
+  // Supabase proxy is the prod path. Falls through to the vite proxy in
+  // dev where getSupabaseConfig is fine but we don't have a JWT yet.
+  try {
+    const token = getEdgeToken();
+    if (token) {
+      const { url } = getSupabaseConfig();
+      return { base: `${url}/functions/v1/agentic-proxy`, mode: 'supabase' };
+    }
+  } catch { /* fall through to vite dev proxy */ }
+  return { base: '/xs-agentic', mode: 'vite' };
+}
+
+// Pretty label for the unreachable banner so we always show *which*
+// path failed, not a misleading "the funnel".
+const CONTROL_PLANE_LABEL = (): string => {
+  const { base, mode } = getAgenticBase();
+  return mode === 'supabase'
+    ? `${base} (proxied via Supabase)`
+    : base;
+};
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -94,10 +139,35 @@ type Mode = 'chat' | 'overview' | 'prompts' | 'crons';
 // ─── API ───────────────────────────────────────────────────────────────
 
 async function api<T = any>(method: string, path: string, body?: any): Promise<T> {
-  const res = await fetch(CONTROL_PLANE_URL + path, {
+  const { base, mode } = getAgenticBase();
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  };
+  if (mode === 'supabase') {
+    // Supabase Edge Function: attach JWT + apikey (gateway requires both).
+    // Do NOT send x-actor — the proxy hardcodes it server-side and the
+    // function's CORS preflight doesn't include x-actor in
+    // Access-Control-Allow-Headers, so sending it triggers a CORS block
+    // (TypeError: Failed to fetch) before the request leaves the browser.
+    const token = getEdgeToken();
+    if (token) {
+      const { key } = getSupabaseConfig();
+      headers.Authorization = `Bearer ${token}`;
+      headers.apikey = key;
+    }
+  } else {
+    // Direct paths (vite dev proxy / escape hatch) talk to the control-
+    // plane, which expects x-actor and has CORS open for it.
+    headers['x-actor'] = 'felipe';
+  }
+  const res = await fetch(base + path, {
     method,
-    headers: { 'content-type': 'application/json', 'x-actor': 'felipe' },
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    // Bypass intermediary/browser caches — we want fresh state on every
+    // poll. Stale cached failures otherwise keep the "unreachable" banner
+    // stuck even after the funnel recovers.
+    cache: 'no-store',
   });
   const text = await res.text();
   // Strict JSON. Non-OK or non-JSON response => throw, so callers'
@@ -141,6 +211,21 @@ const AGENT_RING: Record<string, string> = {
   hermes: 'ring-orange-500/40 bg-orange-500/10',
   felipe: 'ring-emerald-500/40 bg-emerald-500/15',
   system: 'ring-slate-500/40 bg-slate-500/10',
+};
+
+// Hardcoded fallback labels so the team list always shows a proper
+// capitalised name + role tag even if the /chat/personas fetch is slow,
+// stale, or briefly fails. The personas API (when it loads) still wins
+// — these are only used as the default.
+const AGENT_LABELS: Record<string, { display: string; tag: string }> = {
+  max:    { display: 'Max',    tag: 'Manager'   },
+  lara:   { display: 'Lara',   tag: 'Assistant' },
+  matt:   { display: 'Matt',   tag: 'Finance'   },
+  logan:  { display: 'Logan',  tag: 'Shipments' },
+  sal:    { display: 'Sal',    tag: 'Sales'     },
+  beth:   { display: 'Beth',   tag: 'Personal'  },
+  gem:    { display: 'Gem',    tag: 'ERP data'  },
+  hermes: { display: 'Hermes', tag: 'Mac mini'  },
 };
 
 function initials(name: string): string {
@@ -190,9 +275,9 @@ async function fileToAttachment(file: File): Promise<Attachment> {
 // Markup @mentions in user messages so they stand out.
 function renderContent(content: string, role: 'user' | 'agent' | 'system') {
   if (role !== 'user') return content;
-  const parts = content.split(/(@(?:max|lara|logan|beth|gem|hermes))\b/i);
+  const parts = content.split(/(@(?:max|lara|matt|logan|sal|beth|gem|hermes))\b/i);
   return parts.map((p, i) => {
-    if (/^@(max|lara|logan|beth|gem|hermes)$/i.test(p)) {
+    if (/^@(max|lara|matt|logan|sal|beth|gem|hermes)$/i.test(p)) {
       const agent = p.slice(1).toLowerCase();
       return <span key={i} className={cn('rounded px-1 font-medium', AGENT_TONE[agent])}>{p}</span>;
     }
@@ -387,7 +472,7 @@ export default function DashboardV2() {
   // Matt and Sal removed — they were ORCHESTRATION.md personas with no
   // real launchd job on HERMES. Beth omitted from this Dashboard
   // (personal scope; she still has a real launchd job).
-  const agentOrder = ['max', 'lara', 'logan', 'gem', 'hermes'];
+  const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'gem', 'hermes'];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -432,6 +517,9 @@ export default function DashboardV2() {
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Team</div>
             {agentOrder.map(id => {
               const p = personas[id];
+              const fallback = AGENT_LABELS[id];
+              const display = p?.display ?? fallback?.display ?? id;
+              const tag = p?.tag ?? fallback?.tag ?? '';
               return (
                 <button
                   key={id}
@@ -446,11 +534,11 @@ export default function DashboardV2() {
                     'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-1',
                     AGENT_RING[id], AGENT_TONE[id],
                   )}>
-                    {initials(p?.display ?? id)}
+                    {initials(display)}
                   </span>
                   <span className="min-w-0">
-                    <div className={cn('text-sm font-medium', AGENT_TONE[id])}>{p?.display ?? id}</div>
-                    <div className="truncate text-[11px] text-slate-500">{p?.tag ?? ''}</div>
+                    <div className={cn('text-sm font-medium', AGENT_TONE[id])}>{display}</div>
+                    <div className="truncate text-[11px] text-slate-500">{tag}</div>
                   </span>
                 </button>
               );
@@ -545,8 +633,20 @@ export default function DashboardV2() {
             )}
             {connected === false && (
               <div className="rounded border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-300">
-                Control-plane unreachable at <code>{CONTROL_PLANE_URL}</code>. Start it:
-                <code className="ml-1">cd ~/Desktop/XS-agentic/services/control-plane && PORT=7878 npm start</code>
+                <div>
+                  Control-plane unreachable at <code>{CONTROL_PLANE_LABEL()}</code>.
+                </div>
+                <div className="mt-1 text-xs text-red-300/80">
+                  Calls go: browser → Supabase Edge Function (<code>agentic-proxy</code>) →
+                  Mac mini control-plane (launchd <code>ai.xs-agentic.control-plane</code>).
+                  Likely either the edge function isn't deployed yet, or the mini is offline.
+                </div>
+                <button
+                  onClick={refresh}
+                  className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs font-medium text-red-200 hover:bg-red-500/20"
+                >
+                  Retry
+                </button>
               </div>
             )}
             {messages.map(m => <MessageBubble key={m.id} m={m} personas={personas} />)}
@@ -697,7 +797,7 @@ function OverviewPanel({
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  const agentOrder = ['max','lara','logan','gem','hermes'];
+  const agentOrder = ['max','lara','matt','logan','sal','gem','hermes'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
@@ -715,6 +815,9 @@ function OverviewPanel({
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {agentOrder.map(id => {
               const p = personas[id];
+              const fallback = AGENT_LABELS[id];
+              const display = p?.display ?? fallback?.display ?? id;
+              const tag = p?.tag ?? fallback?.tag ?? '';
               const a = data[id];
               if (!a) return null;
               const report = agentReport(a);
@@ -744,11 +847,11 @@ function OverviewPanel({
                       AGENT_RING[id] ?? AGENT_RING.system,
                       AGENT_TONE[id] ?? AGENT_TONE.system,
                     )}>
-                      {initials(p?.display ?? id)}
+                      {initials(display)}
                     </span>
                     <div className="min-w-0">
-                      <div className={cn('text-sm font-semibold', AGENT_TONE[id])}>{p?.display ?? id}</div>
-                      <div className="text-[11px] text-slate-500">{p?.tag ?? ''}</div>
+                      <div className={cn('text-sm font-semibold', AGENT_TONE[id])}>{display}</div>
+                      <div className="text-[11px] text-slate-500">{tag}</div>
                     </div>
                   </div>
 
@@ -776,7 +879,7 @@ function OverviewPanel({
                         onClick={() => onSend(`@${id} walk me through what's waiting for me.`)}
                         className="text-[12px] text-emerald-400 hover:text-emerald-300"
                       >
-                        Ask {p?.display ?? id} to walk me through →
+                        Ask {display} to walk me through →
                       </button>
                     </div>
                   )}
@@ -802,7 +905,7 @@ function PromptsPanel({
 }) {
   // Beth is intentionally omitted from Prompts too — same rationale as
   // Overview: her domain isn't business operational.
-  const agentOrder = ['max','lara','logan','gem','hermes'];
+  const agentOrder = ['max','lara','matt','logan','sal','gem','hermes'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
@@ -820,6 +923,9 @@ function PromptsPanel({
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {agentOrder.map(id => {
               const p = personas[id];
+              const fallback = AGENT_LABELS[id];
+              const display = p?.display ?? fallback?.display ?? id;
+              const tag = p?.tag ?? fallback?.tag ?? '';
               const s = data[id];
               if (!s) return null;
               return (
@@ -830,10 +936,10 @@ function PromptsPanel({
                       AGENT_RING[id] ?? AGENT_RING.system,
                       AGENT_TONE[id] ?? AGENT_TONE.system,
                     )}>
-                      {initials(p?.display ?? id)}
+                      {initials(display)}
                     </span>
-                    <span className={cn('text-sm font-semibold', AGENT_TONE[id])}>{p?.display ?? id}</span>
-                    <span className="text-xs text-slate-500">{p?.tag ?? ''}</span>
+                    <span className={cn('text-sm font-semibold', AGENT_TONE[id])}>{display}</span>
+                    <span className="text-xs text-slate-500">{tag}</span>
                   </div>
                   <div className="mb-3 text-[11px] text-slate-500">{s.activity}</div>
                   <div className="space-y-1.5">

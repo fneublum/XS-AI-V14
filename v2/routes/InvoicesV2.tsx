@@ -111,7 +111,7 @@ const buildColumns = (
         </span>
       );
     } },
-  { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true, width: '36px',
+  { id: 'amount', header: 'Amount', align: 'right', mono: true, sortable: true, width: '52px',
     value: r => r.totalAmount,
     cell: r => fmtMoney(r.totalAmount, r.currency) },
 ];
