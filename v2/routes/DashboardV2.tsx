@@ -11,10 +11,14 @@
 // the old layout is needed back; this file replaces it entirely.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, UploadCloud, Trash2, LayoutGrid, Sparkles, ArrowLeft, Clock } from 'lucide-react';
+import { MessageSquare, Send, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, UploadCloud, Trash2, LayoutGrid, Sparkles, ArrowLeft, Clock, Sun, Moon, Activity, Wallet, Ship, FileCheck } from 'lucide-react';
 import { Card, CardBody, Button } from '../primitives';
 import { useToast } from '../primitives/Toast';
 import { cn } from '../primitives/utils';
+import { useUiStore, type Theme, resolveTheme } from '../state/uiStore';
+import { useReceivables } from '../queries/useReceivables';
+import { useBookings } from '../queries/useBookings';
+import { useSalesOrders } from '../queries/useSalesOrders';
 
 // ─── Config ────────────────────────────────────────────────────────────
 
@@ -285,6 +289,36 @@ function renderContent(content: string, role: 'user' | 'agent' | 'system') {
   });
 }
 
+// ─── Bento additions ───────────────────────────────────────────────────
+
+interface AuditRow {
+  id: number;
+  ts: string;
+  actor: string;
+  action: string;
+  subject?: string | null;
+  detail: Record<string, any>;
+}
+
+// Subscribe to the theme store so the toggle re-renders on change. The
+// store itself is non-reactive by default — we wire a useEffect that
+// pushes updates into local state.
+function useTheme(): [Theme, (t: Theme) => void] {
+  const [theme, setLocal] = useState<Theme>(() => useUiStore.getState().theme);
+  useEffect(() => useUiStore.subscribe((s) => setLocal(s.theme)), []);
+  return [theme, useUiStore.getState().setTheme];
+}
+
+// "in transit" means the container has shipped but not yet been received
+// by the customer. V14's booking status enum doesn't track receipt
+// explicitly so we treat anything LOADED / DEPARTED / SHIPPED as in
+// transit (any of these means cargo is moving / staged but not delivered).
+const IN_TRANSIT_STATUSES = new Set(['LOADED', 'DEPARTED', 'SHIPPED']);
+
+// "open" sales orders / RFQs / proformas = anything not in a terminal
+// state. INVOICED + CANCELLED are terminal; everything else is open.
+const OPEN_SO_STATUSES = new Set(['DRAFT', 'PROFORMA', 'CONFIRMED', 'PARTIALLY_INVOICED']);
+
 // ─── Dashboard ─────────────────────────────────────────────────────────
 
 export default function DashboardV2() {
@@ -300,9 +334,35 @@ export default function DashboardV2() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
   const [crons, setCrons] = useState<CronsPayload | null>(null);
+  const [audit, setAudit] = useState<AuditRow[]>([]);
+  const [theme, setTheme] = useTheme();
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+
+  // Supabase-backed KPIs (the bento top row). Reuses V14's existing
+  // React Query hooks; they cache + dedupe across the app, so the chat
+  // panel pays no extra cost for showing them.
+  const receivables = useReceivables();
+  const bookings    = useBookings();
+  const salesOrders = useSalesOrders({});
+
+  // Always-on overview + audit polling (powers the queue + activity tail
+  // even when Felipe is in chat mode). Originally only fetched on the
+  // Overview tab; bento surfaces both inline so they need to be live.
+  useEffect(() => {
+    const fetchAll = () => {
+      api<Overview>('GET', '/chat/overview')
+        .then(o => setOverview(o && typeof o === 'object' && !Array.isArray(o) ? o : null))
+        .catch(() => {/* swallow — connected flag covers the user-facing banner */});
+      api<AuditRow[]>('GET', '/audit?limit=20')
+        .then(a => setAudit(Array.isArray(a) ? a : []))
+        .catch(() => {/* swallow */});
+    };
+    fetchAll();
+    const t = setInterval(fetchAll, 4000);
+    return () => clearInterval(t);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -474,250 +534,609 @@ export default function DashboardV2() {
   // (personal scope; she still has a real launchd job).
   const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'gem', 'hermes'];
 
+  // ── KPI derivations ──────────────────────────────────────────────────
+  // Each derived from a hooked-up V14 query; loading/empty states render
+  // as "—" so the layout doesn't shift after the data lands.
+  const kpiAr = useMemo(() => {
+    if (!receivables.data) return { total: 0, count: 0, loading: receivables.isLoading };
+    const total = receivables.data.reduce((s, r) => s + (r.totalAmount || 0), 0);
+    return { total, count: receivables.data.length, loading: false };
+  }, [receivables.data, receivables.isLoading]);
+
+  const kpiTransit = useMemo(() => {
+    if (!bookings.data) return { count: 0, dischargingThisWeek: 0, loading: bookings.isLoading };
+    const inTransit = bookings.data.filter(b => IN_TRANSIT_STATUSES.has((b.status || '').toUpperCase()));
+    const now = Date.now();
+    const oneWeek = 7 * 24 * 3600 * 1000;
+    const dischargingThisWeek = inTransit.filter(b => {
+      if (!b.eta) return false;
+      const t = new Date(b.eta).getTime();
+      return !isNaN(t) && t > now && t < now + oneWeek;
+    }).length;
+    return { count: inTransit.length, dischargingThisWeek, loading: false };
+  }, [bookings.data, bookings.isLoading]);
+
+  const kpiRfqs = useMemo(() => {
+    if (!salesOrders.data) return { count: 0, pipeline: 0, loading: salesOrders.isLoading };
+    const open = salesOrders.data.filter(s => OPEN_SO_STATUSES.has((s.status || '').toUpperCase()));
+    const pipeline = open.reduce((s, r) => s + (r.totalAmount || 0), 0);
+    return { count: open.length, pipeline, loading: false };
+  }, [salesOrders.data, salesOrders.isLoading]);
+
+  const kpiActions = useMemo(() => {
+    if (!overview) return { total: 0, ok: 0, failed: 0, awaiting: 0, loading: true };
+    let total = 0, ok = 0, failed = 0, awaiting = 0;
+    for (const a of Object.values(overview)) {
+      const c = a.counts ?? {};
+      total += (c.EXECUTED || 0) + (c.AUTO_APPROVED || 0) + (c.APPROVED || 0) + (c.DENIED || 0) + (c.FAILED || 0) + (c.EXPIRED || 0);
+      ok += (c.EXECUTED || 0) + (c.AUTO_APPROVED || 0) + (c.APPROVED || 0);
+      failed += (c.FAILED || 0);
+      awaiting += (c.AWAITING_APPROVAL || 0);
+    }
+    return { total, ok, failed, awaiting, loading: false };
+  }, [overview]);
+
+  // Decision queue = all open_cards from /chat/overview, sorted newest first.
+  const queueItems = useMemo<OverviewCard[]>(() => {
+    if (!overview) return [];
+    const all: OverviewCard[] = [];
+    for (const a of Object.values(overview)) {
+      for (const c of a.open_cards ?? []) {
+        if (c.status === 'AWAITING_APPROVAL') all.push(c);
+      }
+    }
+    return all.sort((a, b) => (b.proposed_at || '').localeCompare(a.proposed_at || ''));
+  }, [overview]);
+
+  const clear = async () => {
+    if (!window.confirm('Clear all chat messages in this conversation? Agent actions, audit log, and the action queue are NOT affected.')) return;
+    try {
+      await api('DELETE', '/chat/messages?conversation=default');
+      setMessages([]);
+      setInput('');
+      setAttachments([]);
+      toast.push({ kind: 'success', title: 'Chat cleared' });
+    } catch (err: any) {
+      toast.push({ kind: 'error', title: err.message ?? 'clear failed' });
+    }
+  };
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      {/* Greeting header */}
-      <div className="flex shrink-0 items-center gap-3">
-        <MessageSquare size={20} className="text-emerald-400" />
-        <h1 className="text-[20px] font-semibold tracking-tight text-slate-100">Team chat</h1>
-        <span className="text-slate-700">·</span>
-        <span className="text-[13px] text-slate-500">
+    <div className="bento-scope flex h-full min-h-0 flex-col gap-4 p-4">
+
+      {/* COMPACT HEADER — title + status (left), mode pills + theme toggle (right) */}
+      <div className="flex shrink-0 items-center gap-3 flex-wrap">
+        <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
+          Team room
+        </h1>
+        <div className="flex items-center gap-2 text-[12.5px]" style={{ color: 'var(--b-text-mute)' }}>
           {connected === false
-            ? <span className="text-red-400">control-plane unreachable</span>
+            ? <BentoPill tone="rose">control-plane unreachable</BentoPill>
             : connected === null
-              ? 'connecting…'
-              : <>polling · {messages.length} {messages.length === 1 ? 'message' : 'messages'}</>
+              ? <span>connecting…</span>
+              : <>
+                  <BentoPill tone="teal">● polling</BentoPill>
+                  <span>· {messages.length} {messages.length === 1 ? 'msg' : 'msgs'}</span>
+                </>
           }
-        </span>
+        </div>
+
         <span className="ml-auto" />
-        <Button variant="ghost" onClick={refresh}><RefreshCw size={14} className="mr-1" />refresh</Button>
-        <Button
-          variant="ghost"
-          onClick={async () => {
-            if (!window.confirm('Clear all chat messages in this conversation? Agent actions, audit log, and the action queue are NOT affected.')) return;
-            try {
-              await api('DELETE', '/chat/messages?conversation=default');
-              setMessages([]);
-              setInput('');
-              setAttachments([]);
-              toast.push({ kind: 'success', title: 'Chat cleared' });
-            } catch (err: any) {
-              toast.push({ kind: 'error', title: err.message ?? 'clear failed' });
-            }
-          }}
+
+        {/* Mode switcher */}
+        <div
+          className="flex items-center gap-1 rounded-full p-1 border"
+          style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}
         >
-          <Trash2 size={14} className="mr-1" />clear
-        </Button>
+          <BentoModePill icon={<MessageSquare size={13} />} label="Chat"     active={mode === 'chat'}     onClick={() => setMode('chat')} />
+          <BentoModePill icon={<LayoutGrid size={13} />}    label="Overview" active={mode === 'overview'} onClick={() => setMode('overview')} />
+          <BentoModePill icon={<Sparkles size={13} />}      label="Prompts"  active={mode === 'prompts'}  onClick={() => setMode('prompts')} />
+          <BentoModePill icon={<Clock size={13} />}         label="Crons"    active={mode === 'crons'}    onClick={() => setMode('crons')} />
+        </div>
+
+        {/* Theme toggle — feeds the global useUiStore so V14's whole shell flips with it */}
+        <button
+          onClick={() => setTheme(resolveTheme(theme) === 'light' ? 'dark' : 'light')}
+          className="flex items-center justify-center w-8 h-8 rounded-full border transition-colors"
+          style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)', color: 'var(--b-text-soft)' }}
+          title={`Switch to ${resolveTheme(theme) === 'light' ? 'dark' : 'light'} mode`}
+        >
+          {resolveTheme(theme) === 'light' ? <Moon size={14} /> : <Sun size={14} />}
+        </button>
+
+        <button
+          onClick={refresh}
+          className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-full transition-colors"
+          style={{ background: 'var(--b-surface)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}
+        >
+          <RefreshCw size={12} /> refresh
+        </button>
+        {mode === 'chat' && (
+          <button
+            onClick={clear}
+            className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-full transition-colors"
+            style={{ background: 'var(--b-surface)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}
+          >
+            <Trash2 size={12} /> clear
+          </button>
+        )}
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[154px_1fr] gap-3">
-        {/* Left column: roster first, mode buttons below */}
-        <Card className="flex flex-col">
-          <CardBody className="space-y-1">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Team</div>
-            {agentOrder.map(id => {
-              const p = personas[id];
-              const fallback = AGENT_LABELS[id];
-              const display = p?.display ?? fallback?.display ?? id;
-              const tag = p?.tag ?? fallback?.tag ?? '';
-              return (
-                <button
-                  key={id}
-                  onClick={() => { setMode('chat'); mention(id); }}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded p-2 text-left transition-colors',
-                    'border border-transparent hover:border-[#2a2a2a] hover:bg-[#141414]',
-                  )}
-                  title={p?.role ?? id}
-                >
-                  <span className={cn(
-                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-1',
-                    AGENT_RING[id], AGENT_TONE[id],
-                  )}>
-                    {initials(display)}
-                  </span>
-                  <span className="min-w-0">
-                    <div className={cn('text-sm font-medium', AGENT_TONE[id])}>{display}</div>
-                    <div className="truncate text-[11px] text-slate-500">{tag}</div>
-                  </span>
-                </button>
-              );
-            })}
-            {/* Mode buttons sit below the roster. */}
-            <div className="mt-4 mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Views</div>
-            <button
-              onClick={() => setMode(mode === 'overview' ? 'chat' : 'overview')}
-              className={cn(
-                'flex w-full items-center gap-2 rounded border p-2 text-left transition-colors',
-                mode === 'overview'
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                  : 'border-[#1f1f1f] bg-[#0f0f0f] text-slate-300 hover:border-[#2a2a2a]',
-              )}
-            >
-              <LayoutGrid size={14} />
-              <span className="text-sm font-medium">Overview</span>
-            </button>
-            <button
-              onClick={() => setMode(mode === 'prompts' ? 'chat' : 'prompts')}
-              className={cn(
-                'flex w-full items-center gap-2 rounded border p-2 text-left transition-colors',
-                mode === 'prompts'
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                  : 'border-[#1f1f1f] bg-[#0f0f0f] text-slate-300 hover:border-[#2a2a2a]',
-              )}
-            >
-              <Sparkles size={14} />
-              <span className="text-sm font-medium">Prompts</span>
-            </button>
-            <button
-              onClick={() => setMode(mode === 'crons' ? 'chat' : 'crons')}
-              className={cn(
-                'flex w-full items-center gap-2 rounded border p-2 text-left transition-colors',
-                mode === 'crons'
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                  : 'border-[#1f1f1f] bg-[#0f0f0f] text-slate-300 hover:border-[#2a2a2a]',
-              )}
-            >
-              <Clock size={14} />
-              <span className="text-sm font-medium">Crons</span>
-            </button>
-          </CardBody>
-        </Card>
+      {/* MODE-SWITCHED BODY */}
+      {mode === 'overview' && (
+        <OverviewPanel data={overview} personas={personas} onBack={() => setMode('chat')} onSend={(t) => { setMode('chat'); sendText(t); }} />
+      )}
+      {mode === 'prompts' && (
+        <PromptsPanel data={suggestions} personas={personas} onBack={() => setMode('chat')} onSend={(t) => { setMode('chat'); sendText(t); }} />
+      )}
+      {mode === 'crons' && (
+        <CronsPanel data={crons} personas={personas} onBack={() => setMode('chat')} />
+      )}
 
-        {/* Right column — chat OR overview OR prompts */}
-        {mode === 'overview' && (
-          <OverviewPanel
-            data={overview}
-            personas={personas}
-            onBack={() => setMode('chat')}
-            onSend={(t) => { setMode('chat'); sendText(t); }}
-          />
-        )}
-        {mode === 'prompts' && (
-          <PromptsPanel
-            data={suggestions}
-            personas={personas}
-            onBack={() => setMode('chat')}
-            onSend={(t) => { setMode('chat'); sendText(t); }}
-          />
-        )}
-        {mode === 'crons' && (
-          <CronsPanel
-            data={crons}
-            personas={personas}
-            onBack={() => setMode('chat')}
-          />
-        )}
-        {mode === 'chat' && (
-        <Card
-          className="relative flex min-h-0 flex-col"
-          onDragEnter={onDragEnter}
-          onDragLeave={onDragLeave}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
-        >
-          {/* Drag overlay */}
-          {dragActive && (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-emerald-500/60 bg-emerald-500/10 backdrop-blur-sm">
-              <div className="flex items-center gap-3 text-emerald-300">
-                <UploadCloud size={28} />
-                <span className="text-sm font-medium">Drop files to attach to your next message</span>
+      {mode === 'chat' && (
+        <div className="min-h-0 flex-1 flex flex-col gap-4 overflow-y-auto custom-scrollbar pr-1">
+
+          {/* ROW 1: KPI cards — 4 across on wide, 2 on medium, 1 on narrow */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 shrink-0">
+            <BentoKpiCard
+              tint="gold"
+              label="AR open · current"
+              value={kpiAr.loading ? '—' : `$${(kpiAr.total / 1000).toFixed(1)}k`}
+              valueColor="var(--b-gold)"
+              hint={kpiAr.loading ? 'loading…' : `${kpiAr.count} invoices`}
+              icon={<Wallet size={14} />}
+            />
+            <BentoKpiCard
+              tint="cyan"
+              label="Containers in transit"
+              value={kpiTransit.loading ? '—' : String(kpiTransit.count)}
+              valueColor="var(--b-cyan)"
+              hint={kpiTransit.loading ? 'loading…' : `${kpiTransit.dischargingThisWeek} discharging this week`}
+              icon={<Ship size={14} />}
+            />
+            <BentoKpiCard
+              tint="sal"
+              label="Open sales orders"
+              value={kpiRfqs.loading ? '—' : String(kpiRfqs.count)}
+              valueColor="var(--b-c-sal)"
+              hint={kpiRfqs.loading ? 'loading…' : `$${(kpiRfqs.pipeline / 1000).toFixed(0)}k pipeline`}
+              icon={<FileCheck size={14} />}
+            />
+            <BentoKpiCard
+              tint="emerald"
+              label="Agent actions · all time"
+              value={kpiActions.loading ? '—' : String(kpiActions.total)}
+              valueColor="var(--b-emerald)"
+              hint={kpiActions.loading ? 'loading…' : `${kpiActions.ok} ok · ${kpiActions.failed} failed · ${kpiActions.awaiting} awaiting`}
+              icon={<Activity size={14} />}
+            />
+          </div>
+
+          {/* ROW 2: chat (3 cols) + decision queue (1 col) */}
+          <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+
+            {/* CHAT PANEL */}
+            <div
+              className="xl:col-span-3 relative flex flex-col rounded-[18px] border overflow-hidden"
+              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)', minHeight: '520px' }}
+              onDragEnter={onDragEnter}
+              onDragLeave={onDragLeave}
+              onDragOver={onDragOver}
+              onDrop={onDrop}
+            >
+              {/* Drag overlay */}
+              {dragActive && (
+                <div
+                  className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[18px] border-2 border-dashed"
+                  style={{ borderColor: 'var(--b-teal)', background: 'var(--b-teal-soft)' }}
+                >
+                  <div className="flex items-center gap-3" style={{ color: 'var(--b-teal)' }}>
+                    <UploadCloud size={28} />
+                    <span className="text-sm font-medium">Drop files to attach</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Header */}
+              <div className="flex items-center gap-3 px-5 py-3.5 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
+                <span className="b-display text-[14px] font-semibold" style={{ color: 'var(--b-text)' }}>Conversation</span>
+                <BentoPill tone="teal">● {agentOrder.length} of {agentOrder.length} online</BentoPill>
+                <span className="b-mono text-[11.5px] ml-auto" style={{ color: 'var(--b-text-mute)' }}>
+                  last {messages.length > 0 ? fmtTime(messages[messages.length - 1].created_at) : '—'} ago
+                </span>
               </div>
+
+              {/* Messages */}
+              <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto custom-scrollbar">
+                {messages.length === 0 && connected !== false && (
+                  <div className="p-4">
+                    <EmptyChatHint personas={personas} onSend={sendText} />
+                  </div>
+                )}
+                {connected === false && (
+                  <div className="m-4 rounded-xl border p-4" style={{ borderColor: 'rgba(251, 113, 133, 0.3)', background: 'var(--b-rose-soft)' }}>
+                    <div className="text-sm font-medium" style={{ color: 'var(--b-rose)' }}>
+                      ⚠ Control-plane unreachable at <code className="b-mono text-[12px]">{CONTROL_PLANE_LABEL()}</code>
+                    </div>
+                    <div className="mt-1 text-[12px]" style={{ color: 'var(--b-text-mute)' }}>
+                      Calls go: browser → Supabase Edge Function (<code className="b-mono">agentic-proxy</code>) →
+                      Mac mini control-plane. Likely a tailnet hiccup or the launchd job is offline.
+                    </div>
+                    <button
+                      onClick={refresh}
+                      className="mt-2 rounded-full px-3 py-1 text-[12px] font-medium"
+                      style={{ background: 'var(--b-rose)', color: 'white' }}
+                    >Retry</button>
+                  </div>
+                )}
+                {messages.map(m => <BentoMessage key={m.id} m={m} personas={personas} />)}
+                {sending && (
+                  <div className="flex items-center gap-2 px-5 py-3 text-[12px]" style={{ color: 'var(--b-text-mute)' }}>
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    replying…
+                  </div>
+                )}
+              </div>
+
+              {/* Composer */}
+              <div className="border-t" style={{ borderColor: 'var(--b-line)', background: 'var(--b-surface)' }}>
+                <div className="p-3">
+                  <div
+                    className="rounded-[14px] border transition-colors px-4 py-3 focus-within:border-[color:var(--b-teal-2)]"
+                    style={{ background: 'var(--b-page)', borderColor: 'var(--b-line-bold)' }}
+                  >
+                    {attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2 pb-2 mb-2 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
+                        {attachments.map((a, i) => (
+                          <AttachmentChip key={i} a={a} onRemove={() => removeAttachment(i)} />
+                        ))}
+                      </div>
+                    )}
+                    <textarea
+                      id="chat-composer"
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      onKeyDown={onKeyDown}
+                      onPaste={onPaste}
+                      placeholder="Reply to the team…  @matt anything overdue?  ·  Enter to send"
+                      rows={2}
+                      className="w-full resize-none bg-transparent text-[13.5px] focus:outline-none"
+                      style={{ color: 'var(--b-text)' }}
+                    />
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      hidden
+                      onChange={e => { addFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                    />
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t gap-2" style={{ borderColor: 'var(--b-line-soft)' }}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <button
+                          onClick={() => mention('lara')}
+                          className="flex items-center gap-1.5 text-[11.5px] px-2.5 py-1 rounded-full font-medium"
+                          style={{ background: 'var(--b-teal-soft)', color: 'var(--b-teal-2)' }}
+                          title="Default route — Lara handles attachment OCR + ERP ingestion"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                          @lara
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-full"
+                          style={{ color: 'var(--b-text-mute)' }}
+                          title="Attach file"
+                        >
+                          <Paperclip size={12} /> attach
+                        </button>
+                        <span className="text-[11px] truncate" style={{ color: 'var(--b-text-faint)' }}>drag · paste · ≤ 2 MB each</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[11px] b-mono" style={{ color: 'var(--b-text-mute)' }}>↵</span>
+                        <button
+                          onClick={send}
+                          disabled={sending || (!input.trim() && attachments.length === 0)}
+                          className="b-display flex items-center gap-1.5 text-[12.5px] font-semibold px-3.5 py-1.5 rounded-full disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          style={{ background: 'var(--b-teal-2)', color: resolveTheme(theme) === 'light' ? 'white' : '#052e2b' }}
+                        >
+                          <Send size={12} /> Send
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* DECISION QUEUE */}
+            <div
+              className="flex flex-col rounded-[18px] border overflow-hidden"
+              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}
+            >
+              <div className="flex items-center gap-2 px-5 py-3.5 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
+                <span className="b-display text-[14px] font-semibold" style={{ color: 'var(--b-text)' }}>Awaiting you</span>
+                <BentoPill tone={queueItems.length > 0 ? 'gold' : 'mute'}>{queueItems.length}</BentoPill>
+                <span className="b-mono text-[11px] ml-auto" style={{ color: 'var(--b-text-mute)' }}>↺ 3s</span>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+                {queueItems.length === 0 ? (
+                  <div className="p-6 text-center text-[12.5px]" style={{ color: 'var(--b-text-mute)' }}>
+                    Nothing in the queue.
+                    <div className="mt-1 text-[11px]" style={{ color: 'var(--b-text-faint)' }}>The agents are quiet.</div>
+                  </div>
+                ) : (
+                  queueItems.slice(0, 8).map(c => (
+                    <BentoQueueItem
+                      key={c.id}
+                      card={c}
+                      onAsk={() => { setMode('chat'); mention(c.agent_id); }}
+                    />
+                  ))
+                )}
+              </div>
+              {queueItems.length > 0 && (
+                <div className="px-5 py-3 border-t text-[11px]" style={{ borderColor: 'var(--b-line-soft)', color: 'var(--b-text-mute)' }}>
+                  {queueItems.length} pending · open Overview tab for full triage
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ROW 3: agent vitals (2 cols) + activity tail (2 cols) */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+
+            {/* AGENT VITALS */}
+            <div
+              className="rounded-[18px] border overflow-hidden"
+              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}
+            >
+              <div className="flex items-center gap-2 px-5 py-3.5 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
+                <span className="b-display text-[14px] font-semibold" style={{ color: 'var(--b-text)' }}>Agent vitals</span>
+                <span className="b-mono text-[11px] ml-auto" style={{ color: 'var(--b-text-mute)' }}>
+                  {agentOrder.length} of {agentOrder.length}
+                </span>
+              </div>
+              <div className="p-4 grid grid-cols-2 gap-3">
+                {agentOrder.map(id => {
+                  const p = personas[id];
+                  const fallback = AGENT_LABELS[id];
+                  const display = p?.display ?? fallback?.display ?? id;
+                  const tag = p?.tag ?? fallback?.tag ?? '';
+                  const o = overview?.[id];
+                  const awaiting = o?.counts?.AWAITING_APPROVAL ?? 0;
+                  const executed24h = (o?.counts?.EXECUTED ?? 0) + (o?.counts?.AUTO_APPROVED ?? 0);
+                  return (
+                    <BentoAgentTile
+                      key={id}
+                      id={id}
+                      display={display}
+                      tag={tag}
+                      awaiting={awaiting}
+                      executed={executed24h}
+                      onClick={() => { setMode('chat'); mention(id); }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ACTIVITY TAIL */}
+            <div
+              className="rounded-[18px] border overflow-hidden flex flex-col"
+              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}
+            >
+              <div className="flex items-center gap-2 px-5 py-3.5 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
+                <span className="b-display text-[14px] font-semibold" style={{ color: 'var(--b-text)' }}>Activity tail</span>
+                <BentoPill tone="mute">live</BentoPill>
+                <span className="b-mono text-[11px] ml-auto" style={{ color: 'var(--b-text-mute)' }}>↺ 4s</span>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+                {audit.length === 0 ? (
+                  <div className="p-6 text-center text-[12.5px]" style={{ color: 'var(--b-text-mute)' }}>
+                    No recent events.
+                  </div>
+                ) : (
+                  audit.slice(0, 10).map(r => <BentoAuditRow key={r.id} r={r} personas={personas} />)
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Bento sub-components ──────────────────────────────────────────────
+
+function BentoPill({ tone, children }: { tone: 'teal' | 'gold' | 'rose' | 'mute'; children: React.ReactNode }) {
+  const bg = tone === 'teal' ? 'var(--b-teal-soft)' : tone === 'gold' ? 'var(--b-gold-soft)' : tone === 'rose' ? 'var(--b-rose-soft)' : 'var(--b-surface-2)';
+  const col = tone === 'teal' ? 'var(--b-teal-2)' : tone === 'gold' ? 'var(--b-gold)' : tone === 'rose' ? 'var(--b-rose)' : 'var(--b-text-soft)';
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium" style={{ background: bg, color: col }}>
+      {children}
+    </span>
+  );
+}
+
+function BentoModePill({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12.5px] transition-colors"
+      style={{
+        background: active ? 'var(--b-surface-2)' : 'transparent',
+        color: active ? 'var(--b-text)' : 'var(--b-text-mute)',
+      }}
+    >
+      {icon} {label}
+    </button>
+  );
+}
+
+function BentoKpiCard({ tint, label, value, valueColor, hint, icon }: {
+  tint: 'gold' | 'cyan' | 'sal' | 'emerald';
+  label: string;
+  value: string;
+  valueColor: string;
+  hint: string;
+  icon: React.ReactNode;
+}) {
+  const bg = tint === 'gold' ? 'var(--b-tint-gold)' : tint === 'cyan' ? 'var(--b-tint-cyan)' : tint === 'sal' ? 'var(--b-tint-sal)' : 'var(--b-tint-emerald)';
+  return (
+    <div className="rounded-[18px] border p-5" style={{ background: bg, borderColor: 'var(--b-line)' }}>
+      <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--b-text-mute)' }}>
+        {icon}
+        <span>{label}</span>
+      </div>
+      <div className="b-display text-[40px] leading-[0.95]" style={{ color: valueColor, fontVariationSettings: "'opsz' 96, 'wght' 600", letterSpacing: '-0.04em' }}>
+        {value}
+      </div>
+      <div className="mt-2 text-[12px]" style={{ color: 'var(--b-text-mute)' }}>{hint}</div>
+    </div>
+  );
+}
+
+function BentoAgentTile({ id, display, tag, awaiting, executed, onClick }: {
+  id: string;
+  display: string;
+  tag: string;
+  awaiting: number;
+  executed: number;
+  onClick: () => void;
+}) {
+  const color = `var(--b-c-${id}, var(--b-text-soft))`;
+  return (
+    <button
+      onClick={onClick}
+      className="text-left rounded-xl border p-3 transition-colors relative overflow-hidden hover:bg-[color:var(--b-surface-2)]"
+      style={{ background: 'var(--b-surface-2)', borderColor: 'var(--b-line)' }}
+      title={`Mention @${id}`}
+    >
+      <div className="absolute top-0 left-0 right-0 h-[2px]" style={{ background: color }} />
+      <div className="flex items-center gap-2 mb-2">
+        <span
+          className="w-6 h-6 rounded-lg flex items-center justify-center b-display text-[11px] font-bold text-white"
+          style={{ background: color }}
+        >
+          {initials(display)}
+        </span>
+        <div className="min-w-0">
+          <div className="b-display text-[13px] font-semibold leading-none" style={{ color }}>{display}</div>
+          <div className="text-[10.5px] mt-1" style={{ color: 'var(--b-text-mute)' }}>{tag}</div>
+        </div>
+        {awaiting > 0 && (
+          <span className="ml-auto px-2 py-0.5 rounded-full text-[10px] font-semibold b-mono" style={{ background: 'var(--b-gold-soft)', color: 'var(--b-gold)' }}>
+            {awaiting}
+          </span>
+        )}
+      </div>
+      <div className="text-[11px] b-mono flex items-center gap-2" style={{ color: 'var(--b-text-mute)' }}>
+        <span>{executed} executed</span>
+        <span>·</span>
+        <span>{awaiting} awaiting</span>
+      </div>
+    </button>
+  );
+}
+
+function BentoQueueItem({ card, onAsk }: { card: OverviewCard; onAsk: () => void }) {
+  const summary = (card.payload?.summary as string) || CAPABILITY_LABEL[card.capability_id] || card.capability_id;
+  const color = `var(--b-c-${card.agent_id}, var(--b-text-soft))`;
+  return (
+    <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--b-line-soft)' }}>
+      <div className="flex items-start gap-3">
+        <span
+          className="w-6 h-6 shrink-0 rounded-lg flex items-center justify-center b-display text-[11px] font-bold text-white mt-0.5"
+          style={{ background: color }}
+        >
+          {card.agent_id[0]?.toUpperCase()}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] leading-snug" style={{ color: 'var(--b-text)' }}>{summary}</div>
+          <div className="text-[10.5px] mt-1 b-mono flex items-center gap-2" style={{ color: 'var(--b-text-mute)' }}>
+            <span>{card.capability_id}</span>
+            <span>·</span>
+            <span>{fmtTime(card.proposed_at)} ago</span>
+          </div>
+          <button
+            onClick={onAsk}
+            className="mt-2 text-[11px] font-medium"
+            style={{ color: 'var(--b-teal-2)' }}
+          >
+            Open in chat →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BentoAuditRow({ r, personas }: { r: AuditRow; personas: Personas }) {
+  void personas;
+  const actorColor = `var(--b-c-${r.actor}, var(--b-text-soft))`;
+  return (
+    <div
+      className="grid items-center gap-3 px-4 py-2 border-b text-[12px] hover:bg-[color:var(--b-surface-2)]"
+      style={{ gridTemplateColumns: '60px 22px 1fr auto', borderColor: 'var(--b-line-soft)' }}
+    >
+      <span className="b-mono text-[10.5px]" style={{ color: 'var(--b-text-mute)' }}>{r.ts?.slice(11, 19) ?? ''}</span>
+      <span
+        className="w-5 h-5 rounded-md flex items-center justify-center b-display text-[9px] font-bold text-white"
+        style={{ background: actorColor }}
+      >
+        {r.actor[0]?.toUpperCase()}
+      </span>
+      <span className="min-w-0 truncate" style={{ color: 'var(--b-text)' }}>
+        <span className="b-display font-semibold" style={{ color: actorColor }}>{r.actor}</span>{' '}
+        <code className="b-mono text-[11px]" style={{ color: 'var(--b-teal-2)' }}>{r.action}</code>
+        {r.subject ? <span style={{ color: 'var(--b-text-mute)' }}> · {String(r.subject).slice(0, 32)}</span> : null}
+      </span>
+      <span className="b-mono text-[10px]" style={{ color: 'var(--b-text-faint)' }}>#{r.id}</span>
+    </div>
+  );
+}
+
+function BentoMessage({ m, personas }: { m: ChatMessage; personas: Personas }) {
+  const isUser = m.role === 'user';
+  const author = isUser ? 'felipe' : m.author;
+  const display = isUser ? 'You' : (personas[author]?.display ?? AGENT_LABELS[author]?.display ?? author);
+  const color = `var(--b-c-${author}, var(--b-text-soft))`;
+  return (
+    <div className={cn('flex gap-3 px-5 py-3.5 border-b', isUser && 'flex-row-reverse')} style={{ borderColor: 'var(--b-line-soft)' }}>
+      <div className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center b-display text-[11px] font-bold text-white" style={{ background: color }}>
+        {initials(display)}
+      </div>
+      <div className={cn('min-w-0 flex flex-col', isUser ? 'items-end' : 'items-start')} style={{ maxWidth: '76%' }}>
+        <div className="flex items-baseline gap-2 mb-1.5">
+          <span className="b-display text-[13px] font-semibold" style={{ color }}>{display}</span>
+          <span className="b-mono text-[11px]" style={{ color: 'var(--b-text-mute)' }}>{fmtTime(m.created_at)}</span>
+        </div>
+        <div
+          className="rounded-xl border px-3.5 py-2.5 text-[13.5px] leading-[1.6] whitespace-pre-wrap w-fit"
+          style={{
+            background: isUser ? 'var(--b-teal-soft)' : 'var(--b-surface-2)',
+            borderColor: isUser ? 'var(--b-teal-soft)' : 'var(--b-line)',
+            color: 'var(--b-text)',
+          }}
+        >
+          {renderContent(m.content, m.role)}
+          {(m.meta?.attachments ?? []).length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2 pt-2 border-t" style={{ borderColor: 'var(--b-line-soft)' }}>
+              {(m.meta!.attachments as Attachment[]).map((a, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] b-mono"
+                  style={{ background: 'var(--b-surface-3)', color: 'var(--b-text-soft)' }}
+                >
+                  {a.type.startsWith('image/') ? <ImageIcon size={11} /> : <FileText size={11} />}
+                  {a.name}
+                </span>
+              ))}
             </div>
           )}
-
-          {/* Messages */}
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
-            {messages.length === 0 && connected !== false && (
-              <EmptyChatHint personas={personas} onSend={sendText} />
-            )}
-            {connected === false && (
-              <div className="rounded border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-300">
-                <div>
-                  Control-plane unreachable at <code>{CONTROL_PLANE_LABEL()}</code>.
-                </div>
-                <div className="mt-1 text-xs text-red-300/80">
-                  Calls go: browser → Supabase Edge Function (<code>agentic-proxy</code>) →
-                  Mac mini control-plane (launchd <code>ai.xs-agentic.control-plane</code>).
-                  Likely either the edge function isn't deployed yet, or the mini is offline.
-                </div>
-                <button
-                  onClick={refresh}
-                  className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs font-medium text-red-200 hover:bg-red-500/20"
-                >
-                  Retry
-                </button>
-              </div>
-            )}
-            {messages.map(m => <MessageBubble key={m.id} m={m} personas={personas} />)}
-            {sending && (
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                replying…
-              </div>
-            )}
-          </div>
-
-          {/* Composer */}
-          <div className="border-t border-[#1f1f1f] p-3">
-            <div className="rounded border border-[#1f1f1f] bg-[#0f0f0f] focus-within:border-[#2a2a2a]">
-              {/* Attachment chips */}
-              {attachments.length > 0 && (
-                <div className="flex flex-wrap gap-2 border-b border-[#1f1f1f] p-2">
-                  {attachments.map((a, i) => (
-                    <AttachmentChip
-                      key={i}
-                      a={a}
-                      onRemove={() => removeAttachment(i)}
-                    />
-                  ))}
-                </div>
-              )}
-              <textarea
-                id="chat-composer"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={onKeyDown}
-                onPaste={onPaste}
-                placeholder={"Message the team… '@matt anything overdue?'  ·  Paste, drop, or attach files  ·  Enter to send"}
-                rows={2}
-                className="w-full resize-none bg-transparent p-3 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none"
-              />
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                hidden
-                onChange={e => { addFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ''; }}
-              />
-              <div className="flex items-center justify-between gap-2 border-t border-[#1f1f1f] px-3 py-2 text-[11px] text-slate-500">
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-slate-400 hover:bg-[#141414] hover:text-slate-200"
-                  title="Attach file"
-                >
-                  <Paperclip size={14} />
-                  attach
-                </button>
-                <span className="min-w-0 flex-1 truncate">
-                  Drop, paste, or attach files (up to 2 MB each, 8 per message). Files routed to{' '}
-                  <button onClick={() => mention('lara')} className={cn('rounded bg-[#141414] px-1.5 py-0.5 font-medium', AGENT_TONE.lara)}>@lara</button>
-                  {' '}by default for OCR + ERP ingestion.
-                </span>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={send}
-                  disabled={sending || (!input.trim() && attachments.length === 0)}
-                >
-                  <Send size={14} className="mr-1" /> Send
-                </Button>
-              </div>
-            </div>
-          </div>
-        </Card>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -6,6 +6,8 @@
 
 /* Fonts + preserved v1 body defaults. */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Roboto+Mono:wght@400;500;700&display=swap');
+/* Bento Operations dashboard fonts (Dashboard team chat). */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=Plus+Jakarta+Sans:wght@300..700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -187,4 +189,119 @@ html.dark .custom-scrollbar::-webkit-scrollbar-thumb {
 }
 html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+
+/* ─── Bento Operations design tokens (Dashboard team chat) ──────────
+ *
+ * Scoped to .bento-scope so they don't leak elsewhere. The whole
+ * Dashboard chat surface wraps in <div class="bento-scope dark|light">.
+ * Tokens swap automatically when html.light / html.dark flips.
+ *
+ * Naming: --b-* (bento) to avoid colliding with V14's broader palette.
+ * ---------------------------------------------------------------- */
+
+.bento-scope {
+  /* Defaults = dark (matches V14's default theme). */
+  --b-page:        #07090f;
+  --b-surface:     #121826;
+  --b-surface-2:   #1a2236;
+  --b-surface-3:   #232c44;
+  --b-line:        #1d2740;
+  --b-line-soft:   #182039;
+  --b-line-bold:   #2a3556;
+
+  --b-text:        #e8ecf3;
+  --b-text-soft:   #aab3c5;
+  --b-text-mute:   #6b7491;
+  --b-text-faint:  #485174;
+
+  /* Accents — saturated for dark backgrounds */
+  --b-teal:        #5eead4;
+  --b-teal-2:      #14b8a6;
+  --b-teal-soft:   rgba(94, 234, 212, 0.12);
+  --b-gold:        #fbbf24;
+  --b-gold-soft:   rgba(251, 191, 36, 0.12);
+  --b-rose:        #fb7185;
+  --b-rose-soft:   rgba(251, 113, 133, 0.12);
+  --b-emerald:     #34d399;
+  --b-emerald-soft:rgba(52, 211, 153, 0.12);
+  --b-cyan:        #67e8f9;
+  --b-indigo:      #818cf8;
+
+  /* Agent persona palette (dark-tuned) */
+  --b-c-max:       #a78bfa;
+  --b-c-lara:      #f472b6;
+  --b-c-matt:      #34d399;
+  --b-c-logan:     #38bdf8;
+  --b-c-sal:       #fbbf24;
+  --b-c-gem:       #818cf8;
+  --b-c-hermes:    #fb923c;
+  --b-c-felipe:    #4ade80;
+
+  /* KPI card tint backgrounds (dark) */
+  --b-tint-gold:    linear-gradient(180deg, rgba(251, 191, 36, 0.06) 0%, transparent 60%);
+  --b-tint-cyan:    linear-gradient(180deg, rgba(103, 232, 249, 0.06) 0%, transparent 60%);
+  --b-tint-sal:     linear-gradient(180deg, rgba(251, 191, 36, 0.05) 0%, transparent 60%);
+  --b-tint-emerald: linear-gradient(180deg, rgba(52, 211, 153, 0.06) 0%, transparent 60%);
+}
+
+html.light .bento-scope {
+  --b-page:        #f5f6f8;
+  --b-surface:     #ffffff;
+  --b-surface-2:   #f1f3f7;
+  --b-surface-3:   #e9ecf2;
+  --b-line:        #e2e6ec;
+  --b-line-soft:   #eceff4;
+  --b-line-bold:   #d2d7df;
+
+  --b-text:        #0d1117;
+  --b-text-soft:   #3e4756;
+  --b-text-mute:   #6b7491;
+  --b-text-faint:  #9ca3b4;
+
+  /* Accents — saturated enough for AA contrast on white */
+  --b-teal:        #0d9488;
+  --b-teal-2:      #0f766e;
+  --b-teal-soft:   #ccfbf1;
+  --b-gold:        #b45309;
+  --b-gold-soft:   #fef3c7;
+  --b-rose:        #be123c;
+  --b-rose-soft:   #fee2e2;
+  --b-emerald:     #047857;
+  --b-emerald-soft:#d1fae5;
+  --b-cyan:        #0e7490;
+  --b-indigo:      #4338ca;
+
+  /* Agent persona palette (light-tuned for AA) */
+  --b-c-max:       #6d28d9;
+  --b-c-lara:      #be185d;
+  --b-c-matt:      #047857;
+  --b-c-logan:     #0369a1;
+  --b-c-sal:       #b45309;
+  --b-c-gem:       #4338ca;
+  --b-c-hermes:    #c2410c;
+  --b-c-felipe:    #15803d;
+
+  /* KPI card tint washes (light — slightly stronger than dark to show) */
+  --b-tint-gold:    linear-gradient(180deg, #fffbf0 0%, #fff 60%);
+  --b-tint-cyan:    linear-gradient(180deg, #f0fbff 0%, #fff 60%);
+  --b-tint-sal:     linear-gradient(180deg, #fef9ed 0%, #fff 60%);
+  --b-tint-emerald: linear-gradient(180deg, #f0fdf5 0%, #fff 60%);
+}
+
+/* Bento root surface */
+.bento-scope {
+  background: var(--b-page);
+  color: var(--b-text);
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+/* Default Bento type stack — applied via classes within scope */
+.bento-scope .b-display {
+  font-family: 'Bricolage Grotesque', sans-serif;
+  font-variation-settings: 'opsz' 32, 'wght' 500;
+  letter-spacing: -0.02em;
+}
+.bento-scope .b-mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-feature-settings: 'tnum' 1;
 }
