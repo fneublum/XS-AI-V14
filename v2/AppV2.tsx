@@ -11,7 +11,7 @@ import { ToastProvider, useToast } from './primitives/Toast';
 import { EditorProvider, useEditor } from './providers/EditorProvider';
 import { AppShell } from './layout/AppShell';
 import {
-  LayoutDashboard, Plug, Sparkles,
+  LayoutDashboard, Sparkles,
   ShoppingCart, FileSignature, Package, Receipt, BellRing,
   Briefcase, ClipboardCheck,
   Calculator, CalendarCheck, Ship,
@@ -19,7 +19,7 @@ import {
   Database, Settings as SettingsIcon,
   Building2, Compass, Handshake, Truck, Banknote, Wrench,
   ShieldAlert,
-  Bot, Activity, Sliders, ScrollText,
+  Bot, Activity,
 } from 'lucide-react';
 import { CompanySwitcher } from './layout/CompanySwitcher';
 import { CommandPalette, PaletteCommand, PaletteDataProvider } from './layout/CommandPalette';
@@ -79,7 +79,6 @@ const EmailAgentV2          = lazy(() => import('./routes/EmailAgentV2'));
 const SettingsV2            = lazy(() => import('./routes/SettingsV2'));
 const ConnectionsV2         = lazy(() => import('./routes/ConnectionsV2'));
 const ConnectionsHubV2      = lazy(() => import('./routes/ConnectionsHubV2'));
-const ConnectionsTabsV2     = lazy(() => import('./routes/ConnectionsTabsV2'));
 const AiInboxV2             = lazy(() => import('./routes/AiInboxV2'));
 const PLV2                  = lazy(() => import('./routes/PLV2'));
 const LogisticsDocsV2       = lazy(() => import('./routes/LogisticsDocsV2'));
@@ -182,11 +181,10 @@ const buildSections = (
     accent: 'emerald',
     icon: Bot,
     items: [
-      { id: 'agentic-stream',       label: 'Stream',        icon: Activity },
-      { id: 'agentic-autonomy',     label: 'Autonomy',      icon: Sliders },
-      { id: 'connections-tabs',     label: 'Agent log',     icon: Plug },
-      { id: 'agentic-capabilities', label: 'Capabilities',  icon: Wrench },
-      { id: 'agentic-audit',        label: 'Audit',         icon: ScrollText },
+      // Collapsed: Stream / Autonomy / Capabilities / Audit live as tabs
+      // inside one Console route now. "Agent log" was removed entirely —
+      // it duplicated the Dashboard's overview + inbox tabs.
+      { id: 'agentic-console',      label: 'Console',       icon: Activity },
     ],
   },
   {
@@ -211,7 +209,6 @@ const routeTitles: Record<string, string> = {
   'ai-upload':       'AI Upload',
   'ai-sales':        'AI Sales Agent',
   'ai-inbox':        'AI Inbox',
-  'connections-tabs': 'Agent log',
   'connections-hub': 'Agent log',
   'ai-logistics':    'AI Logistics',
   // Trading
@@ -264,10 +261,7 @@ const routeTitles: Record<string, string> = {
   'agent-portal-quotes':   'Freight Quotes',
   'agent-portal-bookings': 'Bookings',
   // Agentic (XS-agentic)
-  'agentic-stream':       'Agents · Stream',
-  'agentic-autonomy':     'Agents · Autonomy',
-  'agentic-capabilities': 'Agents · Capabilities',
-  'agentic-audit':        'Agents · Audit',
+  'agentic-console':      'Agents · Console',
 };
 
 // Single-letter hotkeys removed per user preference — navigation goes
@@ -282,7 +276,6 @@ const routeSection: Record<string, string> = {
   'ai-upload':       'Workspace',
   'ai-sales':        'Workspace',
   'ai-inbox':        'Workspace',
-  'connections-tabs': 'Workspace',
   'connections-hub': 'Workspace',
   'ai-logistics':    'Workspace',
   'ai-dashboard':    'Workspace',
@@ -368,7 +361,20 @@ const AppV2Inner: React.FC = () => {
     const stored = typeof window !== 'undefined'
       ? sessionStorage.getItem('xs_v2_active_route')
       : null;
-    return stored && routeTitles[stored] ? stored : 'dashboard';
+    // Legacy → current remap so sessions saved before the AGENTS-menu
+    // consolidation don't land on a blank page. Stream/Autonomy/etc were
+    // separate sidebar entries; they now live as tabs inside one Console
+    // route. "Agent log" (connections-tabs) was removed entirely — its
+    // content was a shallow duplicate of the Dashboard.
+    const LEGACY_REMAP: Record<string, string> = {
+      'agentic-stream':       'agentic-console',
+      'agentic-autonomy':     'agentic-console',
+      'agentic-capabilities': 'agentic-console',
+      'agentic-audit':        'agentic-console',
+      'connections-tabs':     'dashboard',
+    };
+    const resolved = stored && LEGACY_REMAP[stored] ? LEGACY_REMAP[stored] : stored;
+    return resolved && routeTitles[resolved] ? resolved : 'dashboard';
   });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -704,7 +710,6 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'settings'        && <SettingsV2 />}
           {activeId === 'connections'     && <ConnectionsV2 />}
           {activeId === 'connections-hub'  && <ConnectionsHubV2 />}
-          {activeId === 'connections-tabs' && <ConnectionsTabsV2 />}
           {activeId === 'ai-inbox'         && <AiInboxV2 />}
           {activeId === 'sopici'          && <AgentSalesOrdersV2 />}
           {activeId === 'pl-invoice'      && <PLInvoiceEngineV2 />}
@@ -715,10 +720,7 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'agent-followup'     && <AgentFollowUpV2 navigate={navigate} />}
           {activeId === 'agent-portal-quotes'   && <AgentPortalV2 view="quotes" />}
           {activeId === 'agent-portal-bookings' && <AgentPortalV2 view="bookings" />}
-          {activeId === 'agentic-stream'        && <AgenticConsoleV2 view="stream" />}
-          {activeId === 'agentic-autonomy'      && <AgenticConsoleV2 view="autonomy" />}
-          {activeId === 'agentic-capabilities'  && <AgenticConsoleV2 view="capabilities" />}
-          {activeId === 'agentic-audit'         && <AgenticConsoleV2 view="audit" />}
+          {activeId === 'agentic-console'       && <AgenticConsoleV2 />}
         </Suspense>
       </AppShell>
 
