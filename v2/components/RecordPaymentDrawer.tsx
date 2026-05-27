@@ -288,35 +288,44 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
   // ── Seed form from props when the drawer opens ──────────────────
   useEffect(() => {
     if (!open) return;
+    // Row-locked flows: pre-fill the counterparty and target id so the
+    // user only has to type the amount + reference. The Amount itself
+    // (and its mirror in the locked allocation) START AT 0.00 — the
+    // earlier behaviour pre-filled with the invoice's full outstanding
+    // balance, which made the Statement view immediately read "Balance
+    // after: $0.00" before the user had entered anything. Now the
+    // user types the real receipt amount and the statement updates
+    // live; setAmountAndSyncLocked then keeps the locked allocation
+    // in sync.
     if (invoice) {
-      setAmount(invoice.outstanding.toFixed(2));
+      setAmount('');
       setCounterpartyName(invoice.customerName ?? '');
       setCounterpartyId(invoice.customerId ?? undefined);
       setAllocations([{
         id: newAllocId(),
         invoiceId: invoice.invoiceId,
         label: `${invoice.invoiceNumber}${invoice.customerName ? ` · ${invoice.customerName}` : ''}`,
-        amount: invoice.outstanding.toFixed(2),
+        amount: '',
       }]);
     } else if (supplierInvoice) {
-      setAmount(supplierInvoice.outstanding.toFixed(2));
+      setAmount('');
       setCounterpartyName(supplierInvoice.supplierName ?? '');
       setCounterpartyId(undefined);
       setAllocations([{
         id: newAllocId(),
         supplierInvoiceId: supplierInvoice.supplierInvoiceId,
         label: `${supplierInvoice.invoiceNumber}${supplierInvoice.supplierName ? ` · ${supplierInvoice.supplierName}` : ''}`,
-        amount: supplierInvoice.outstanding.toFixed(2),
+        amount: '',
       }]);
     } else if (po) {
-      setAmount(po.outstanding.toFixed(2));
+      setAmount('');
       setCounterpartyName(po.supplierName ?? '');
       setCounterpartyId(po.supplierId ?? undefined);
       setAllocations([{
         id: newAllocId(),
         purchaseOrderId: po.purchaseOrderId,
         label: `${po.poNumber}${po.supplierName ? ` · ${po.supplierName}` : ''}`,
-        amount: po.outstanding.toFixed(2),
+        amount: '',
       }]);
     } else if (ocrPrefill) {
       // OCR-extracted values — seed the form, leave allocations empty so
