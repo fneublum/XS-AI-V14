@@ -799,8 +799,8 @@ export default function DashboardV2() {
                       onKeyDown={onKeyDown}
                       onPaste={onPaste}
                       placeholder="Reply to the team…  @matt anything overdue?  ·  Enter to send"
-                      rows={2}
-                      className="w-full resize-none bg-transparent text-[13.5px] focus:outline-none"
+                      rows={1}
+                      className="block w-full resize-none bg-transparent text-[13.5px] leading-tight focus:outline-none py-0"
                       style={{ color: 'var(--b-text)' }}
                     />
                     <input
@@ -810,8 +810,10 @@ export default function DashboardV2() {
                       hidden
                       onChange={e => { addFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ''; }}
                     />
-                    {/* Single toolbar row — agent quick-pick + attach + send */}
-                    <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t" style={{ borderColor: 'var(--b-line-soft)' }}>
+                    {/* Single toolbar row — agent quick-pick + attach + send.
+                      * Sits flush against the textarea (no top margin / border)
+                      * so the composer reads as one tight block. */}
+                    <div className="flex items-center gap-2 flex-wrap">
                       {/* Agent quick-pick chips */}
                       {agentOrder.map(id => {
                         const active = input.trim().toLowerCase().startsWith('@' + id);
