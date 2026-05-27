@@ -455,6 +455,52 @@ export const InvoiceDrawer: React.FC<Props> = ({ invoice, mode, onOpenChange }) 
     setOriginalDocument(invoice.originalDocument ?? '');
   }, [invoice?.id, mode]);
 
+  // When a NEW invoice is opened with a pre-seeded soNumber (typical
+  // path from "Create invoice from this PL" in PLInvoiceEngineV2) the
+  // seed doesn't carry commercial terms — so the load effect above
+  // falls back to the hardcoded 'Net 30 Days' default. The invoice
+  // should inherit Payment Terms from the originating sales order so
+  // AR aging, statements, and customer expectations stay consistent.
+  // Fetch the SO once on create + soNumber present + no explicit
+  // paymentTerms in the seed, and copy the SO's terms in.
+  const soTermsAppliedRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (mode !== 'create') return;
+    if (!invoice) return;
+    const seededSo = (invoice.soNumber ?? '').trim();
+    if (!seededSo) return;
+    if (invoice.paymentTerms) return;          // explicit seed wins
+    if (soTermsAppliedRef.current === seededSo) return;
+    soTermsAppliedRef.current = seededSo;
+    let cancelled = false;
+    (async () => {
+      try {
+        const sb = getSupabaseClient();
+        let q = sb.from('sales_orders')
+          .select('paymentTerms, currency, incoterm, poa, pod')
+          .eq('orderNumber', seededSo)
+          .limit(1);
+        if (invoice.soldTo) q = q.eq('customerName', invoice.soldTo);
+        const { data } = await q.maybeSingle();
+        if (cancelled || !data) return;
+        if (data.paymentTerms) setPaymentTerms(data.paymentTerms);
+        // Also fill the other commercial fields if the seed left them
+        // at their hardcoded defaults — keeps the invoice aligned with
+        // the SO without overwriting an explicit seed.
+        if (data.currency && !invoice.currency) setCurrency(data.currency);
+        if (data.incoterm && !invoice.incoterm) {
+          setIncoterm(data.incoterm);
+          setFreightTerms(freightTermsForIncoterm(data.incoterm));
+        }
+        if (data.poa && !invoice.poa) setPoa(data.poa);
+        if (data.pod && !invoice.pod) setPod(data.pod);
+      } catch {
+        // Silent — user can pick payment terms manually.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [invoice?.id, mode]);
+
   const availableCompanies = companies.data ?? [];
   const availableCustomers = customers.data ?? [];
   const isSystem = currentCompanyId === 'ALL';

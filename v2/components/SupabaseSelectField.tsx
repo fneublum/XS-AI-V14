@@ -37,6 +37,13 @@ export interface FieldSource {
    *  current companyId. Used for the `customers.sharedWith` pattern
    *  where a customer of company A can be made visible to company B. */
   sharedWithColumn?: string;
+  /** When true, ALSO include rows tagged `companyId='ALL'` in the
+   *  scoped query. Opt-in because the historical ALL fallback was
+   *  leaking customers across companies (see commit 39e1bd6). For
+   *  legitimately global lookups (payment_terms, ports, carriers,
+   *  countries — libraries that are intentionally shared across
+   *  tenants), set this true so they keep showing. */
+  includeAllScope?: boolean;
   /**
    * After the user picks a row, write these additional source-row
    * columns into sibling FieldDef keys on the form. Lets a single
@@ -124,20 +131,31 @@ export const SupabaseSelectField: React.FC<Props> = ({
         .limit(source.limit ?? 500);
       if (source.scopeByCompany && currentCompanyId && currentCompanyId !== 'ALL') {
         const col = source.companyIdColumn ?? 'companyId';
-        // Strict scoping: only rows tagged to this company OR explicitly
-        // shared via the sharedWith array. The OR companyId.eq.ALL legacy
-        // fallback used to widen the query to surface untagged rows, but
-        // it leaked customers across every company (COTTON PROCESSING
-        // tagged 'ALL' showed up in GENRYO, etc.) — see commits fb864d7
-        // and the matching companion fix in v2/queries/useCustomers.ts.
+        // Strict scoping by default: only rows tagged to this company
+        // OR explicitly shared via the sharedWith array. The legacy
+        // OR companyId.eq.ALL fallback used to widen the query to
+        // surface untagged rows, but it leaked customers across every
+        // company — see commits fb864d7 / 39e1bd6.
         //
         // To make a customer visible to multiple companies, use the
         // CustomerDrawer "Shared with" picker (writes to sharedWith).
-        // Untagged ALL rows now need a one-time reassignment to a real
-        // companyId; the Customers listing surfaces this for cleanup.
+        //
+        // For tables that ARE intentionally global (payment_terms,
+        // ports, carriers, countries — shared libraries that mean the
+        // same thing to every tenant), the ALL widening is auto-applied
+        // here so every existing call site gets the right behaviour
+        // without per-call opt-in. Tables NOT in this allowlist stay
+        // strict (customers, suppliers, products, etc).
+        const GLOBAL_LIBRARY_TABLES = new Set([
+          'payment_terms', 'ports', 'carriers', 'countries', 'banks',
+        ]);
+        const includeAll = source.includeAllScope || GLOBAL_LIBRARY_TABLES.has(source.table);
         const sharedCol = source.sharedWithColumn
           ?? (source.table === 'customers' ? 'sharedWith' : undefined);
         let orClause = `${col}.eq.${currentCompanyId}`;
+        if (includeAll) {
+          orClause += `,${col}.eq.ALL`;
+        }
         if (sharedCol) {
           orClause += `,"${sharedCol}".cs.{${currentCompanyId}}`;
         }
