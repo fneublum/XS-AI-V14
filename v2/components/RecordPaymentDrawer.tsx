@@ -250,6 +250,41 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
   const [advanced, setAdvanced]  = useState(false);
   const [allocations, setAllocations] = useState<AllocationRow[]>([]);
 
+  // Original outstanding on the row-locked invoice/bill/PO, captured
+  // when the drawer opens. Used as the upper bound when we auto-sync
+  // the locked allocation to the payment amount — typing $50,000 into
+  // Amount shouldn't allocate $50K to a $22K invoice.
+  const originalOutstanding = invoice?.outstanding
+    ?? supplierInvoice?.outstanding
+    ?? po?.outstanding
+    ?? 0;
+
+  /** Update the payment amount AND keep the row-locked allocation in
+   *  sync — most receipts are partial payments, and the user had to
+   *  manually shrink both the Amount and the Allocation before, which
+   *  produced confusing "Over-allocated" warnings (see screenshot
+   *  flagged 2026-05-27). The auto-sync only runs while there's a
+   *  single row-locked allocation that hasn't been split or manually
+   *  edited — once the user adds a second allocation or removes the
+   *  locked one, the manual editor is in charge. */
+  function setAmountAndSyncLocked(next: string): void {
+    setAmount(next);
+    const nextNum = Number(next) || 0;
+    setAllocations(prev => {
+      if (prev.length !== 1) return prev;
+      const sole = prev[0];
+      const isRowLocked = !!(sole.invoiceId || sole.supplierInvoiceId || sole.purchaseOrderId);
+      if (!isRowLocked) return prev;
+      // Cap at the original outstanding so we never allocate more
+      // than the invoice actually owes; the surplus becomes a
+      // "Credit on account" indicator in the summary.
+      const capped = originalOutstanding > 0
+        ? Math.min(nextNum, originalOutstanding)
+        : nextNum;
+      return [{ ...sole, amount: capped.toFixed(2) }];
+    });
+  }
+
   // ── Seed form from props when the drawer opens ──────────────────
   useEffect(() => {
     if (!open) return;
@@ -338,7 +373,9 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
       }
       if (result.txnDate)  { setTxnDate(result.txnDate);  filled.push('date'); }
       if (result.amount > 0) {
-        setAmount(result.amount.toFixed(2));
+        // Auto-sync the row-locked allocation so partial-payment
+        // receipts don't trip an Over-allocated warning.
+        setAmountAndSyncLocked(result.amount.toFixed(2));
         filled.push('amount');
       }
       if (result.method)   { setMethod(result.method);    filled.push('method'); }
@@ -652,7 +689,7 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
               step="0.01"
               inputMode="decimal"
               value={amount}
-              onChange={e => setAmount(e.target.value)}
+              onChange={e => setAmountAndSyncLocked(e.target.value)}
               placeholder="0.00"
             />
           </div>
@@ -715,7 +752,12 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
               />
               <button
                 onClick={() => removeAlloc(a.id)}
-                disabled={!!(a.invoiceId || a.supplierInvoiceId || a.purchaseOrderId) && allocations.length === 1}
+                // The locked allocation row was previously
+                // un-deletable when it was the only one, which forced
+                // the user into Over-allocated limbo if the receipt
+                // didn't apply to this invoice. Allow removal — the
+                // payment then sits as a credit on account (already a
+                // supported state in the summary below).
                 title="Remove allocation"
                 className="text-slate-500 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
               >
