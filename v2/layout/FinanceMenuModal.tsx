@@ -38,10 +38,13 @@ const ITEMS: FinanceItem[] = [
     routeId: 'receivables',
   },
   {
-    label: 'Customer Balances',
-    description: 'Running A/R per customer',
+    // Customer Balances was retired in v14.60 — Statements covers the
+    // same QB+local merge flow with PDF/XLSX/Email export. Pointing
+    // the modal card at the new route keeps muscle memory working.
+    label: 'Statements',
+    description: 'AR / AP statement with aging + PDF / XLSX / Email',
     icon: <CreditCard size={16} />,
-    routeId: 'customer-balances',
+    routeId: 'statements',
   },
 ];
 

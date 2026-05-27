@@ -64,7 +64,7 @@ const CATALOG: DockEntry[] = [
   // Finance
   { id: 'payables',         label: 'Payables',          icon: Receipt },
   { id: 'receivables',      label: 'Receivables',       icon: Wallet,          color: 'emerald' },
-  { id: 'customer-balances',label: 'Customer Balances', icon: PieChart },
+  { id: 'statements',       label: 'Statements',        icon: PieChart },
   { id: 'pl',               label: 'P&L',               icon: BarChart3,       color: 'emerald' },
   { id: 'cost-profit',      label: 'Cost / Profit',     icon: Calculator },
 

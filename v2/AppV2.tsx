@@ -60,7 +60,13 @@ const InvoicesV2        = lazy(() => import('./routes/InvoicesV2'));
 const ReceivablesV2     = lazy(() => import('./routes/ReceivablesV2'));
 const PayablesV2        = lazy(() => import('./routes/PayablesV2'));
 const CommissionsV2     = lazy(() => import('./routes/CommissionsV2'));
-const CustomerBalancesV2 = lazy(() => import('./routes/CustomerBalancesV2'));
+// Customer Balances removed v14.60 — Statements now covers the same
+// flow (QB + local auto-merge for EC4; local-only for everyone else)
+// plus PDF / XLSX / Email export. FinanceBalancesV2.tsx stays in the
+// repo as a reference implementation (1300+ lines of working logic)
+// in case we need to restore the bulk "All customers" view or QB
+// invoice-void functionality later.
+// const CustomerBalancesV2 = lazy(() => import('./routes/CustomerBalancesV2'));
 const StatementsV2       = lazy(() => import('./routes/StatementsV2'));
 const AiSalesV2          = lazy(() => import('./routes/AiSalesV2'));
 const TradingFollowUpV2    = lazy(() => import('./routes/TradingFollowUpV2'));
@@ -177,7 +183,6 @@ const buildSections = (
     items: [
       { id: 'payables',          label: 'Payables',          icon: ArrowUpRight },
       { id: 'receivables',       label: 'Receivables',       icon: ArrowDownLeft },
-      { id: 'customer-balances', label: 'Customer Balances', icon: Wallet },
       { id: 'statements',        label: 'Statements',        icon: Receipt },
     ],
   },
@@ -226,7 +231,6 @@ const routeTitles: Record<string, string> = {
   // Finance
   'payables':        'Payables',
   'receivables':     'Receivables',
-  'customer-balances': 'Customer Balances',
   'statements':        'Statements',
   // Reachable via Data modal or command palette — not in the sidebar
   // tree but still valid routes.
@@ -300,7 +304,6 @@ const routeSection: Record<string, string> = {
   // Finance
   'payables':        'Finance',
   'receivables':     'Finance',
-  'customer-balances': 'Finance',
   'statements':        'Finance',
   'pl':              'Finance',
   'cost-profit':     'Finance',
@@ -688,7 +691,6 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'invoices'        && <InvoicesV2 />}
           {activeId === 'receivables'     && <ReceivablesV2 />}
           {activeId === 'payables'        && <PayablesV2 />}
-          {activeId === 'customer-balances' && <CustomerBalancesV2 />}
           {activeId === 'statements'        && <StatementsV2 />}
           {activeId === 'payment-terms'   && <PaymentTermsV2 />}
           {activeId === 'commissions'     && <CommissionsV2 />}
