@@ -90,10 +90,10 @@ const buildColumns = (
       const code = r.paymentTerms ? termsCodeByDescription.get(r.paymentTerms.trim()) : null;
       return <span className="font-mono text-[11.5px] text-slate-400" title={r.paymentTerms ?? ''}>{code ?? r.paymentTerms ?? '—'}</span>;
     } },
-  { id: 'pod', header: 'POD', mono: true, sortable: true, filterable: true, width: '80px',
+  { id: 'pod', header: 'POD', mono: true, sortable: true, filterable: true, width: '62px',
     value: r => podShort(r.pod),
     cell: r => <span className="font-mono text-[11.5px] text-slate-400" title={r.pod ?? ''}>{podShort(r.pod)}</span> },
-  { id: 'etd', header: 'ETD', align: 'right', sortable: true, width: '80px',
+  { id: 'etd', header: 'ETD', align: 'right', sortable: true, width: '62px',
     // Resolve via the booking row — invoices don't store ETD directly.
     value: r => (r.bookingNumber ? etdByBookingNumber.get(r.bookingNumber) ?? '' : ''),
     cell: r => {
