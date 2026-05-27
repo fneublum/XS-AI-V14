@@ -704,21 +704,34 @@ const FinanceBalancesV2: React.FC = () => {
   const hasStatement = statement !== null;
 
   return (
-    <div className="max-w-[1200px] space-y-4">
+    <div className="bento-scope p-4 space-y-4" style={{ maxWidth: '1200px' }}>
       {/* Header */}
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
-            Customer Balances
-          </h1>
-          <Badge variant="info">Live</Badge>
-          {connected === false && <Badge variant="warning">QuickBooks not connected</Badge>}
-          {connected === true && <Badge variant="success" dot>QB connected</Badge>}
-        </div>
-        <p className="text-[13px] text-slate-500 mt-1">
-          Per-customer QuickBooks statement — invoices, receipts, running balance, PDF &amp; email.
-        </p>
+      <div className="flex items-center gap-3 flex-wrap">
+        <h1 className="b-display text-[22px] font-semibold leading-none" style={{ color: 'var(--b-text)' }}>
+          Customer Balances
+        </h1>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
+              style={{ background: 'var(--b-teal-soft)', color: 'var(--b-teal-2)' }}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+          Live
+        </span>
+        {connected === false && (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
+                style={{ background: 'var(--b-gold-soft)', color: 'var(--b-gold)' }}>
+            QuickBooks not connected
+          </span>
+        )}
+        {connected === true && (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
+                style={{ background: 'var(--b-emerald-soft)', color: 'var(--b-emerald)' }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+            QB connected
+          </span>
+        )}
       </div>
+      <p className="text-[13px] -mt-2" style={{ color: 'var(--b-text-mute)' }}>
+        Per-customer QuickBooks statement — invoices, receipts, running balance, PDF &amp; email.
+      </p>
 
       {/* QB-disconnected state */}
       {connected === false && (
