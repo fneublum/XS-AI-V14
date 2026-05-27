@@ -308,6 +308,12 @@ const ReceivablesV2: React.FC = () => {
                 customerName: r.customerName ?? null,
                 customerId: null,
                 outstanding: bal,
+                // Pass the AR view's authoritative totals so the
+                // drawer's Statement shows the true invoiced amount
+                // and prior-paid figure, instead of reconstructing
+                // them from the transactions table alone.
+                totalAmount: r.totalAmount,
+                paid: b ? b.paid : (r.totalAmount - bal),
                 currency: r.currency,
               });
             }}

@@ -30,7 +30,18 @@ export interface PrefillInvoice {
   invoiceNumber: string;
   customerName: string | null;
   customerId: string | null;
-  outstanding: number;     // current balance owed
+  outstanding: number;     // current balance owed = totalAmount − paid
+  /** The AR view's authoritative invoice total. Passed through so the
+   *  drawer's Statement view shows the TRUE invoiced amount instead
+   *  of reconstructing it from outstanding + history (which under-
+   *  counts when prior payments came from QB / legacy sources that
+   *  aren't in the transactions table). */
+  totalAmount?: number;
+  /** AR view's "paid so far" (sum of all allocations against this
+   *  invoice, including QB-imported ones). Used to size the "Other
+   *  prior payments" reconciliation row when the transactions table
+   *  knows about fewer payments than the AR view does. */
+  paid?: number;
   currency: string;
 }
 
@@ -39,6 +50,8 @@ export interface PrefillSupplierInvoice {
   invoiceNumber: string;
   supplierName: string | null;
   outstanding: number;
+  totalAmount?: number;
+  paid?: number;
   currency: string;
 }
 
@@ -48,6 +61,8 @@ export interface PrefillPo {
   supplierName: string | null;
   supplierId: string | null;
   outstanding: number;
+  totalAmount?: number;
+  paid?: number;
   currency: string;
 }
 
@@ -878,13 +893,31 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
                 )
                 .map(a => ({ txn: t, alloc: a }))
             );
-            const priorPaid = priorOnTarget.reduce((s, x) => s + x.alloc.amount, 0);
-            // originalOutstanding is the balance at drawer open, so:
-            //   invoiceTotal = balance_at_open + everything already paid
-            // This stays correct even if the user voids a prior receipt
-            // mid-drawer, because the history hook re-fetches and
-            // priorPaid drops by the voided amount.
-            const invoiceTotal = originalOutstanding + priorPaid;
+            const priorPaidFromHistory = priorOnTarget.reduce((s, x) => s + x.alloc.amount, 0);
+            // Prefer the AR view's authoritative invoice total when
+            // it was passed through (true for the row-launched flow).
+            // Falls back to reconstructing from outstanding + history
+            // for older call sites that don't supply it.
+            const prefilledTotal = invoice?.totalAmount
+              ?? supplierInvoice?.totalAmount
+              ?? po?.totalAmount;
+            const prefilledPaid = invoice?.paid
+              ?? supplierInvoice?.paid
+              ?? po?.paid;
+            const invoiceTotal = prefilledTotal != null && prefilledTotal > 0
+              ? prefilledTotal
+              : originalOutstanding + priorPaidFromHistory;
+            // Total prior the AR view knows about. Some of those
+            // payments may pre-date the transactions table (QB-pulled
+            // or imported), so we may have fewer line items in
+            // priorOnTarget than the gross paid figure suggests.
+            const priorPaidTotal = prefilledPaid != null && prefilledPaid > 0
+              ? prefilledPaid
+              : priorPaidFromHistory;
+            // Reconcile: if the AR view's paid > history sum, there
+            // are unaccounted-for payments to surface as one line.
+            const unaccountedPriorPaid = Math.max(0, priorPaidTotal - priorPaidFromHistory);
+            const priorPaid = priorPaidTotal;
             // What THIS payment will apply to the target. When the
             // drawer is row-locked, that's the locked allocation's
             // amount; otherwise zero.
@@ -922,11 +955,16 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
                   </span>
                 </div>
 
-                {/* Prior payments, one row each */}
-                {priorOnTarget.length > 0 ? (
+                {/* Prior payments — one row per transaction the
+                    ledger tracks, plus a reconciliation row when the
+                    AR view's gross paid figure exceeds what's in
+                    transactions (legacy / QB-imported payments that
+                    pre-date the unified ledger). */}
+                {(priorOnTarget.length > 0 || unaccountedPriorPaid > 0.005) ? (
                   <>
                     <div className="mt-1.5 pt-1.5 border-t border-[#1f1f1f] text-[10.5px] text-slate-500 uppercase tracking-wider mb-1">
-                      Prior {mode === 'receipt' ? 'receipts' : 'payments'} · {priorOnTarget.length}
+                      Prior {mode === 'receipt' ? 'receipts' : 'payments'} ·
+                      {' '}{priorOnTarget.length + (unaccountedPriorPaid > 0.005 ? 1 : 0)}
                     </div>
                     {priorOnTarget.map(({ txn, alloc }) => (
                       <div key={alloc.id} className="flex items-center justify-between py-0.5 text-[11px]">
@@ -946,6 +984,19 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
                         </span>
                       </div>
                     ))}
+                    {unaccountedPriorPaid > 0.005 && (
+                      <div
+                        className="flex items-center justify-between py-0.5 text-[11px]"
+                        title="Difference between the AR view's paid total and the receipts the ledger has line items for — typically QuickBooks-pulled or legacy payments that pre-date the unified transactions table."
+                      >
+                        <span className="text-slate-500 italic">
+                          Legacy / QB-imported payments (no receipt file)
+                        </span>
+                        <span className="text-slate-400 font-mono tabular-nums">
+                          −{fmtMoney(unaccountedPriorPaid, currency)}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between py-0.5 mt-0.5 border-t border-dashed border-[#1a1a1a] text-slate-400">
                       <span className="text-[10.5px] uppercase tracking-wider">Total prior</span>
                       <span className="font-mono tabular-nums">−{fmtMoney(priorPaid, currency)}</span>

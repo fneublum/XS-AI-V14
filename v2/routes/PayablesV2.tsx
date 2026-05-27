@@ -417,6 +417,11 @@ const PayablesV2: React.FC = () => {
                 invoiceNumber: r.invoiceNumber,
                 supplierName: r.supplier ?? null,
                 outstanding: bal,
+                // True totals so the drawer's Statement view doesn't
+                // under-count when QB / legacy payments aren't in the
+                // transactions table.
+                totalAmount: r.totalAmount,
+                paid: b ? b.paid : (r.totalAmount - bal),
                 currency: r.currency,
               });
             }}
