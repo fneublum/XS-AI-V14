@@ -707,18 +707,28 @@ const TradingFollowUpV2: React.FC = () => {
   }, [selectedCustomer, buildExportSections, startDate, endDate, exportFilename]);
 
   return (
-    <div className="max-w-[1200px] space-y-4">
+    <div className="bento-scope p-4 space-y-4" style={{ maxWidth: '1200px' }}>
       {/* Header */}
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">
-            Trading Follow Up
-          </h1>
-          <Badge variant="info">Live</Badge>
+      <div className="flex items-end gap-4 flex-wrap pb-2">
+        <div className="min-w-0 flex items-center gap-3">
+          <span className="block w-1 h-9 rounded-full" style={{ background: 'var(--b-teal-2)' }} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="b-display font-semibold leading-none"
+                  style={{ color: 'var(--b-text)', fontSize: '32px', fontVariationSettings: "'opsz' 64, 'wght' 600", letterSpacing: '-0.02em' }}>
+                Trading Follow Up
+              </h1>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium b-mono"
+                    style={{ background: 'var(--b-teal-soft)', color: 'var(--b-teal-2)' }}>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+                Live
+              </span>
+            </div>
+            <p className="text-[13px] mt-1.5" style={{ color: 'var(--b-text-mute)' }}>
+              Per-customer balance of sales orders vs invoices shipped across a date range.
+            </p>
+          </div>
         </div>
-        <p className="text-[13px] text-slate-500 mt-1">
-          Per-customer balance of sales orders vs invoices shipped across a date range.
-        </p>
       </div>
 
       {/* Filter bar */}

@@ -296,12 +296,20 @@ const PurchaseCostWizardV2: React.FC = () => {
   };
 
   return (
-    <div className="max-w-6xl">
-      <div className="mb-6">
-        <h1 className="text-[22px] font-semibold tracking-tight text-slate-100">Purchase &amp; cost</h1>
-        <p className="text-[13px] text-slate-500 mt-0.5">
-          Source → Landed cost → Purchase order → Price list
-        </p>
+    <div className="bento-scope p-4" style={{ maxWidth: '1280px' }}>
+      <div className="flex items-end gap-4 flex-wrap mb-6 pb-2">
+        <div className="min-w-0 flex items-center gap-3">
+          <span className="block w-1 h-9 rounded-full" style={{ background: 'var(--b-teal-2)' }} />
+          <div className="min-w-0">
+            <h1 className="b-display font-semibold leading-none"
+                style={{ color: 'var(--b-text)', fontSize: '32px', fontVariationSettings: "'opsz' 64, 'wght' 600", letterSpacing: '-0.02em' }}>
+              Purchase &amp; cost
+            </h1>
+            <p className="text-[13px] mt-1.5" style={{ color: 'var(--b-text-mute)' }}>
+              Source → Landed cost → Purchase order → Price list
+            </p>
+          </div>
+        </div>
       </div>
 
       <StepHeader step={step} onJump={setStep} />
