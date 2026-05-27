@@ -85,7 +85,7 @@ const buildColumns = (
   { id: 'so', header: 'SO', mono: true, sortable: true, filterable: true, width: '80px',
     value: r => r.soNumber ?? '',
     cell: r => <span className="text-slate-500">{r.soNumber ?? '—'}</span> },
-  { id: 'incoterm', header: 'Incoterm', sortable: true, filterable: true, width: '70px',
+  { id: 'incoterm', header: 'Incoterm', sortable: true, filterable: true, width: '55px',
     value: r => r.incoterm ?? '',
     cell: r => <span className="font-mono text-[11.5px] text-slate-400">{r.incoterm ?? '—'}</span> },
   { id: 'terms', header: 'Terms', sortable: true, filterable: true, width: '90px',
