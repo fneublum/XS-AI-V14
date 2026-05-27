@@ -15,7 +15,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Trash2, ChevronDown, ChevronUp,
-  UploadCloud, Sparkles, Loader2, AlertCircle, ExternalLink, FileText,
+  UploadCloud, Sparkles, Loader2, AlertCircle, Eye, FileText,
 } from 'lucide-react';
 import { Drawer, Input, Label, Button } from '../primitives';
 import { useToast } from '../primitives/Toast';
@@ -602,7 +602,7 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
                 onClick={() => openReceiptInNewTab(receiptDataUrl)}
                 className="text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1 text-[11.5px] shrink-0 ml-2"
               >
-                <ExternalLink size={11} /> View
+                <Eye size={11} /> View
               </button>
             </div>
           ) : (
@@ -806,87 +806,13 @@ export const RecordPaymentDrawer: React.FC<Props> = ({
             </button>
           )}
 
-          {/* Allocation summary
-              The status row distinguishes three orthogonal questions:
-              1. Is the receipt fully attributed to invoices?
-                 (allocated == total payment)  → handled by `unallocated`
-              2. If a single invoice is in scope, does this payment
-                 fully settle it, or leave a balance?  → handled by
-                 `invoiceRemaining` (only meaningful when a row-locked
-                 allocation is in play).
-              Earlier the only readout was (1), so a $8,100 receipt on
-              a $22K invoice read "Fully allocated" (true) without
-              hinting that $14K still owed on the invoice. */}
-          {allocations.length > 0 && (() => {
-            const fullyAllocated = Math.abs(unallocated) < 0.001;
-            const overAllocated  = unallocated < -0.001;
-            const lockedAlloc = allocations.length === 1
-              ? allocations[0]
-              : null;
-            const lockedToInvoice = lockedAlloc
-              && (lockedAlloc.invoiceId || lockedAlloc.supplierInvoiceId || lockedAlloc.purchaseOrderId)
-              ? Number(lockedAlloc.amount) || 0
-              : 0;
-            const invoiceRemaining = lockedToInvoice > 0 && originalOutstanding > 0
-              ? Math.max(0, originalOutstanding - lockedToInvoice)
-              : 0;
-            const isPartialOnInvoice = lockedToInvoice > 0
-              && invoiceRemaining > 0.005;
-
-            // Headline status (line 1 of the summary footer):
-            //   Over-allocated > Credit on account > Partial payment > Fully settles invoice > Fully allocated
-            let statusText: string;
-            let statusColor: string;
-            if (overAllocated) {
-              statusText = `Over-allocated · ${fmtMoney(Math.abs(unallocated))}`;
-              statusColor = 'text-red-400';
-            } else if (!fullyAllocated) {
-              statusText = 'Credit on account';
-              statusColor = 'text-amber-400';
-            } else if (isPartialOnInvoice) {
-              statusText = `Partial ${mode === 'receipt' ? 'receipt' : 'payment'}`;
-              statusColor = 'text-amber-400';
-            } else if (lockedToInvoice > 0) {
-              statusText = `Fully settles ${mode === 'receipt' ? 'invoice' : 'bill'}`;
-              statusColor = 'text-emerald-400';
-            } else {
-              statusText = 'Fully allocated';
-              statusColor = 'text-emerald-400';
-            }
-
-            return (
-              <div className="mt-3 rounded border border-[#1f1f1f] bg-[#0f0f0f] p-2.5 text-[11.5px]">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500">Total payment</span>
-                  <span className="text-slate-200 font-mono tabular-nums">{fmtMoney(amountNum)}</span>
-                </div>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-slate-500">Allocated</span>
-                  <span className="text-slate-200 font-mono tabular-nums">{fmtMoney(allocatedSum)}</span>
-                </div>
-                <div className="flex items-center justify-between mt-1 pt-1 border-t border-[#1f1f1f]">
-                  <span className={`font-medium ${statusColor}`}>{statusText}</span>
-                  <span
-                    className={`font-mono tabular-nums font-medium ${
-                      fullyAllocated ? 'text-emerald-400'
-                        : overAllocated ? 'text-red-400'
-                        : 'text-amber-400'
-                    }`}
-                  >
-                    {fmtMoney(unallocated)}
-                  </span>
-                </div>
-                {isPartialOnInvoice && (
-                  <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-[#1f1f1f] text-amber-300/90">
-                    <span>
-                      {mode === 'receipt' ? 'Invoice' : 'Bill'} balance after this {mode === 'receipt' ? 'receipt' : 'payment'}
-                    </span>
-                    <span className="font-mono tabular-nums">{fmtMoney(invoiceRemaining)}</span>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+          {/* The earlier Total payment / Allocated / Status block was
+              removed (2026-05-27) — the Statement view below conveys
+              the same numbers in a more familiar T-account layout,
+              and the inline allocation-row hint already calls out
+              partial vs full. Over-allocated / Credit-on-account
+              warnings are still surfaced via the disabled Save button
+              and the "Balance after" row in the Statement view. */}
 
           {/* ── Statement view ────────────────────────────────────────
               When the drawer is row-locked to a specific invoice / bill
@@ -1134,7 +1060,7 @@ const HistoryList: React.FC<HistoryListProps> = ({
                     title="View receipt file"
                     className="text-slate-400 hover:text-emerald-300"
                   >
-                    <ExternalLink size={12} />
+                    <Eye size={12} />
                   </button>
                 ) : (
                   <span title="No receipt file attached" className="text-slate-700">
