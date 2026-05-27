@@ -540,17 +540,14 @@ const StatementsV2: React.FC = () => {
             />
           </div>
 
-          {/* QB pull-sync */}
-          <button
-            onClick={syncFromQb}
-            disabled={qbSyncing || currentCompanyId === 'ALL'}
-            title="Pull payments from QuickBooks for the current company"
-            className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: 'var(--b-surface-2)', color: 'var(--b-text-soft)', border: '1px solid var(--b-line)' }}
-          >
-            <RefreshCw size={12} className={qbSyncing ? 'animate-spin' : ''} />
-            {qbSyncing ? 'Syncing…' : 'Pull from QuickBooks'}
-          </button>
+          {/* QB pull-sync button removed (v14.57). The Statements
+              screen auto-fetches QB live for EC4 via the merge path
+              in `statement` useMemo, so the manual pull was just a
+              redundant button. The underlying syncFromQb() handler
+              is kept below so we can re-expose it from a Settings /
+              admin panel later — its job (mirror QB payments INTO
+              the local transactions table) still matters for the
+              Receivables list, drawer history, and AR aging view. */}
 
           {/* Export */}
           <button
