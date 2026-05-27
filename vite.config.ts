@@ -22,13 +22,17 @@ export default defineConfig(() => {
       port: 3000,
       host: '0.0.0.0',
       // Dev-only proxy so the browser can reach the XS-agentic control-plane
-      // without CORS or network-isolation issues (sandboxed preview browsers
-      // can't open arbitrary localhost ports). Override the upstream with
-      // VITE_AGENTIC_PROXY_TARGET if running control-plane elsewhere.
+      // without CORS or network-isolation issues. The control-plane lives on
+      // the Mac mini under launchd (label ai.xs-agentic.control-plane),
+      // publicly reachable via the Tailscale Funnel below.
+      //
+      // Override with VITE_AGENTIC_PROXY_TARGET=http://localhost:7878 if you
+      // happen to be running a local control-plane during development.
       proxy: {
         '/xs-agentic': {
-          target: process.env.VITE_AGENTIC_PROXY_TARGET || 'http://localhost:7878',
+          target: process.env.VITE_AGENTIC_PROXY_TARGET || 'https://maxs-mac-mini.tailb21dd3.ts.net',
           changeOrigin: true,
+          secure: true,
           rewrite: (p: string) => p.replace(/^\/xs-agentic/, ''),
         },
       },
