@@ -24,12 +24,19 @@ export type PLStatus = typeof PL_STATUS_OPTIONS[number];
  *  the Freight terms field. Saved value is the full "CODE (Name)"
  *  string so the long form stays visible on the PL record. Free-text
  *  entry is still accepted for any custom term. */
+// Full Incoterms 2020 standard. Order follows the official ICC rule
+// grouping (E → F → C → D) so the picker reads naturally.
 export const INCOTERM_CODES = [
   'EXW (Ex Works)',
+  'FCA (Free Carrier)',
   'FAS (Free Alongside Ship)',
   'FOB (Free on Board)',
   'CFR (Cost and Freight)',
   'CIF (Cost + Insurance + Freight)',
+  'CPT (Carriage Paid To)',
+  'CIP (Carriage and Insurance Paid To)',
+  'DAP (Delivered at Place)',
+  'DPU (Delivered at Place Unloaded)',
   'DDP (Delivered Duty Paid)',
 ] as const;
 
@@ -43,6 +50,8 @@ export function normalizeIncoterm(raw: string): string {
   const aliases: Record<string, string> = {
     EXW: 'EXW (Ex Works)',
     EXWORKS: 'EXW (Ex Works)',
+    FCA: 'FCA (Free Carrier)',
+    FREECARRIER: 'FCA (Free Carrier)',
     FAS: 'FAS (Free Alongside Ship)',
     FREEALONGSIDESHIP: 'FAS (Free Alongside Ship)',
     FOB: 'FOB (Free on Board)',
@@ -52,6 +61,14 @@ export function normalizeIncoterm(raw: string): string {
     COSTANDFREIGHT: 'CFR (Cost and Freight)',
     CIF: 'CIF (Cost + Insurance + Freight)',
     COSTINSURANCEANDFREIGHT: 'CIF (Cost + Insurance + Freight)',
+    CPT: 'CPT (Carriage Paid To)',
+    CARRIAGEPAIDTO: 'CPT (Carriage Paid To)',
+    CIP: 'CIP (Carriage and Insurance Paid To)',
+    CARRIAGEANDINSURANCEPAIDTO: 'CIP (Carriage and Insurance Paid To)',
+    DAP: 'DAP (Delivered at Place)',
+    DELIVEREDATPLACE: 'DAP (Delivered at Place)',
+    DPU: 'DPU (Delivered at Place Unloaded)',
+    DELIVEREDATPLACEUNLOADED: 'DPU (Delivered at Place Unloaded)',
     DDP: 'DDP (Delivered Duty Paid)',
     DELIVEREDDUTYPAID: 'DDP (Delivered Duty Paid)',
   };
