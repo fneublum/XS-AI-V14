@@ -7,7 +7,7 @@
 // auto-matched links so the user can correct attribution.
 
 import React, { useMemo, useState } from 'react';
-import { Filter, RefreshCw, Save, Loader2, AlertCircle, X as XIcon, Info, Sparkles, Link2, Unlink, Wand2 } from 'lucide-react';
+import { Filter, RefreshCw, Save, Loader2, AlertCircle, X as XIcon, Info, Sparkles, Link2, Unlink, Wand2, Eye, Pencil } from 'lucide-react';
 import { useInvoiceMargins, upsertInvoiceCosting, type InvoiceMarginRow } from '../queries/useInvoiceMargins';
 import { useToast } from '../primitives/Toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -38,6 +38,7 @@ const MarginsV2: React.FC = () => {
   const [sortDesc, setSortDesc] = useState(true);
   const [hideZeroRevenue, setHideZeroRevenue] = useState(true);
   const [editRow, setEditRow] = useState<InvoiceMarginRow | null>(null);
+  const [viewRow, setViewRow] = useState<InvoiceMarginRow | null>(null);
 
   const rows = useMemo(() => {
     if (!margins.data) return [];
@@ -176,7 +177,7 @@ const MarginsV2: React.FC = () => {
           <div
             className="grid items-center gap-3 px-4 py-2 text-[10.5px] font-semibold uppercase tracking-[0.14em] border-b"
             style={{
-              gridTemplateColumns: '90px 100px 1fr 110px 110px 100px 100px 90px 120px 100px',
+              gridTemplateColumns: '90px 100px 1fr 110px 110px 100px 100px 90px 120px 100px 70px',
               borderColor: 'var(--b-line-soft)',
               color: 'var(--b-text-mute)',
             }}
@@ -185,12 +186,13 @@ const MarginsV2: React.FC = () => {
             <Th label="Invoice"    onClick={() => toggleSort('invoice')}   active={sortKey === 'invoice'}   desc={sortDesc} />
             <Th label="Customer"   onClick={() => toggleSort('customer')}  active={sortKey === 'customer'}  desc={sortDesc} />
             <Th label="Revenue"    onClick={() => toggleSort('revenue')}   active={sortKey === 'revenue'}   desc={sortDesc} align="right" />
-            <Th label="Supplier"   align="right" />
+            <Th label="Purchase"   align="right" />
             <Th label="Local frt"  align="right" />
             <Th label="Ocean frt"  align="right" />
             <Th label="Other"      align="right" />
             <Th label="Margin $"   onClick={() => toggleSort('marginUSD')} active={sortKey === 'marginUSD'} desc={sortDesc} align="right" />
             <Th label="Margin %"   onClick={() => toggleSort('marginPct')} active={sortKey === 'marginPct'} desc={sortDesc} align="right" />
+            <Th label="Actions"    align="right" />
           </div>
           {margins.isLoading && !margins.data ? (
             <div className="p-6 text-center text-[12.5px]" style={{ color: 'var(--b-text-mute)' }}>Loading…</div>
@@ -199,12 +201,9 @@ const MarginsV2: React.FC = () => {
           ) : rows.map(r => (
             <div
               key={r.invoiceId}
-              role="button"
-              onClick={() => setEditRow(r)}
-              title="Click to override the auto-attributed cost"
-              className="grid items-center gap-3 px-4 py-2 text-[12.5px] border-b cursor-pointer hover:bg-[#0f0f0f]"
+              className="grid items-center gap-3 px-4 py-2 text-[12.5px] border-b hover:bg-[#0f0f0f]"
               style={{
-                gridTemplateColumns: '90px 100px 1fr 110px 110px 100px 100px 90px 120px 100px',
+                gridTemplateColumns: '90px 100px 1fr 110px 110px 100px 100px 90px 120px 100px 70px',
                 borderColor: 'var(--b-line-soft)',
                 color: 'var(--b-text)',
               }}
@@ -257,9 +256,34 @@ const MarginsV2: React.FC = () => {
                 style={{ color: r.marginPct >= 0.1 ? 'var(--b-emerald)' : r.marginPct >= 0 ? 'var(--b-gold)' : 'var(--b-rose)' }}>
                 {fmtPct(r.marginPct)}
               </span>
+              {/* Per-row actions — View opens a read-only summary
+                  modal; Edit opens the costing override drawer. */}
+              <span className="flex items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setViewRow(r); }}
+                  title="View cost breakdown"
+                  className="text-slate-500 hover:text-emerald-300 p-1 rounded hover:bg-slate-700/30"
+                >
+                  <Eye size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setEditRow(r); }}
+                  title="Edit costing — link bills, override amounts"
+                  className="text-slate-500 hover:text-indigo-300 p-1 rounded hover:bg-slate-700/30"
+                >
+                  <Pencil size={13} />
+                </button>
+              </span>
             </div>
           ))}
         </div>
+      )}
+
+      {/* View modal — read-only breakdown summary */}
+      {viewRow && (
+        <MarginViewModal row={viewRow} onClose={() => setViewRow(null)} />
       )}
 
       {/* Edit drawer */}
@@ -292,6 +316,67 @@ const Th: React.FC<ThProps> = ({ label, onClick, active, desc, align = 'left' })
   >
     {label}{active ? (desc ? ' ↓' : ' ↑') : ''}
   </button>
+);
+
+// ── View modal — read-only cost breakdown ─────────────────────────
+const MarginViewModal: React.FC<{ row: InvoiceMarginRow; onClose: () => void }> = ({ row, onClose }) => {
+  const c = row.currency;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+    >
+      <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg shadow-2xl flex flex-col w-full" style={{ maxWidth: '560px' }}>
+        <div className="px-5 py-3 border-b border-[#1f1f1f] flex items-center justify-between">
+          <div>
+            <div className="text-[13px] font-semibold text-slate-100">Margin · {row.invoiceNumber}</div>
+            <div className="text-[11.5px] text-slate-500">{row.customerName ?? '—'}</div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-100 w-7 h-7 rounded inline-flex items-center justify-center hover:bg-slate-700/40 text-xl leading-none">×</button>
+        </div>
+        <div className="px-5 py-4 text-[12.5px] space-y-1.5">
+          <Row label="Revenue" value={fmtMoney(row.revenue, c)} bold />
+          <div className="border-t border-[#1f1f1f] my-2" />
+          <Row label="Purchase (goods)" value={row.supplierCost > 0 ? fmtMoney(row.supplierCost, c) : '—'} muted={row.supplierCost === 0} />
+          <Row label="Local freight"    value={row.localFreightCost > 0 ? fmtMoney(row.localFreightCost, c) : '—'} muted={row.localFreightCost === 0} />
+          <Row label="Ocean freight"    value={row.oceanFreightCost > 0 ? fmtMoney(row.oceanFreightCost, c) : '—'} muted={row.oceanFreightCost === 0} />
+          <Row label="Other"            value={row.otherCost > 0 ? fmtMoney(row.otherCost, c) : '—'} muted={row.otherCost === 0} />
+          <div className="border-t border-dashed border-[#1f1f1f] my-2" />
+          <Row label="Landed cost" value={fmtMoney(row.landedCost, c)} bold />
+          <div className="border-t-2 border-[#1f1f1f] my-2" />
+          <div className="flex items-center justify-between py-1 font-semibold" style={{ color: row.marginUSD >= 0 ? 'var(--b-emerald)' : 'var(--b-rose)' }}>
+            <span>Gross margin</span>
+            <span className="font-mono tabular-nums">{fmtMoney(row.marginUSD, c)} · {fmtPct(row.marginPct)}</span>
+          </div>
+          {row.linkedSupplierBills.length > 0 && (
+            <>
+              <div className="border-t border-[#1f1f1f] my-3" />
+              <div className="text-[10.5px] uppercase tracking-wider text-slate-500 mb-1">Linked supplier bills</div>
+              {row.linkedSupplierBills.map(b => (
+                <div key={b.id} className="flex items-center justify-between py-0.5 text-[11.5px]">
+                  <span className="text-slate-300 font-mono">{b.invoiceNumber ?? b.id} <span className="text-slate-500">· {b.shipperName ?? '—'}</span></span>
+                  <span className="text-slate-400 font-mono tabular-nums">{fmtMoney(b.totalAmount, c)}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-[#1f1f1f] flex justify-end">
+          <button onClick={onClose} className="px-3 py-1.5 text-[12px] text-slate-300 hover:text-slate-100 rounded hover:bg-[#141414]">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Row: React.FC<{ label: string; value: string; bold?: boolean; muted?: boolean }> = ({ label, value, bold, muted }) => (
+  <div className="flex items-center justify-between py-0.5">
+    <span className={muted ? 'text-slate-500' : 'text-slate-300'}>{label}</span>
+    <span className={`font-mono tabular-nums ${bold ? 'font-semibold text-slate-100' : muted ? 'text-slate-600' : 'text-slate-200'}`}>{value}</span>
+  </div>
 );
 
 // ── Override drawer ────────────────────────────────────────────────
