@@ -70,6 +70,11 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   const [emailSending, setEmailSending] = useState(false);
   const [senderHint, setSenderHint] = useState<string | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
+  // Drop-zone state for the drag target. MUST live above the
+  // `if (!open) return null` early-return below — moving it after
+  // the return broke the Rules of Hooks and crashed the page with
+  // React error #310 (hooks order mismatch).
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Build the blob URL whenever a fresh data URL arrives; revoke when
@@ -133,9 +138,6 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   };
 
   const onPickFile = () => fileInputRef.current?.click();
-  // Drop-zone state for the empty-state drag target. Reset on
-  // drag-leave so the visual ring stays accurate.
-  const [dragOver, setDragOver] = useState(false);
 
   /** Read + persist a chosen / dropped file. Shared by the hidden
    *  file input AND the drag-and-drop handler so the two entry

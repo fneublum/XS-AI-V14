@@ -606,35 +606,47 @@ const SupplierInvoicePicker: React.FC<{
         </div>
       )}
 
-      {/* Search + dropdown picker */}
+      {/* Search-narrowed dropdown of all available bills. The list
+          is open by default (user requested: show payable invoices
+          without forcing a search) — typing in the search box just
+          filters the same list. */}
       <div className="rounded border border-[#1f1f1f] bg-[#0a0a0a] p-1.5">
         <input
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search bill # or supplier…"
+          placeholder="Search bill # or supplier to narrow…"
           className="w-full px-2 py-1 text-[11.5px] bg-transparent text-slate-200 placeholder:text-slate-600 focus:outline-none"
         />
-        {search.trim() && (
-          <div className="max-h-40 overflow-y-auto mt-1 border-t border-[#1f1f1f] pt-1">
-            {available.length === 0 ? (
-              <div className="px-2 py-1.5 text-[11px] text-slate-600 italic">No bills match.</div>
-            ) : available.slice(0, 12).map(p => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => addId(p.id)}
-                className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#141414] text-[11.5px]"
-              >
-                <span className="text-slate-200 font-mono shrink-0">{p.invoiceNumber}</span>
-                <span className="text-slate-400 truncate flex-1">{p.supplier ?? '—'}</span>
-                <span className="text-slate-300 font-mono tabular-nums">
-                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency, maximumFractionDigits: 2 }).format(p.totalAmount)}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="max-h-48 overflow-y-auto mt-1 border-t border-[#1f1f1f] pt-1">
+          {payables.isLoading ? (
+            <div className="px-2 py-1.5 text-[11px] text-slate-600 italic">Loading bills…</div>
+          ) : available.length === 0 ? (
+            <div className="px-2 py-1.5 text-[11px] text-slate-600 italic">
+              {all.length === 0
+                ? 'No supplier bills in scope yet.'
+                : (search.trim() ? 'No bills match the search.' : 'All bills are already linked.')}
+            </div>
+          ) : available.slice(0, 25).map(p => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => addId(p.id)}
+              className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#141414] text-[11.5px]"
+            >
+              <span className="text-slate-200 font-mono shrink-0">{p.invoiceNumber}</span>
+              <span className="text-slate-400 truncate flex-1">{p.supplier ?? '—'}</span>
+              <span className="text-slate-300 font-mono tabular-nums">
+                {new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency, maximumFractionDigits: 2 }).format(p.totalAmount)}
+              </span>
+            </button>
+          ))}
+          {!payables.isLoading && available.length > 25 && (
+            <div className="px-2 py-1 text-[10.5px] text-slate-600 italic text-center">
+              {available.length - 25} more — narrow with search.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -716,14 +728,19 @@ const FreightQuotePicker: React.FC<{
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search agent / carrier / port…"
+          placeholder="Search agent / carrier / port to narrow…"
           className="w-full px-2 py-1 text-[11.5px] bg-transparent text-slate-200 placeholder:text-slate-600 focus:outline-none"
         />
-        {search.trim() && (
-          <div className="max-h-40 overflow-y-auto mt-1 border-t border-[#1f1f1f] pt-1">
-            {available.length === 0 ? (
-              <div className="px-2 py-1.5 text-[11px] text-slate-600 italic">No quotes match.</div>
-            ) : available.slice(0, 12).map(q => (
+        <div className="max-h-48 overflow-y-auto mt-1 border-t border-[#1f1f1f] pt-1">
+          {quotes.isLoading ? (
+            <div className="px-2 py-1.5 text-[11px] text-slate-600 italic">Loading freight quotes…</div>
+          ) : available.length === 0 ? (
+            <div className="px-2 py-1.5 text-[11px] text-slate-600 italic">
+              {all.length === 0
+                ? 'No freight quotes in the workspace yet.'
+                : (search.trim() ? 'No quotes match the search.' : 'All quotes are already linked.')}
+            </div>
+          ) : available.slice(0, 25).map(q => (
               <button
                 key={q.id}
                 type="button"
@@ -736,8 +753,12 @@ const FreightQuotePicker: React.FC<{
                 </span>
               </button>
             ))}
-          </div>
-        )}
+          {!quotes.isLoading && available.length > 25 && (
+            <div className="px-2 py-1 text-[10.5px] text-slate-600 italic text-center">
+              {available.length - 25} more — narrow with search.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
