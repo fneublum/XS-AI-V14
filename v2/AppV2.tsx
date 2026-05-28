@@ -16,7 +16,7 @@ import {
   ShoppingCart, FileSignature, Package, Receipt, BellRing,
   Briefcase, ClipboardCheck,
   Calculator, CalendarCheck, Ship,
-  Wallet, ArrowDownLeft, ArrowUpRight, Briefcase as BriefcaseIcon,
+  Wallet, ArrowDownLeft, ArrowUpRight, TrendingUp, Briefcase as BriefcaseIcon,
   Database, Settings as SettingsIcon,
   Building2, Compass, Handshake, Truck, Banknote, Wrench,
   ShieldAlert,
@@ -93,6 +93,7 @@ const LogisticsDocsV2       = lazy(() => import('./routes/LogisticsDocsV2'));
 const AgentSalesOrdersV2    = lazy(() => import('./routes/AgentSalesOrdersV2'));
 const PLInvoiceEngineV2     = lazy(() => import('./routes/PLInvoiceEngineV2'));
 const CostProfitAIV2        = lazy(() => import('./routes/CostProfitAIV2'));
+const MarginsV2             = lazy(() => import('./routes/MarginsV2'));
 const LoginV2               = lazy(() => import('./routes/LoginV2'));
 const PaymentTermsV2        = lazy(() => import('./routes/PaymentTermsV2'));
 const AgentPortalV2         = lazy(() => import('./routes/AgentPortalV2'));
@@ -185,6 +186,7 @@ const buildSections = (
       { id: 'payables',          label: 'Payables',          icon: ArrowUpRight },
       { id: 'receivables',       label: 'Receivables',       icon: ArrowDownLeft },
       { id: 'statements',        label: 'Statements',        icon: Receipt },
+      { id: 'margins',           label: 'Margins',           icon: TrendingUp },
     ],
   },
   {
@@ -239,6 +241,7 @@ const routeTitles: Record<string, string> = {
   'payables':        'Payables',
   'receivables':     'Receivables',
   'statements':        'Statements',
+  'margins':           'Margins',
   // Reachable via Data modal or command palette — not in the sidebar
   // tree but still valid routes.
   'customers':       'Customers',
@@ -312,6 +315,7 @@ const routeSection: Record<string, string> = {
   'payables':        'Finance',
   'receivables':     'Finance',
   'statements':        'Finance',
+  'margins':           'Finance',
   'pl':              'Finance',
   'cost-profit':     'Finance',
   // Data
@@ -719,6 +723,7 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'receivables'     && <ReceivablesV2 />}
           {activeId === 'payables'        && <PayablesV2 />}
           {activeId === 'statements'        && <StatementsV2 />}
+          {activeId === 'margins'           && <MarginsV2 />}
           {activeId === 'payment-terms'   && <PaymentTermsV2 />}
           {activeId === 'commissions'     && <CommissionsV2 />}
           {/* Admin-only routes — gated so a non-admin who deep-links

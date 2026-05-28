@@ -8,7 +8,7 @@
 import React from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
-  X as XIcon, Wallet, Receipt, CreditCard, Landmark,
+  X as XIcon, Wallet, Receipt, CreditCard, Landmark, TrendingUp,
 } from 'lucide-react';
 
 interface Props {
@@ -45,6 +45,12 @@ const ITEMS: FinanceItem[] = [
     description: 'AR / AP statement with aging + PDF / XLSX / Email',
     icon: <CreditCard size={16} />,
     routeId: 'statements',
+  },
+  {
+    label: 'Margins',
+    description: 'Per-invoice gross margin (revenue − supplier − freight − other)',
+    icon: <TrendingUp size={16} />,
+    routeId: 'margins',
   },
 ];
 
