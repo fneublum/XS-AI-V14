@@ -1,18 +1,55 @@
 // Edge Function auth + invocation helper.
 //
-// Central place to:
-// - Store the short-lived JWT issued by the `auth-issue` Edge Function
-//   (see Login.tsx for the login-flow integration).
-// - Invoke any Supabase Edge Function with that JWT auto-attached.
+// Two token sources are supported, in priority order:
 //
-// The JWT lives in sessionStorage (cleared on tab close) rather than
-// localStorage, to reduce long-term XSS exfiltration risk. The Supabase
-// anon key is read from Vite env — never hardcoded in the bundle.
+// 1. Supabase Auth session (v1 / current). After Login.tsx calls
+//    supabase.auth.signInWithPassword, the access_token lives in the
+//    Supabase client (persisted to localStorage with autoRefreshToken).
+//    We mirror it into a module-local cache via onAuthStateChange so the
+//    sync getEdgeToken() signature still works for legacy callers.
+//
+// 2. Legacy auth-issue JWT (v2 / fallback). The v2 LoginV2 still calls
+//    issueEdgeToken() which posts to the auth-issue Edge Function and
+//    stashes the returned JWT in sessionStorage. Kept intact so v2
+//    routes don't break during the cutover. Decommission path: once v2
+//    is also on supabase.auth, delete the auth-issue function, drop
+//    setEdgeToken/clearEdgeToken/issueEdgeToken, and rotate the JWT
+//    signing secret (memory note: deferred since 2026-04-17).
+//
+// Both token shapes are signed with the project's JWT secret, so any
+// Edge Function deployed with verify_jwt: true accepts either.
 
-import { getSupabaseConfig } from './supabase';
+import { getSupabaseClient, getSupabaseConfig } from './supabase';
 
 const TOKEN_KEY = 'xs_edge_auth_token';
 const TOKEN_EXPIRY_KEY = 'xs_edge_auth_exp'; // epoch seconds
+
+/**
+ * The synthetic-email domain used to map usernames into Supabase Auth
+ * identities. See scripts/backfill-supabase-auth.mjs for the rationale
+ * and the corresponding backfill. Login.tsx imports this so the
+ * username → email mapping lives in one place.
+ */
+export const SYNTHETIC_EMAIL_DOMAIN = 'xs-internal.local';
+
+// Cache the current Supabase access token in module scope so the sync
+// getEdgeToken() can return it without awaiting a Promise. Kept fresh
+// by onAuthStateChange — token refresh, sign-in, and sign-out all fire
+// the callback, so the cached value is never more than a tick stale.
+let supabaseAccessToken: string | null = null;
+try {
+    const client = getSupabaseClient();
+    // Initial population: read whatever session already exists in storage.
+    client.auth.getSession().then(({ data }) => {
+        supabaseAccessToken = data.session?.access_token ?? null;
+    }).catch(() => { /* no session yet — fine */ });
+    client.auth.onAuthStateChange((_event, session) => {
+        supabaseAccessToken = session?.access_token ?? null;
+    });
+} catch {
+    // getSupabaseClient throws only if env is broken at bundle time —
+    // edge functions would be unusable anyway. Leave the cache null.
+}
 
 export interface IssuedUser {
     id: string;
@@ -54,6 +91,12 @@ export function clearEdgeToken(): void {
 let inMemoryToken: { token: string; expiresAt: number } | null = null;
 
 export function getEdgeToken(): string | null {
+    // Prefer the Supabase Auth session — it's the canonical v1 token and
+    // is auto-refreshed by the supabase-js client.
+    if (supabaseAccessToken) return supabaseAccessToken;
+
+    // Legacy v2 / auth-issue fallback. The sessionStorage path remains
+    // for routes that still call issueEdgeToken().
     try {
         const token = sessionStorage.getItem(TOKEN_KEY);
         const expStr = sessionStorage.getItem(TOKEN_EXPIRY_KEY);

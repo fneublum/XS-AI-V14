@@ -1,7 +1,7 @@
 // Phase 3B — v2 Payables.
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle, Clock, Loader2, Send, Sparkles } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Loader2, Send, Sparkles, Receipt } from 'lucide-react';
 import { Button, Input, FormField, Label } from '../primitives';
 import { DataTableColumn } from '../primitives/DataTable';
 import { ListPage } from '../components/ListPage';
@@ -10,16 +10,16 @@ import { AiUploadModal } from '../components/AiUploadModal';
 import { SupabaseSelectField } from '../components/SupabaseSelectField';
 import { useRowCrud } from '../components/useRowCrud';
 import { useApSupplierBalances } from '../queries/useTransactions';
-import { RecordPaymentDrawer, type PrefillSupplierInvoice, type OcrPrefill } from '../components/RecordPaymentDrawer';
-import { ReceiptUploadModal, type ReceiptExtracted } from '../components/ReceiptUploadModal';
+import { RecordPaymentDrawer, type PrefillSupplierInvoice } from '../components/RecordPaymentDrawer';
 import { InvoiceStatementModal } from '../components/InvoiceStatementModal';
 import { InvoiceTransactionsEditModal } from '../components/InvoiceTransactionsEditModal';
-import { Wallet, CheckCircle as CheckCircleIcon, FileText } from 'lucide-react';
+import { Wallet, CheckCircle as CheckCircleIcon, Eye } from 'lucide-react';
 import { PdfViewerModal } from '../components/PdfViewerModal';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useCompany } from '../providers/CompanyProvider';
 import { useToast } from '../primitives/Toast';
 import { usePayables, Payable } from '../queries/usePayables';
+import ExpensesV2 from './ExpensesV2';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
 import { formatMoney as fmtMoney } from '../lib/formatMoney';
@@ -27,20 +27,44 @@ import { batchGetSyncStatuses, syncPayableBill } from '../../services/quickbooks
 import { getSupabaseClient } from '../../services/supabase';
 import type { QBSyncStatus, SupplierInvoice } from '../../types';
 
-// ─── Due-date / Status helpers (parity with v1 FinancePayables) ──
-const calcDueDate = (invoiceDate: string | null, paymentTerms: string | null): Date | null => {
-  if (!invoiceDate) return null;
-  const base = new Date(invoiceDate);
-  if (isNaN(base.getTime())) return null;
-  const days = paymentTerms ? parseInt((paymentTerms.match(/\d+/) || ['0'])[0], 10) : 0;
-  if (days > 0) base.setDate(base.getDate() + days);
-  return base;
-};
+// Slim tab pill — local to PayablesV2 so the tab swap between Bills
+// and Expenses stays self-contained. Styled to match the rest of v2
+// (dark surface, indigo active state). The shared `BentoModePill` in
+// DashboardV2 is too opinionated visually (icon-led, chip-shaped) for
+// this top-of-page context.
+const TabPill: React.FC<{
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}> = ({ active, onClick, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={
+      'px-3 py-1 rounded-md text-[12px] font-medium border transition-colors ' +
+      (active
+        ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-200'
+        : 'bg-transparent border-[#1f1f1f] text-slate-400 hover:text-slate-200 hover:bg-[#161616]')
+    }
+  >
+    {children}
+  </button>
+);
 
-// Status pill: prefer the stored `status` value (admin-managed via the
-// drawer), fall back to date-derived "Due Soon" / "On Track" / "Overdue"
-// only when the row has no explicit status — so existing rows without
-// stored status keep a sensible badge until the admin sets one.
+// ─── Due-date / Status helpers (parity with v1 FinancePayables) ──
+// Shared term parser lives in v2/lib/paymentTerms.ts so Receivables
+// and Cash Flow apply the same rules — old in-line regex grabbed the
+// first number, treating "30% Advance" as 30 days.
+import { calcDueDate } from '../lib/paymentTerms';
+
+// Status pill — derived in this order of precedence:
+//   1. Balance hits 0 → PAID (always wins; the AP ledger is the source
+//      of truth for what's settled). This fixes the long-standing
+//      drift where the stored `status` column said 'OVERDUE' but
+//      payments had since been applied.
+//   2. Stored `status` value (admin-set via the drawer) if it's an
+//      explicit UNPAID / PAID / OVERDUE.
+//   3. Date-derived label from invoiceDate + paymentTerms otherwise.
 type StatusLabel = 'UNPAID' | 'PAID' | 'OVERDUE' | 'Due Soon' | 'On Track' | 'No Date';
 
 const statusPriority: Record<StatusLabel, number> = {
@@ -52,7 +76,13 @@ const statusPriority: Record<StatusLabel, number> = {
   'PAID':     6,
 };
 
-const resolveStatus = (r: Payable): StatusLabel => {
+const resolveStatus = (r: Payable, balance?: number): StatusLabel => {
+  // Balance trumps stored status. If the AP ledger says nothing is
+  // owed, the row is PAID regardless of what `status` was set to at
+  // creation time. 0.001 epsilon to avoid float-rounding false-PARTIALs.
+  const bal = balance ?? r.totalAmount;
+  if (bal <= 0.001) return 'PAID';
+
   const stored = (r.status ?? '').trim().toUpperCase();
   if (stored === 'PAID')    return 'PAID';
   if (stored === 'OVERDUE') return 'OVERDUE';
@@ -134,8 +164,8 @@ const buildColumns = (
       </span>
     ) },
   { id: 'status', header: 'Status', sortable: true, filterable: true,
-    value: r => resolveStatus(r),
-    cell: r => <StatusPill label={resolveStatus(r)} /> },
+    value: r => resolveStatus(r, balances[r.id]?.balance),
+    cell: r => <StatusPill label={resolveStatus(r, balances[r.id]?.balance)} /> },
   { id: 'qb', header: 'QB', sortable: true, filterable: true,
     value: r => (r.qbStatus === 'Sent' || qbStatuses[r.id]?.synced) ? 'Sent' : '—',
     cell: r => {
@@ -210,7 +240,19 @@ const fields: FieldDef[] = [
   { key: 'freightTerms',   label: 'Freight terms' },
   { key: 'carrier',        label: 'Carrier' },
   { key: 'transportRef',   label: 'Transport ref', mono: true },
-  { key: 'customerPo',     label: 'Customer PO', mono: true },
+  // Linked PO — when set, a DB trigger auto-flips the linked
+  // purchase_orders.status to COMPLETED so the PO falls out of the
+  // Cash Flow pipeline (we'd otherwise double-count once as
+  // "Purchase orders out" and again as "Invoices out"). Dropdown is
+  // backed by the purchase_orders table; allowFreeText keeps legacy
+  // freeform references working.
+  { key: 'customerPo', label: 'Linked PO (auto-completes the PO)', mono: true,
+    source: {
+      table: 'purchase_orders', valueColumn: 'id', labelColumn: 'id',
+      secondaryColumn: 'supplierName', scopeByCompany: true,
+    },
+    allowFreeText: true,
+  },
   // ── Quantities / Weights ─────────────────────────────────────
   { key: 'totalQuantity',  label: 'Total quantity', mono: true },
   { key: 'grossWeight',    label: 'Gross weight (kg)', mono: true },
@@ -360,6 +402,11 @@ const PayablesV2: React.FC = () => {
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
+  // 'bills' = the existing supplier-invoice list (invoices_suppliers).
+  // 'expenses' = the new general-expenses surface (public.expenses).
+  // Default to 'bills' so the long-standing view doesn't change for
+  // returning users; the new tab is opt-in.
+  const [tab, setTab] = useState<'bills' | 'expenses'>('bills');
   const pay = usePayables(search);
   // Headline total — computed below once balances are in scope.
   const insert = useEntityInsert<Record<string, unknown>>({
@@ -449,22 +496,10 @@ const PayablesV2: React.FC = () => {
 
   // Record-payment drawer state — opened from per-row "Pay" action.
   const [paySupplierInvoice, setPaySupplierInvoice] = useState<PrefillSupplierInvoice | null>(null);
-  // OCR upload modal + the prefill it produces.
-  const [ocrOpen, setOcrOpen] = useState(false);
-  const [ocrPrefill, setOcrPrefill] = useState<OcrPrefill | null>(null);
-  const handleOcrExtracted = React.useCallback((e: ReceiptExtracted) => {
-    setOcrPrefill({
-      counterpartyName: e.counterpartyName,
-      txnDate: e.txnDate,
-      amount: e.amount,
-      currency: e.currency,
-      method: e.method ?? undefined,
-      reference: e.reference ?? undefined,
-      memo: e.memo ?? undefined,
-      receiptDataUrl: e.receiptDataUrl ?? undefined,
-      invoiceNumberHint: e.invoiceNumberHint ?? undefined,
-    });
-  }, []);
+  // Header-level "OCR Receipt" shortcut + the prefill it produced were
+  // removed 2026-05-28. The per-row Pay button (setPaySupplierInvoice)
+  // still opens RecordPaymentDrawer with full OCR-receipt support, so
+  // no functionality is lost — just a redundant header entry point.
 
   // View action → statement modal (mirror Receivables — invoice
   // total · payments · balance in a T-account). Edit action → the
@@ -481,8 +516,36 @@ const PayablesV2: React.FC = () => {
     listQueryKeys: ['payables'],
     rowLabel: r => r.invoiceNumber,
     fields,
+    // View on Payables opens InvoiceStatementModal as a read-only
+    // T-account (total / paid / balance + payment history). No edit
+    // affordances inside.
     onView: (row) => setStatementRow(row),
-    onEdit: (row) => setEditTxnsRow(row),
+    // Edit on Payables uses the default InspectDrawer (full record
+    // fields editor). The extraEditSection below adds an "Edit
+    // payments" drill-in so a single Edit click covers BOTH the
+    // record fields AND the payments allocated to the bill — one
+    // icon for everything editable on this row.
+    viewIcon: <Receipt size={14} />,
+    viewTitleByRow: () => 'View statement',
+    extraEditSection: (row) => (
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-slate-500 font-medium">
+            Payments
+          </div>
+          <div className="text-[11.5px] text-slate-400 mt-0.5">
+            Edit or delete individual payments allocated to this invoice.
+          </div>
+        </div>
+        <Button
+          size="sm" variant="secondary"
+          onClick={() => setEditTxnsRow(row)}
+          className="bg-transparent border border-[#1f1f1f] text-indigo-300 hover:bg-indigo-500/10 hover:text-indigo-200"
+        >
+          Edit payments →
+        </Button>
+      </div>
+    ),
   });
 
   // Compose: prepend a Pay button on unpaid rows, then existing actions.
@@ -492,36 +555,14 @@ const PayablesV2: React.FC = () => {
     const paid = bal <= 0.001;
     return (
       <div className="flex items-center gap-1 justify-end">
-        {/* Document — always visible. When the bill has a stored
-            OCR-source PDF/image (originalDocument set on AI Upload),
-            the modal renders the PDF inline. When the bill was
-            created manually (or pre-dates the column), the modal
-            shows an empty state with a file picker so the user can
-            attach the original document retroactively; the picked
-            file's data URL is written back to the row. */}
+        {/* Pay button — first in the row so it's the most prominent
+            action. Always visible (incl. fully-paid rows) so the user
+            can record corrections, overpayments, or replace a
+            wrongly-allocated payment without having to back the
+            invoice out of PAID status first. Muted styling when there's
+            no outstanding balance so it doesn't compete with the green
+            Pay-due chip on unpaid rows. */}
         <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setViewOriginalRow(r);
-          }}
-          title={r.originalDocument
-            ? "Invoice file on record — click to view"
-            : "No invoice file on record — click to attach one"}
-          // Green chip when the original invoice file is on record;
-          // red chip when missing so the user can see at a glance
-          // which bills still need their source document uploaded.
-          className={
-            'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold border transition-colors ' +
-            (r.originalDocument
-              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
-              : 'bg-red-500/10 text-red-300 border-red-500/30 hover:bg-red-500/20')
-          }
-        >
-          <FileText size={10} /> Invoice
-        </button>
-        {!paid && (
-          <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
@@ -538,12 +579,45 @@ const PayablesV2: React.FC = () => {
                 currency: r.currency,
               });
             }}
-            title="Record supplier payment"
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
+            title={paid ? 'Record an additional/correcting payment' : 'Record supplier payment'}
+            className={
+              'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold border transition-colors ' +
+              (paid
+                ? 'bg-slate-500/5 text-slate-400 border-slate-500/20 hover:bg-slate-500/10 hover:text-slate-200'
+                : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20 hover:bg-emerald-500/20')
+            }
           >
             <Wallet size={10} /> Pay
           </button>
-        )}
+        {/* Document — sits right of Pay. When the bill has a stored
+            OCR-source PDF/image (originalDocument set on AI Upload),
+            the modal renders the PDF inline. When the bill was
+            created manually (or pre-dates the column), the modal
+            shows an empty state with a file picker so the user can
+            attach the original document retroactively; the picked
+            file's data URL is written back to the row. */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setViewOriginalRow(r);
+          }}
+          title={r.originalDocument
+            ? "Invoice file on record — click to view"
+            : "No invoice file on record — click to attach one"}
+          // Icon-only eye, tinted by document-presence: green when the
+          // original invoice PDF is on record, red when missing so the
+          // user can see at a glance which rows still need a source
+          // document uploaded.
+          className={
+            'p-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-1 ' +
+            (r.originalDocument
+              ? 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 focus-visible:ring-emerald-500'
+              : 'text-red-400 hover:text-red-300 hover:bg-red-500/10 focus-visible:ring-red-500')
+          }
+        >
+          <Eye size={14} />
+        </button>
         {crudActions(r)}
       </div>
     );
@@ -551,13 +625,36 @@ const PayablesV2: React.FC = () => {
 
   const openCreate = () => setCreateOpen(true);
 
+  // Render-time short-circuit: when the user picks "Expenses", swap the
+  // entire Payables surface for ExpensesV2. Keeping it as a separate
+  // component (rather than an inline conditional block) means the
+  // existing bills wiring — useRowCrud drawers, QB sync state, AP
+  // balances, OCR modals — doesn't have to dodge undefined when on
+  // the expenses tab. The two tabs share no state.
+  // Tab pills — sit on the right side of the header *next to* the
+  // action buttons (+ New bill, AI Upload, OCR Receipt) rather than in
+  // `titleAdornment` next to the title. Earlier placement put them on a
+  // separate visual row above the buttons on narrow widths; folding
+  // them into the same `headerAction` flex container keeps everything
+  // vertically aligned regardless of viewport width.
+  const renderTabPills = (activeTab: 'bills' | 'expenses') => (
+    <>
+      <TabPill active={activeTab === 'bills'}    onClick={() => setTab('bills')}>Supplier Invoices</TabPill>
+      <TabPill active={activeTab === 'expenses'} onClick={() => setTab('expenses')}>Expenses</TabPill>
+    </>
+  );
+
+  if (tab === 'expenses') {
+    return <ExpensesV2 tabPills={renderTabPills('expenses')} />;
+  }
+
   return (
     <>
       <ListPage<Payable>
         title="Payables"
         subtitle={
           pay.data
-            ? `${pay.data.length} bills${total > 0 ? ` · ${fmtMoney(total)}` : ''}${search ? ` · "${search}"` : ''}`
+            ? `${pay.data.length} invoices${total > 0 ? ` · ${fmtMoney(total)}` : ''}${search ? ` · "${search}"` : ''}`
             : 'Loading…'
         }
         search={search}
@@ -574,29 +671,28 @@ const PayablesV2: React.FC = () => {
         rowActions={rowActions}
         headerAction={
           <div className="flex items-center gap-2">
+            {/* Tab pills first so they sit immediately left of the action
+                buttons, all on the same vertical baseline. */}
+            {renderTabPills('bills')}
+            <span className="w-px h-5 mx-1" style={{ background: 'var(--b-line)' }} />
             <Button size="sm" onClick={openCreate}
               className="bg-indigo-600 text-white hover:bg-indigo-500 h-7 px-2.5 text-[12px] font-medium rounded-md">
-              + New bill
+              + New invoice
             </Button>
             <Button size="sm" onClick={() => setAiUploadOpen(true)}
               className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/40 text-indigo-200 hover:from-indigo-500/30 hover:to-purple-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
               <Sparkles size={12} />
-              AI Upload Bill
-            </Button>
-            <Button size="sm" onClick={() => setOcrOpen(true)}
-              className="bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border border-emerald-500/40 text-emerald-200 hover:from-emerald-500/30 hover:to-teal-500/30 h-7 px-2.5 text-[12px] font-medium rounded-md inline-flex items-center gap-1.5">
-              <Sparkles size={12} />
-              OCR Receipt
+              AI Upload Invoice
             </Button>
           </div>
         }
-        emptyAction={search ? undefined : { label: '+ New bill', onClick: openCreate }}
+        emptyAction={search ? undefined : { label: '+ New invoice', onClick: openCreate }}
         skeletonCols={[100, 200, 100, 80, 60, 80, 80]}
       />
       <QuickCreateDrawer
         open={createOpen}
         onOpenChange={setCreateOpen}
-        title="New supplier bill"
+        title="New supplier invoice"
         description="Log an incoming supplier invoice (payable)."
         table="invoices_suppliers"
         idPrefix="SINV"
@@ -612,20 +708,6 @@ const PayablesV2: React.FC = () => {
         supplierInvoice={paySupplierInvoice ?? undefined}
         onSuccess={() => { ap.refetch(); pay.refetch(); }}
       />
-      <ReceiptUploadModal
-        open={ocrOpen}
-        onOpenChange={setOcrOpen}
-        mode="payment"
-        onExtracted={handleOcrExtracted}
-      />
-      <RecordPaymentDrawer
-        open={!!ocrPrefill}
-        onOpenChange={(v) => { if (!v) setOcrPrefill(null); }}
-        mode="payment"
-        ocrPrefill={ocrPrefill ?? undefined}
-        onSuccess={() => { ap.refetch(); pay.refetch(); }}
-      />
-
       {/* View modal — supplier-bill statement (T-account: invoice
           total · prior payments · balance). Reads the AP-view's
           authoritative totals so figures match the row in the list
@@ -647,6 +729,9 @@ const PayablesV2: React.FC = () => {
             onViewOriginal={statementRow.originalDocument
               ? () => setViewOriginalRow(statementRow)
               : undefined}
+            // Statement is read-only — the pencil row action now opens
+            // InvoiceTransactionsEditModal directly, so no need to
+            // surface that path from inside the Statement header.
           />
         );
       })()}
@@ -674,7 +759,7 @@ const PayablesV2: React.FC = () => {
         open={!!viewOriginalRow}
         onOpenChange={(v) => { if (!v) setViewOriginalRow(null); }}
         dataUrl={viewOriginalRow?.originalDocument ?? null}
-        title={viewOriginalRow ? `Supplier bill · ${viewOriginalRow.invoiceNumber}` : ''}
+        title={viewOriginalRow ? `Supplier invoice · ${viewOriginalRow.invoiceNumber}` : ''}
         onUpload={async (dataUrl) => {
           if (!viewOriginalRow) return;
           const sb = getSupabaseClient();
@@ -700,7 +785,7 @@ const PayablesV2: React.FC = () => {
           open={aiUploadOpen}
           onOpenChange={setAiUploadOpen}
           config={{
-            title: 'AI upload — supplier bill',
+            title: 'AI upload — supplier invoice',
             description: 'Drop a supplier invoice PDF, pick a file, or paste text or a screenshot.',
             emptyDraft: emptyPayableDraft,
             // Stash the OCR-source data URL on the draft so save()

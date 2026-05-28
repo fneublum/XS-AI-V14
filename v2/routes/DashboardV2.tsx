@@ -323,6 +323,34 @@ const OPEN_SO_STATUSES = new Set(['DRAFT', 'PROFORMA', 'CONFIRMED', 'PARTIALLY_I
 
 // ─── Dashboard ─────────────────────────────────────────────────────────
 
+// sessionStorage key for the GENRYO-local Gem chat. Persists messages
+// across in-tab reloads but does NOT cross tabs or survive a fresh
+// browser session — Gem is a per-session assistant, not a permanent
+// chat history store. If we ever want cross-session persistence we
+// move this to a Supabase table; for now sessionStorage is the right
+// scope (cheap, no schema, isolated per tab).
+const GEM_HISTORY_KEY = 'xs_gem_chat_history';
+const GEM_MODEL = 'gemini-2.5-flash';
+const GEM_SYSTEM_INSTRUCTION =
+  'You are GEM, the in-browser AI assistant for GENRYO INTERNATIONAL inside the XS ERP. ' +
+  'You answer concisely, in plain language, and focused on what the user is trying to do. ' +
+  'You do NOT have access to the HERMES batch agents (Max, Lara, Matt, Logan, Sal) — they ' +
+  'live in EC4 workflows and are out of your scope. Stick to what you can answer directly.';
+
+function loadGemHistory(): ChatMessage[] {
+  try {
+    const raw = sessionStorage.getItem(GEM_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+function saveGemHistory(msgs: ChatMessage[]): void {
+  try {
+    sessionStorage.setItem(GEM_HISTORY_KEY, JSON.stringify(msgs));
+  } catch { /* quota / disabled — fine, in-memory still works */ }
+}
+
 export default function DashboardV2() {
   const toast = useToast();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -341,6 +369,21 @@ export default function DashboardV2() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+
+  // ── Company-aware behavior (hoisted from below so refresh/sendText
+  // can see it). When in GENRYO, the chat is fully local — backed by
+  // Gemini via gemini-proxy, not by the Mac mini control plane.
+  const { currentCompanyId } = useCompany();
+  const companiesQ = useCompanies();
+  const currentCompanyName = useMemo(() => {
+    const c = (companiesQ.data ?? []).find(co => co.id === currentCompanyId);
+    return (c?.name ?? '').toUpperCase();
+  }, [companiesQ.data, currentCompanyId]);
+  const isGenryo = currentCompanyName.includes('GENRYO');
+  const isEc4 = currentCompanyName.startsWith('EC4');
+  const agentOrder = isGenryo
+    ? ['gem']
+    : ['max', 'lara', 'matt', 'logan', 'sal', 'gem', 'hermes'];
 
   // Supabase-backed KPIs (the bento top row). Reuses V14's existing
   // React Query hooks; they cache + dedupe across the app, so the chat
@@ -367,6 +410,16 @@ export default function DashboardV2() {
   }, []);
 
   const refresh = useCallback(async () => {
+    // GENRYO is a local-only chat (Gem runs in-browser via gemini-proxy).
+    // Don't poll the Mac mini control plane — it doesn't know about Gem
+    // and would return Max/Lara/etc. posts that don't apply to GENRYO.
+    // Instead, hydrate from sessionStorage so the conversation survives
+    // tab refreshes within the same session.
+    if (isGenryo) {
+      setMessages(loadGemHistory());
+      setConnected(true);
+      return;
+    }
     try {
       const list = await api<ChatMessage[]>('GET', '/chat/messages?limit=300');
       setMessages(Array.isArray(list) ? list : []);
@@ -375,16 +428,20 @@ export default function DashboardV2() {
       setMessages([]);
       setConnected(false);
     }
-  }, []);
+  }, [isGenryo]);
 
   useEffect(() => {
     refresh();
     api<Personas>('GET', '/chat/personas')
       .then(p => setPersonas(p && typeof p === 'object' && !Array.isArray(p) ? p : {}))
       .catch(() => setPersonas({}));
+    // Skip the Mac-mini polling interval entirely for GENRYO — there's
+    // nothing to poll. State updates happen synchronously inside
+    // sendText when Gem replies.
+    if (isGenryo) return;
     const t = setInterval(refresh, 4000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, isGenryo]);
 
   // Lazy-load Overview / Suggestions on first switch into those modes,
   // and refresh whenever the user re-enters that mode.
@@ -421,6 +478,79 @@ export default function DashboardV2() {
     setSending(true);
     setInput('');
     setAttachments([]);
+
+    // ── GENRYO branch — Gem runs entirely in-browser via gemini-proxy.
+    // No Mac mini round-trip; we append the user message locally, call
+    // Gemini with the running conversation history, then append the
+    // reply. Persist after each turn so a tab refresh restores the
+    // thread.
+    if (isGenryo) {
+      const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      const userMsg: ChatMessage = {
+        id: 'gem-u-' + Date.now(),
+        conversation_id: 'gem-local',
+        role: 'user',
+        author: 'felipe',
+        to_agent: 'gem',
+        content: trimmed || '(empty)',
+        meta: atts.length > 0 ? { attachments: atts } : {},
+        created_at: nowIso,
+      };
+      // Capture the about-to-be-sent history snapshot so the Gemini call
+      // gets the full multi-turn context, not just the latest message.
+      const nextHistory = [...messages, userMsg];
+      setMessages(nextHistory);
+      saveGemHistory(nextHistory);
+
+      try {
+        // Lazy-load the wrapper so we don't pull Gemini code into the
+        // bundle for users who never visit GENRYO.
+        const { GoogleGenAI } = await import('../../services/geminiClient');
+        const ai = new GoogleGenAI({ apiKey: 'ignored' /* proxy handles the real key */ });
+        // Map our chat history to Gemini's content shape. Gemini expects
+        // alternating user/model turns, so we coerce author=gem messages
+        // to role=model and everything else to role=user.
+        const geminiContents = nextHistory.map(m => ({
+          role: (m.role === 'agent' && (m.author ?? '').toLowerCase() === 'gem') ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        }));
+        const resp = await ai.models.generateContent({
+          model: GEM_MODEL,
+          contents: geminiContents,
+          config: { systemInstruction: GEM_SYSTEM_INSTRUCTION },
+        });
+        const replyText = (resp.text || '').trim() || '(Gem returned no text.)';
+        const replyMsg: ChatMessage = {
+          id: 'gem-r-' + Date.now(),
+          conversation_id: 'gem-local',
+          role: 'agent',
+          author: 'gem',
+          to_agent: null,
+          content: replyText,
+          meta: {},
+          created_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
+        };
+        const finalHistory = [...nextHistory, replyMsg];
+        setMessages(finalHistory);
+        saveGemHistory(finalHistory);
+      } catch (err) {
+        toast.push({
+          kind: 'error',
+          title: 'Gem failed to reply',
+          description: err instanceof Error ? err.message : String(err),
+        });
+        // Roll the user message back so they can retry without manually
+        // re-typing — the failure shouldn't strand half a turn.
+        setMessages(messages);
+        saveGemHistory(messages);
+        setInput(trimmed);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
+    // ── Non-GENRYO — existing Mac mini control-plane round-trip.
     const optimistic: ChatMessage = {
       id: 'opt-' + Date.now(),
       conversation_id: 'default',
@@ -535,20 +665,30 @@ export default function DashboardV2() {
   // real launchd job on HERMES. Beth omitted from this Dashboard
   // (personal scope; she still has a real launchd job).
   //
-  // Company-aware roster: when the user has GENRYO scoped in the
-  // company switcher, only Gem (the ERP-data agent) is available —
-  // the other personas live in EC4's HERMES workflow and don't apply
-  // to GENRYO yet. Other companies see the full roster.
-  const { currentCompanyId } = useCompany();
-  const companiesQ = useCompanies();
-  const currentCompanyName = useMemo(() => {
-    const c = (companiesQ.data ?? []).find(co => co.id === currentCompanyId);
-    return (c?.name ?? '').toUpperCase();
-  }, [companiesQ.data, currentCompanyId]);
-  const isGenryo = currentCompanyName.includes('GENRYO');
-  const agentOrder = isGenryo
-    ? ['gem']
-    : ['max', 'lara', 'matt', 'logan', 'sal', 'gem', 'hermes'];
+  // Company-aware roster: see hoisted block at top of the component.
+  // (isGenryo / isEc4 / agentOrder are defined there so refresh +
+  // sendText can branch on company without needing refs.)
+
+  // Filter the chat feed to match the company-scoped roster. Without
+  // this, GENRYO users see Max/Lara/Matt's HERMES scheduled posts in
+  // the Team Room even though they live in EC4's workflow. Keep all
+  // user-typed messages and any system notices; for agent posts, only
+  // keep authors in agentOrder. `agentOrderSet` is recomputed each
+  // render but the array is tiny (1–7 entries) so no useMemo needed.
+  const agentOrderSet = new Set(agentOrder.map(a => a.toLowerCase()));
+  const displayedMessages = messages.filter(m => {
+    if (m.role !== 'agent') return true;
+    const author = (m.author ?? '').toLowerCase();
+    return agentOrderSet.has(author);
+  });
+
+  // Bounce off the Crons tab if the company switches away from EC4 —
+  // otherwise mode stays at 'crons' but the tab pill is hidden (see
+  // `isEc4 && <BentoModePill ...>` below), stranding the user on a
+  // HERMES-cron view that doesn't apply to them.
+  useEffect(() => {
+    if (mode === 'crons' && !isEc4) setMode('chat');
+  }, [mode, isEc4]);
 
   // ── KPI derivations ──────────────────────────────────────────────────
   // Each derived from a hooked-up V14 query; loading/empty states render
@@ -606,6 +746,16 @@ export default function DashboardV2() {
 
   const clear = async () => {
     if (!window.confirm('Clear all chat messages in this conversation? Agent actions, audit log, and the action queue are NOT affected.')) return;
+    // GENRYO chat is local — nothing to DELETE on the Mac mini. Wipe
+    // the in-memory state and the sessionStorage mirror.
+    if (isGenryo) {
+      setMessages([]);
+      saveGemHistory([]);
+      setInput('');
+      setAttachments([]);
+      toast.push({ kind: 'success', title: 'Gem chat cleared' });
+      return;
+    }
     try {
       await api('DELETE', '/chat/messages?conversation=default');
       setMessages([]);
@@ -633,7 +783,7 @@ export default function DashboardV2() {
               ? <span>connecting…</span>
               : <>
                   <BentoPill tone="teal">● polling</BentoPill>
-                  <span>· {messages.length} {messages.length === 1 ? 'msg' : 'msgs'}</span>
+                  <span>· {displayedMessages.length} {displayedMessages.length === 1 ? 'msg' : 'msgs'}</span>
                 </>
           }
         </div>
@@ -648,7 +798,9 @@ export default function DashboardV2() {
           <BentoModePill icon={<MessageSquare size={13} />} label="Chat"     active={mode === 'chat'}     onClick={() => setMode('chat')} />
           <BentoModePill icon={<LayoutGrid size={13} />}    label="Overview" active={mode === 'overview'} onClick={() => setMode('overview')} />
           <BentoModePill icon={<Sparkles size={13} />}      label="Prompts"  active={mode === 'prompts'}  onClick={() => setMode('prompts')} />
-          <BentoModePill icon={<Clock size={13} />}         label="Crons"    active={mode === 'crons'}    onClick={() => setMode('crons')} />
+          {isEc4 && (
+            <BentoModePill icon={<Clock size={13} />}         label="Crons"    active={mode === 'crons'}    onClick={() => setMode('crons')} />
+          )}
         </div>
 
         {/* Theme toggle — feeds the global useUiStore so V14's whole shell flips with it */}
@@ -759,13 +911,13 @@ export default function DashboardV2() {
                 <span className="b-display text-[14px] font-semibold" style={{ color: 'var(--b-text)' }}>Conversation</span>
                 <BentoPill tone="teal">● {agentOrder.length} of {agentOrder.length} online</BentoPill>
                 <span className="b-mono text-[11.5px] ml-auto" style={{ color: 'var(--b-text-mute)' }}>
-                  last {messages.length > 0 ? fmtTime(messages[messages.length - 1].created_at) : '—'} ago
+                  last {displayedMessages.length > 0 ? fmtTime(displayedMessages[displayedMessages.length - 1].created_at) : '—'} ago
                 </span>
               </div>
 
               {/* Messages */}
               <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto custom-scrollbar">
-                {messages.length === 0 && connected !== false && (
+                {displayedMessages.length === 0 && connected !== false && (
                   <div className="p-4">
                     <EmptyChatHint personas={personas} onSend={sendText} />
                   </div>
@@ -786,7 +938,7 @@ export default function DashboardV2() {
                     >Retry</button>
                   </div>
                 )}
-                {messages.map(m => <BentoMessage key={m.id} m={m} personas={personas} />)}
+                {displayedMessages.map(m => <BentoMessage key={m.id} m={m} personas={personas} />)}
                 {sending && (
                   <div className="flex items-center gap-2 px-5 py-3 text-[12px]" style={{ color: 'var(--b-text-mute)' }}>
                     <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -815,7 +967,7 @@ export default function DashboardV2() {
                       onChange={e => setInput(e.target.value)}
                       onKeyDown={onKeyDown}
                       onPaste={onPaste}
-                      placeholder="Reply to the team…  @matt anything overdue?  ·  Enter to send"
+                      placeholder="Reply to the team…  @gem anything overdue?  ·  Enter to send"
                       rows={1}
                       className="block w-full resize-none bg-transparent text-[13.5px] leading-tight focus:outline-none py-0"
                       style={{ color: 'var(--b-text)' }}
@@ -884,8 +1036,12 @@ export default function DashboardV2() {
             </div>
           </div>
 
-          {/* ROW 3: queue (1) + agent vitals (1) + activity tail (1) */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          {/* ROW 3: queue (1) + agent vitals (1) + activity tail (1).
+              EC4-only — the three panels are powered by the Mac mini's
+              HERMES queue / personas / audit feed, which other companies
+              (GENRYO, UP8, XSOLUTION) don't run against. Hide the entire
+              row for non-EC4 to keep the dashboard relevant. */}
+          {isEc4 && <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
 
             {/* DECISION QUEUE */}
             <div
@@ -975,7 +1131,7 @@ export default function DashboardV2() {
                 )}
               </div>
             </div>
-          </div>
+          </div>}
         </div>
       )}
     </div>

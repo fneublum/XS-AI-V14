@@ -230,6 +230,7 @@ export const EMPTY_PURCHASE_ORDER: PurchaseOrder = {
   expectedDeliveryDate: null,
   paymentTerms: 'Net 30 Days',
   items: [],
+  freightAmount: 0,
   totalAmount: 0,
   currency: 'USD',
   notes: null,

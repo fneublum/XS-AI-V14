@@ -16,7 +16,7 @@ import {
   ShoppingCart, FileSignature, Package, Receipt, BellRing,
   Briefcase, ClipboardCheck,
   Calculator, CalendarCheck, Ship,
-  Wallet, ArrowDownLeft, ArrowUpRight, TrendingUp, Briefcase as BriefcaseIcon,
+  Wallet, ArrowDownLeft, ArrowUpRight, TrendingUp, LineChart, Briefcase as BriefcaseIcon,
   Database, Settings as SettingsIcon,
   Building2, Compass, Handshake, Truck, Banknote, Wrench,
   ShieldAlert,
@@ -94,6 +94,7 @@ const AgentSalesOrdersV2    = lazy(() => import('./routes/AgentSalesOrdersV2'));
 const PLInvoiceEngineV2     = lazy(() => import('./routes/PLInvoiceEngineV2'));
 const CostProfitAIV2        = lazy(() => import('./routes/CostProfitAIV2'));
 const MarginsV2             = lazy(() => import('./routes/MarginsV2'));
+const CashFlowV2            = lazy(() => import('./routes/CashFlowV2'));
 const LoginV2               = lazy(() => import('./routes/LoginV2'));
 const PaymentTermsV2        = lazy(() => import('./routes/PaymentTermsV2'));
 const AgentPortalV2         = lazy(() => import('./routes/AgentPortalV2'));
@@ -185,6 +186,7 @@ const buildSections = (
     items: [
       { id: 'payables',          label: 'Payables',          icon: ArrowUpRight },
       { id: 'receivables',       label: 'Receivables',       icon: ArrowDownLeft },
+      { id: 'cash-flow',         label: 'Cash Flow',         icon: LineChart },
       { id: 'statements',        label: 'Statements',        icon: Receipt },
       { id: 'margins',           label: 'Margins',           icon: TrendingUp },
     ],
@@ -240,6 +242,7 @@ const routeTitles: Record<string, string> = {
   // Finance
   'payables':        'Payables',
   'receivables':     'Receivables',
+  'cash-flow':         'Cash Flow',
   'statements':        'Statements',
   'margins':           'Margins',
   // Reachable via Data modal or command palette — not in the sidebar
@@ -724,6 +727,7 @@ const AppV2Inner: React.FC = () => {
           {activeId === 'payables'        && <PayablesV2 />}
           {activeId === 'statements'        && <StatementsV2 />}
           {activeId === 'margins'           && <MarginsV2 />}
+          {activeId === 'cash-flow'         && <CashFlowV2 />}
           {activeId === 'payment-terms'   && <PaymentTermsV2 />}
           {activeId === 'commissions'     && <CommissionsV2 />}
           {/* Admin-only routes — gated so a non-admin who deep-links

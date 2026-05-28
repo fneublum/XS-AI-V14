@@ -126,17 +126,26 @@ export function useBookings(search?: string, agentName?: string | string[]) {
     : (agentName ? [agentName] : []);
   const hasAgent = agents.length > 0;
 
+  // Selective cross-company scoping (2026-05-28): AVAILABLE bookings —
+  // open carrier inventory not yet attached to a specific cargo — are
+  // shared across all companies so any user can claim them. Every
+  // other status (LOADED / DEPARTED / SHIPPED / CANCELLED) is the
+  // exclusive workflow of the company that booked it and stays
+  // company-scoped. PostgREST `.or()` lets us express this in one
+  // round-trip: status=AVAILABLE OR companyId matches the current
+  // company. When currentCompanyId is 'ALL' (admin / system scope),
+  // skip the filter entirely.
   return useSupabaseQuery<Booking[]>(
     ['bookings', currentCompanyId, needle, agents.join('|')],
     async () => {
       const supabase = getSupabaseClient();
-      let q = scopeByCompany(
-        supabase.from('bookings')
-          .select('id, bookingNumber, customer, vesselVoyage, pol, pod, equipment, etd, eta, status, salesOrderId, createdAt, agentName, "freeTime", "cargoCutOff"')
-          .order('createdAt', { ascending: false, nullsFirst: false })
-          .limit(hasAgent ? 1000 : 200),  // widen the net when we'll filter client-side
-        currentCompanyId,
-      );
+      let q = supabase.from('bookings')
+        .select('id, bookingNumber, customer, vesselVoyage, pol, pod, equipment, etd, eta, status, salesOrderId, createdAt, agentName, "freeTime", "cargoCutOff"')
+        .order('createdAt', { ascending: false, nullsFirst: false })
+        .limit(hasAgent ? 1000 : 200);  // widen the net when we'll filter client-side
+      if (currentCompanyId !== 'ALL') {
+        q = q.or(`status.eq.AVAILABLE,companyId.eq.${currentCompanyId}`);
+      }
       if (needle) {
         q = q.or(`bookingNumber.ilike.*${needle}*,customer.ilike.*${needle}*,vesselVoyage.ilike.*${needle}*`) as typeof q;
       }

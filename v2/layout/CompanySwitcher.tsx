@@ -89,8 +89,26 @@ export const CompanySwitcher: React.FC = () => {
           <DropdownMenu.Separator className="my-1 h-px bg-[#1f1f1f]" />
 
           <DropdownMenu.Item
-            onSelect={() => {
+            onSelect={async () => {
+              // Phase 1e — tear down the Supabase session AND the legacy
+              // sessionStorage blob. `scope: 'local'` ensures the local
+              // tokens are cleared even if the server-side revocation
+              // call fails (network blip, 401, etc.) — without this,
+              // a silent signOut failure leaves the user "logged in"
+              // after the redirect. Belt-and-suspenders: manually nuke
+              // any sb-* localStorage entries as a final guarantee.
+              try {
+                const { getSupabaseClient } = await import('../../services/supabase');
+                await getSupabaseClient().auth.signOut({ scope: 'local' }).catch(() => { /* best effort */ });
+              } catch { /* noop */ }
+              try {
+                Object.keys(localStorage)
+                  .filter(k => k.startsWith('sb-'))
+                  .forEach(k => localStorage.removeItem(k));
+              } catch { /* noop */ }
               try { sessionStorage.removeItem('xs_current_user'); } catch { /* noop */ }
+              try { sessionStorage.removeItem('xs_edge_auth_token'); } catch { /* noop */ }
+              try { sessionStorage.removeItem('xs_edge_auth_exp'); } catch { /* noop */ }
               window.location.href = '/';
             }}
             className="px-2 py-1.5 rounded text-[12px] text-slate-400 cursor-pointer outline-none data-[highlighted]:bg-[#161616] data-[highlighted]:text-slate-100"

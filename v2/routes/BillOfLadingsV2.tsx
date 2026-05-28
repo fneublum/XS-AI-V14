@@ -13,6 +13,9 @@ import { useCompany } from '../providers/CompanyProvider';
 import { useToast } from '../primitives/Toast';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useBillOfLadings, BillOfLading } from '../queries/useBillOfLadings';
+import { PdfViewerModal } from '../components/PdfViewerModal';
+import { getSupabaseClient } from '../../services/supabase';
+import { useQueryClient } from '@tanstack/react-query';
 import { formatDate as fmtDate } from '../lib/formatDate';
 import { shortName, tooltipName } from '../lib/formatName';
 
@@ -102,12 +105,17 @@ interface BLDraft {
   measurement: string;
   status: string;
   shippedDate: string;
+  // Captured from AiUploadModal's `fromExtracted` 2nd arg — data URL of
+  // the original PDF/image. Persisted to bill_landings.originalDocument
+  // so the list's View action can re-open the source file.
+  originalDocument: string | null;
 }
 
 const emptyBLDraft = (): BLDraft => ({
   blNumber: '', shipper: '', consignee: '', notify: '', vesselVoyage: '',
   portLoading: '', portDischarge: '', container: '', seal: '', packages: '',
   grossWeight: '', measurement: '', status: 'ISSUED', shippedDate: '',
+  originalDocument: null,
 });
 
 const BL_PROMPT = `You are extracting fields from an OCEAN BILL OF LADING (straight or negotiable).
@@ -157,15 +165,22 @@ function normalizeBLJson(parsed: Record<string, unknown>): BLDraft {
     status:         (['DRAFT','ISSUED','RELEASED','SURRENDERED','CANCELLED'].includes(status)
                       ? status : 'ISSUED'),
     shippedDate:    str('shippedDate'),
+    originalDocument: null,  // filled in by fromExtracted with the upload's data URL
   };
 }
 
 const BillOfLadingsV2: React.FC = () => {
   const toast = useToast();
   const { currentCompanyId } = useCompany();
+  const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [aiUploadOpen, setAiUploadOpen] = useState(false);
+  // Selected row whose original-document PDF is open in PdfViewerModal.
+  // `View` (eye icon) routes here instead of the generic detail drawer,
+  // so the action behaves like Payables: open the saved B/L PDF, or
+  // an empty-state file picker when the row has no document yet.
+  const [viewOriginalRow, setViewOriginalRow] = useState<BillOfLading | null>(null);
   const bols = useBillOfLadings(search);
   const insert = useEntityInsert<Record<string, unknown>>({
     table: 'bill_landings',
@@ -173,11 +188,15 @@ const BillOfLadingsV2: React.FC = () => {
     idPrefix: 'BL',
   });
 
-  const { rowActions, drawers, openView } = useRowCrud<BillOfLading>({
+  const { rowActions, drawers } = useRowCrud<BillOfLading>({
     table: 'bill_landings',
     listQueryKeys: ['billOfLadings', 'logisticsDocs'],
     rowLabel: r => r.blNumber,
     fields,
+    // Override the default View — open the stored PDF instead of
+    // the read-only detail drawer. Empty documents land on the
+    // PdfViewerModal's file-picker empty state.
+    onView: (row) => setViewOriginalRow(row),
   });
 
   const openCreate = () => setCreateOpen(true);
@@ -201,7 +220,7 @@ const BillOfLadingsV2: React.FC = () => {
         isLoading={bols.isLoading}
         error={bols.error}
         onRetry={bols.refetch}
-        onRowClick={openView}
+        onRowClick={(row) => setViewOriginalRow(row)}
         rowActions={rowActions}
         headerAction={
           <div className="flex items-center gap-2">
@@ -238,7 +257,9 @@ const BillOfLadingsV2: React.FC = () => {
             title: 'AI upload — bill of lading',
             description: 'Drop a B/L PDF, pick a file, or paste text or a screenshot.',
             emptyDraft: emptyBLDraft,
-            fromExtracted: (d) => d,
+            // Capture the data URL of the uploaded PDF/image so the row's
+            // View action (PdfViewerModal) can re-open the source file.
+            fromExtracted: (d, originalDocument) => ({ ...d, originalDocument: originalDocument ?? null }),
             extractSpec: { prompt: BL_PROMPT, normalize: normalizeBLJson },
             extractSummary: (d) =>
               [d.blNumber, d.portLoading, d.portDischarge].filter(Boolean).join(' · ') || null,
@@ -359,6 +380,9 @@ const BillOfLadingsV2: React.FC = () => {
                 measurement:   d.measurement.trim() || null,
                 status:        d.status || 'ISSUED',
                 shippedDate:   d.shippedDate || null,
+                // Persist the original document so the View action can
+                // re-open it. Null when the user pasted text instead.
+                originalDocument: d.originalDocument,
               };
               if (currentCompanyId && currentCompanyId !== 'ALL') {
                 payload.companyId = currentCompanyId;
@@ -370,6 +394,42 @@ const BillOfLadingsV2: React.FC = () => {
         />
       )}
       {drawers}
+
+      {/* Original-document viewer — opens the saved B/L PDF/image.
+          When the row has no document yet (manual create, pre-AI-Upload
+          legacy rows), PdfViewerModal renders an empty-state file picker
+          so the user can attach the PDF retroactively; the picked file's
+          data URL is written back to bill_landings.originalDocument and
+          the list query is invalidated so the new document is visible
+          next time. */}
+      <PdfViewerModal
+        open={!!viewOriginalRow}
+        onOpenChange={(v) => { if (!v) setViewOriginalRow(null); }}
+        dataUrl={viewOriginalRow?.originalDocument ?? null}
+        title={viewOriginalRow ? `Bill of Lading · ${viewOriginalRow.blNumber}` : ''}
+        onUpload={async (dataUrl) => {
+          if (!viewOriginalRow) return;
+          try {
+            const supabase = getSupabaseClient();
+            const { error } = await supabase
+              .from('bill_landings')
+              .update({ originalDocument: dataUrl })
+              .eq('id', viewOriginalRow.id);
+            if (error) throw new Error(error.message);
+            // Optimistic local mirror so the modal can render the file
+            // immediately without waiting for the list refetch.
+            setViewOriginalRow({ ...viewOriginalRow, originalDocument: dataUrl });
+            void qc.invalidateQueries({ queryKey: ['billOfLadings'] });
+            toast.push({ kind: 'success', title: 'B/L file attached', description: viewOriginalRow.blNumber });
+          } catch (err) {
+            toast.push({
+              kind: 'error',
+              title: 'Upload failed',
+              description: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }}
+      />
     </>
   );
 };

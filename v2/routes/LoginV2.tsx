@@ -3,33 +3,76 @@
 //   background image with dark overlay, white form card with show/hide
 //   password, indigo submit with arrow, version tag bottom-right.
 //
-// Auth flow stays v2-native: issueEdgeToken returns user + token and
-// we persist a v1-shaped user into sessionStorage so providers rehydrate.
+// Phase 1e — uses supabase.auth.signInWithPassword against the
+// synthetic-email mapping created by scripts/backfill-supabase-auth.mjs.
+// Supabase persists the session to localStorage and auto-refreshes the
+// token, so the refresh-forces-relogin bug (the original Phase A
+// report) is fixed here too. AuthProvider boots from the persisted
+// session, so this file only handles the credential-entry step.
 
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, ArrowRight, Eye, EyeOff, Loader2 } from 'lucide-react';
-import { issueEdgeToken, IssuedUser } from '../../services/edgeAuth';
+import { getSupabaseClient } from '../../services/supabase';
+import { SYNTHETIC_EMAIL_DOMAIN } from '../../services/edgeAuth';
 import { useSystemLogo, useLoginBackground, DEFAULT_LOGO } from '../queries/useSystemLogo';
 import pkg from '../../package.json';
 
-function persistUser(user: IssuedUser) {
-  const userLike = {
-    id: user.id,
-    name: user.username,
-    username: user.username,
-    email: user.email,
-    role: user.role,
-    allowed_company_ids: user.allowed_company_ids,
-    allowedCompanyIds: user.allowed_company_ids,
-  };
+// Mirror the freshly-resolved users row into sessionStorage for back-compat
+// with legacy v2 callers (CompanySwitcher, inboxProcessor, etc.) that
+// still read `xs_current_user`. AuthProvider's onAuthStateChange will
+// resolve this from the session on the next page load too — this is
+// just the immediate-after-login hand-off.
+function persistUser(row: Record<string, unknown>) {
   try {
-    sessionStorage.setItem('xs_current_user', JSON.stringify(userLike));
+    sessionStorage.setItem('xs_current_user', JSON.stringify(row));
   } catch { /* noop */ }
+}
+
+/**
+ * Run the full Supabase sign-in flow for a username + password:
+ * 1. Compute the synthetic email (`<lowercased-username>@xs-internal.local`).
+ * 2. Call supabase.auth.signInWithPassword.
+ * 3. Resolve the auth identity back to the application's users row via
+ *    users.auth_id. (Falls back to username if auth_id isn't populated
+ *    yet — transition-period safety.)
+ * 4. persistUser for legacy sessionStorage readers.
+ *
+ * Throws on any failure with a user-friendly message.
+ */
+async function signInAndResolveUser(username: string, password: string) {
+  const supabase = getSupabaseClient();
+  const synthetic = `${username.trim().toLowerCase()}@${SYNTHETIC_EMAIL_DOMAIN}`;
+  const { data, error: authError } = await supabase.auth.signInWithPassword({
+    email: synthetic,
+    password,
+  });
+  if (authError || !data.session || !data.user) {
+    throw new Error('invalid credentials');
+  }
+
+  // Look up the application users row that's linked to this auth identity.
+  const { data: row, error: rowError } = await supabase
+    .from('users')
+    .select('id, name, email, username, role, allowed_company_ids, linked_entity_id, auth_id')
+    .eq('auth_id', data.user.id)
+    .maybeSingle();
+
+  if (rowError || !row) {
+    // Auth succeeded but no matching app user — sign back out so we
+    // don't leave a half-authed session in localStorage.
+    await supabase.auth.signOut().catch(() => { /* best effort */ });
+    throw new Error('Account is not provisioned in the application. Contact an administrator.');
+  }
+
+  persistUser(row);
+  return row;
 }
 
 // Localhost-only auto-login: on `localhost` / `127.0.0.1`, fire a
 // real login with a hard-coded dev account and skip the form. Gated
-// by hostname so prod never sees these credentials.
+// by hostname so prod never sees these credentials. SKIPS itself if a
+// Supabase session already exists (so the AuthProvider's restore path
+// wins on a fresh page load).
 const DEV_AUTOLOGIN_USER = 'FELIPE';
 const DEV_AUTOLOGIN_PASS = 'JCKING';
 const isLocalhostDev = () => {
@@ -61,17 +104,29 @@ const LoginV2: React.FC = () => {
     }
   }, [logoQuery.isSuccess]);
 
-  // Localhost auto-login: run once on mount. Fires the real edge-auth
-  // flow with the dev creds so prod deploys never see this shortcut.
+  // Localhost auto-login: run once on mount. Fires Supabase Auth with
+  // the dev creds. SKIPS if a Supabase session already exists (so the
+  // AuthProvider's restore can take over on a normal page load).
   useEffect(() => {
     if (autoAttempted) return;
     if (!isLocalhostDev()) return;
     setAutoAttempted(true);
     (async () => {
+      // Guard: if a session is already persisted, don't override it —
+      // AuthProvider will rehydrate the user from the existing session
+      // and route us into the app on its own.
+      try {
+        const supabase = getSupabaseClient();
+        const { data } = await supabase.auth.getSession();
+        if (data.session) {
+          window.location.href = '/?v2=1';
+          return;
+        }
+      } catch { /* fall through to autologin */ }
+
       setBusy(true);
       try {
-        const result = await issueEdgeToken(DEV_AUTOLOGIN_USER.toLowerCase(), DEV_AUTOLOGIN_PASS);
-        persistUser(result.user);
+        await signInAndResolveUser(DEV_AUTOLOGIN_USER, DEV_AUTOLOGIN_PASS);
         window.location.href = '/?v2=1';
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -85,10 +140,6 @@ const LoginV2: React.FC = () => {
     e.preventDefault();
     setError(null);
 
-    // Preserve the user's typed case — the auth-issue Edge Function
-    // does a case-insensitive `ilike` lookup, so any casing that
-    // matches the stored row works. Forcing lowercase here was the
-    // bug: rows stored as "MAX" never matched the lowercased "max".
     const u = username.trim();
     const p = password.trim();
     if (!u || !p) {
@@ -98,15 +149,14 @@ const LoginV2: React.FC = () => {
 
     setBusy(true);
     try {
-      const result = await issueEdgeToken(u, p);
-      persistUser(result.user);
+      await signInAndResolveUser(u, p);
       window.location.href = '/?v2=1';
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/invalid credentials/i.test(msg)) {
         setError('Invalid username or password.');
-      } else if (/missing credentials|missing/i.test(msg)) {
-        setError('Please enter username and password.');
+      } else if (/not provisioned/i.test(msg)) {
+        setError(msg);
       } else {
         setError(`Sign-in failed: ${msg}`);
       }

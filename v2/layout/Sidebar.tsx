@@ -6,10 +6,29 @@
 // is driven by the parent — localStorage persistence lives in
 // AppShell so the top-bar toggle and the sidebar stay in sync.
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '../primitives/utils';
 import { Kbd } from '../primitives/Kbd';
 import { useSystemLogo } from '../queries/useSystemLogo';
+
+// Per-section collapsed state — persisted in localStorage so the user's
+// pinned/hidden groups survive a refresh. Keyed by section.id (not
+// label) since labels can be re-translated without invalidating the
+// remembered state.
+const SECTION_COLLAPSE_KEY = 'xs_sidebar_collapsed_sections';
+function loadCollapsedSet(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SECTION_COLLAPSE_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr.filter(s => typeof s === 'string')) : new Set();
+  } catch { return new Set(); }
+}
+function saveCollapsedSet(s: Set<string>): void {
+  try { localStorage.setItem(SECTION_COLLAPSE_KEY, JSON.stringify(Array.from(s))); }
+  catch { /* quota / disabled — non-fatal */ }
+}
 
 export interface SidebarItem {
   id: string;
@@ -76,6 +95,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const logoQuery = useSystemLogo();
   const logoSrc = logoQuery.data;
+  // Per-section collapsed state. Separate from the sidebar's own
+  // icon-strip `collapsed` prop — that one hides labels entirely.
+  // This one just folds each group's items behind a chevron.
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => loadCollapsedSet());
+  useEffect(() => { saveCollapsedSet(collapsedSections); }, [collapsedSections]);
+  const toggleSection = (id: string) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else              next.add(id);
+      return next;
+    });
+  };
 
   return (
   <aside
@@ -126,19 +158,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {sections.map((section, i) => {
         const accent = section.accent ?? 'slate';
         const SectionIcon = section.icon;
+        const isCollapsed = collapsedSections.has(section.id);
         return (
         <div key={section.id} className={cn(i > 0 && (collapsed ? 'mt-2 pt-2 border-t border-[#1f1f1f]' : 'mt-4'))}>
           {section.label && !collapsed && (
-            <div className="px-2 mb-1.5 flex items-center gap-1.5">
+            // Whole header is clickable — chevron + label + icon all
+            // toggle the section. Hover state on the row makes the
+            // affordance obvious without needing a separate hit target.
+            <button
+              type="button"
+              onClick={() => toggleSection(section.id)}
+              aria-expanded={!isCollapsed}
+              aria-label={isCollapsed ? `Expand ${section.label}` : `Collapse ${section.label}`}
+              className="w-full px-2 mb-1.5 flex items-center gap-1.5 group hover:bg-[#141414] rounded-sm transition-colors py-0.5"
+            >
               {SectionIcon && (
-                <SectionIcon size={11} className={cn(accentText[accent], 'opacity-80')} />
+                <SectionIcon size={11} className={cn(accentText[accent], 'opacity-80 shrink-0')} />
               )}
-              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
+              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold group-hover:text-slate-300">
                 {section.label}
               </span>
-            </div>
+              {/* Chevron sits on the far right and rotates 90° when the
+                  group is folded. `ml-auto` pushes it past the label. */}
+              <span className="ml-auto text-slate-600 group-hover:text-slate-300">
+                {isCollapsed
+                  ? <ChevronRight size={11} />
+                  : <ChevronDown size={11} />}
+              </span>
+            </button>
           )}
-          <ul className="space-y-0.5">
+          {/* Items list — hidden when the section is collapsed (and
+              the sidebar isn't in icon-strip mode, since the icon
+              strip ignores the per-section state). */}
+          <ul className={cn(
+            'space-y-0.5',
+            isCollapsed && !collapsed && 'hidden',
+          )}>
             {section.items.map(item => {
               const active = item.id === activeId;
               const Icon = item.icon;

@@ -33,6 +33,21 @@ interface Config<T extends { id: string }> {
    *  (e.g. row has no PDF attached). When omitted, eye opens the
    *  drawer as before. */
   onView?: (row: T, openDrawer: () => void) => void;
+  /** Per-row tint for the eye-icon. Used to flag rows that have a
+   *  stored document (e.g. Expenses row with an OCR'd PDF gets a
+   *  green eye). Returning undefined keeps the default neutral tint. */
+  viewToneByRow?: (row: T) => string | undefined;
+  /** Per-row tooltip override for the eye-icon. */
+  viewTitleByRow?: (row: T) => string | undefined;
+  /** Override the View button's icon globally for this hook instance.
+   *  Use on lists where "View" means something specific (Payables: a
+   *  payment statement; not a generic record inspector). */
+  viewIcon?: React.ReactNode;
+  /** Optional content rendered inside the inspect drawer below the
+   *  field list. Used by Payables to surface an "Edit payments"
+   *  drill-in next to the record-fields editor — single Edit icon,
+   *  both flows accessible. Receives the row being edited. */
+  extraEditSection?: (row: T) => React.ReactNode;
   /** Override the pencil-icon behavior. Same fallback contract as
    *  onView — when omitted, edit opens the default inspect drawer in
    *  edit mode. Pages that need a bespoke editor (e.g. Receivables
@@ -53,6 +68,7 @@ interface Result<T> {
 
 export function useRowCrud<T extends { id: string }>({
   table, listQueryKeys, rowLabel, fields, title, onDeleted, onEmail, onDuplicate, onView, onEdit,
+  viewToneByRow, viewTitleByRow, viewIcon, extraEditSection,
 }: Config<T>): Result<T> {
   const toast = useToast();
   const [inspectRow, setInspectRow] = useState<T | null>(null);
@@ -82,6 +98,9 @@ export function useRowCrud<T extends { id: string }>({
       onEmail={onEmail ? () => onEmail(row) : undefined}
       onDuplicate={onDuplicate ? () => onDuplicate(row) : undefined}
       onDelete={() => setDeleteRow(row)}
+      viewClassName={viewToneByRow?.(row)}
+      viewTitle={viewTitleByRow?.(row)}
+      viewIcon={viewIcon}
     />
   );
 
@@ -99,6 +118,7 @@ export function useRowCrud<T extends { id: string }>({
         listQueryKeys={listQueryKeys}
         row={inspectRow as unknown as Record<string, unknown> | null}
         fields={fields}
+        extraSection={inspectRow && extraEditSection ? extraEditSection(inspectRow) : undefined}
       />
       <ConfirmDialog
         open={!!deleteRow}

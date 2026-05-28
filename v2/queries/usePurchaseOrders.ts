@@ -15,6 +15,13 @@ export interface PurchaseOrder {
   expectedDeliveryDate: string | null;
   paymentTerms: string | null;
   items: LineItem[];
+  /** Local freight the buyer owes the supplier on top of the goods
+   *  subtotal (e.g. inland freight to port). Stored separately from
+   *  the line items so reports can tell freight apart from goods.
+   *  Mirrors invoices_suppliers."freightAmount". */
+  freightAmount: number;
+  /** Always = subtotal(items) + freightAmount. Persisted on save so
+   *  cash-flow / payables can read a single field. */
   totalAmount: number;
   currency: string;
   notes: string | null;
@@ -30,6 +37,7 @@ interface RawRow {
   expectedDeliveryDate: string | null;
   paymentTerms: string | null;
   items: unknown;
+  freightAmount: number | string | null;
   totalAmount: number | string | null;
   currency: string | null;
   notes: string | null;
@@ -93,6 +101,7 @@ export function usePurchaseOrders(search?: string) {
         expectedDeliveryDate: r.expectedDeliveryDate,
         paymentTerms: r.paymentTerms,
         items: parseItems(r.items),
+        freightAmount: Number(r.freightAmount) || 0,
         totalAmount: Number(r.totalAmount) || 0,
         currency: r.currency ?? 'USD',
         notes: r.notes,

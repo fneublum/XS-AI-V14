@@ -25,6 +25,11 @@ interface ListPageProps<T> {
   cardAction?: React.ReactNode;
   /** Rendered next to the page title — typically a "+ New X" button. */
   headerAction?: React.ReactNode;
+  /** Rendered immediately to the right of the title text (before
+   *  `headerAction`, which is `ml-auto`-pushed to the far right). Use
+   *  for tab pills or status chips that should sit inline with the
+   *  title rather than be banished to the action area. */
+  titleAdornment?: React.ReactNode;
   columns: DataTableColumn<T>[];
   getRowId: (row: T) => string;
   data: T[] | undefined;
@@ -52,7 +57,7 @@ interface ListPageProps<T> {
 
 export function ListPage<T>({
   title, subtitle, search, setSearch, searchPlaceholder = 'Search',
-  cardTitle, cardAction, headerAction, columns, getRowId, data, isLoading, error, onRetry,
+  cardTitle, cardAction, headerAction, titleAdornment, columns, getRowId, data, isLoading, error, onRetry,
   onRowClick, emptyTitle, emptyDescription, emptyAction,
   skeletonRows = 6, skeletonCols = [160, 220, 100, 60], rowActions, zebra,
   density, rowClassName, tableLayout,
@@ -70,17 +75,20 @@ export function ListPage<T>({
           {/* Accent stripe — vertical bar in teal to anchor the eye */}
           <span className="block w-1 h-9 rounded-full" style={{ background: 'var(--b-teal-2)' }} />
           <div className="min-w-0">
-            <h1
-              className="b-display font-semibold leading-none"
-              style={{
-                color: 'var(--b-text)',
-                fontSize: '32px',
-                fontVariationSettings: "'opsz' 64, 'wght' 600",
-                letterSpacing: '-0.02em',
-              }}
-            >
-              {title}
-            </h1>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1
+                className="b-display font-semibold leading-none"
+                style={{
+                  color: 'var(--b-text)',
+                  fontSize: '32px',
+                  fontVariationSettings: "'opsz' 64, 'wght' 600",
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                {title}
+              </h1>
+              {titleAdornment}
+            </div>
             {subtitle && (
               <div className="text-[13px] mt-1.5" style={{ color: 'var(--b-text-mute)' }}>
                 {subtitle}

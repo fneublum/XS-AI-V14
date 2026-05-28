@@ -74,6 +74,48 @@ export interface User {
   linked_entity_id?: string;
   dock_config?: string[];
   allowed_product_categories?: string[];
+  // Foreign key linkage to Supabase auth.users.id (UUID). Populated by
+  // scripts/backfill-supabase-auth.mjs. NULL during the cutover for
+  // pre-backfill rows — Login.tsx falls back to username match in that
+  // window. See scripts/migration-add-users-auth-id.sql for the schema.
+  auth_id?: string;
+}
+
+// General operational expense (utilities, fuel, office, broker fees,
+// travel, etc.). Distinct from supplier-invoice "bills" which live in
+// invoices_suppliers and are shipment-tied. Backed by public.expenses
+// (see scripts/migration-add-expenses-table.sql).
+export type ExpenseCategory =
+  | 'UTILITIES'
+  | 'OFFICE'
+  | 'FREIGHT'
+  | 'TRAVEL'
+  | 'FUEL'
+  | 'COMMISSIONS'
+  | 'OTHER';
+
+export type ExpensePaymentStatus = 'UNPAID' | 'PAID' | 'PARTIAL';
+
+export interface Expense {
+  id: string;
+  companyId: string;
+  date: string;            // ISO date, YYYY-MM-DD
+  vendor: string;
+  amount: number;
+  currency: string;        // USD by default
+  category: ExpenseCategory;
+  notes?: string | null;
+  /** Original receipt / invoice (the document that created the
+   *  expense) — set by the AI Upload flow. */
+  attachmentUrl?: string | null;
+  paymentStatus: ExpensePaymentStatus;
+  paidDate?: string | null;
+  /** Proof-of-payment document — set by the Pay action, distinct
+   *  from the original receipt. May be an OCR'd payment confirmation,
+   *  a check stub, a wire screenshot, etc. */
+  paymentReceiptUrl?: string | null;
+  createdAt: string;
+  createdBy?: string | null;
 }
 
 export interface Company {

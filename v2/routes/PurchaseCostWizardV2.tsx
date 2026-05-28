@@ -187,7 +187,9 @@ const PurchaseCostWizardV2: React.FC = () => {
     // Formatted PO id — `PO-NNNNNXX`. Falls back to the legacy random
     // string only if the sequence lookup throws.
     let poId: string;
-    try { poId = await nextPONumber(offer.supplierName); }
+    // Pass companyId so the wizard-created PO also picks the right format
+    // (PO-GEN-NNNN for GENRYO, PO-NNNNNXX otherwise).
+    try { poId = await nextPONumber(offer.supplierName, companyId); }
     catch { poId = `PO${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`; }
     const poItems = offer.items.map((it, i) => {
       const l = lines[i];

@@ -107,7 +107,7 @@ import { Database, Wifi } from 'lucide-react';
 import PendingDocsBanner from './components/PendingDocsBanner';
 
 import { useSupabase } from './hooks/useSupabase';
-import { checkSupabaseConnection } from './services/supabase';
+import { checkSupabaseConnection, getSupabaseClient } from './services/supabase';
 import { checkAndTriggerAutoBackup } from './services/backupService';
 import { activityLogger } from './services/activityLogService';
 import { clearSession } from './services/memoryService';
@@ -132,13 +132,16 @@ const BRFlag = ({ size = 16, className = "" }) => (
 );
 
 const App: React.FC = () => {
-    // Authentication State - always restore session from sessionStorage
-    const [currentUser, setCurrentUser] = useState<User | null>(() => {
-        try {
-            const saved = sessionStorage.getItem('xs_current_user');
-            return saved ? JSON.parse(saved) : null;
-        } catch { return null; }
-    });
+    // Authentication State — session is owned by Supabase Auth and
+    // persisted to localStorage by supabase-js (autoRefreshToken: true).
+    // The currentUser is the application's User row, resolved from the
+    // session by the restore effect below once the users table loads.
+    const [currentUser, setCurrentUser] = useState<User | null>(null);
+    // True until the boot-time supabase.auth.getSession() check has
+    // settled. While true we render the loading shell instead of Login,
+    // so a logged-in user who refreshes never sees a flash of the login
+    // screen before their session restores.
+    const [authRestoring, setAuthRestoring] = useState<boolean>(true);
     const [dbConnectionStatus, setDbConnectionStatus] = useState<boolean>(false);
 
     // Navigation State
@@ -263,6 +266,89 @@ const App: React.FC = () => {
         checkSupabaseConnection().then(status => setDbConnectionStatus(status));
     }, []);
 
+    // ── Session restore + auth state listener ────────────────────────────
+    // On mount we ask Supabase Auth for any existing session (read from
+    // localStorage by supabase-js). If one exists, we wait for the users
+    // table to finish loading, then resolve session.user.id → User row
+    // and rehydrate currentUser. We also subscribe to onAuthStateChange
+    // so a sign-out from a sibling tab (or a forced token revocation)
+    // drops currentUser here too.
+    useEffect(() => {
+        let cancelled = false;
+        const client = getSupabaseClient();
+
+        // Subscribe first so we never miss a state-change event that
+        // fires between getSession() resolving and the listener attaching.
+        const { data: sub } = client.auth.onAuthStateChange((event) => {
+            if (cancelled) return;
+            if (event === 'SIGNED_OUT') {
+                setCurrentUser(null);
+                activityLogger.clearContext();
+            }
+            // SIGNED_IN / TOKEN_REFRESHED are handled by the explicit
+            // login flow in handleLogin — nothing to do here.
+        });
+
+        return () => {
+            cancelled = true;
+            sub.subscription.unsubscribe();
+        };
+    }, []);
+
+    // Resolve session.user → users row once the users table has loaded.
+    // Kept separate from the auth-listener effect so it can react to
+    // users.loading transitions without re-subscribing to auth events.
+    useEffect(() => {
+        if (currentUser) {
+            // Already restored / freshly logged in — nothing to do.
+            if (authRestoring) setAuthRestoring(false);
+            return;
+        }
+        if (users.loading) return; // wait for the users table
+
+        let cancelled = false;
+        const client = getSupabaseClient();
+
+        client.auth.getSession().then(({ data }) => {
+            if (cancelled) return;
+            const session = data.session;
+            if (!session) {
+                // No persisted session — show Login.
+                setAuthRestoring(false);
+                return;
+            }
+
+            // Look up the application user via the auth_id linkage
+            // written by scripts/backfill-supabase-auth.mjs. If no row
+            // matches (orphan auth identity left behind after a users
+            // row was deleted), sign out cleanly and fall through to
+            // Login rather than rendering a half-authed UI.
+            const dbUser = users.data.find(u => u.auth_id && u.auth_id === session.user.id);
+            if (!dbUser) {
+                console.warn('[App] session restored but no users row for', session.user.id, '— signing out');
+                client.auth.signOut().catch(() => { /* best-effort */ });
+                setAuthRestoring(false);
+                return;
+            }
+
+            setCurrentUser(dbUser);
+            activityLogger.setUserContext(dbUser.id, dbUser.role, 'ALL');
+            if (dbUser.role !== Role.ADMIN && dbUser.allowed_company_ids && dbUser.allowed_company_ids.length > 0) {
+                setCurrentCompanyId(dbUser.allowed_company_ids[0]);
+                activityLogger.setUserContext(dbUser.id, dbUser.role, dbUser.allowed_company_ids[0]);
+            }
+            // NOTE: deliberately NOT calling activityLogger.logAuth('LOGIN')
+            // or resetting activeModule here — this is a session restore,
+            // not a fresh login. The user keeps whatever route they were on.
+            setAuthRestoring(false);
+        }).catch(err => {
+            console.error('[App] session restore failed', err);
+            if (!cancelled) setAuthRestoring(false);
+        });
+
+        return () => { cancelled = true; };
+    }, [users.loading, users.data, currentUser, authRestoring]);
+
     // Automated Backup Scheduler
     useEffect(() => {
         const interval = setInterval(() => {
@@ -276,7 +362,9 @@ const App: React.FC = () => {
 
     const handleLogin = useCallback((user: User) => {
         setCurrentUser(user);
-        sessionStorage.setItem('xs_current_user', JSON.stringify(user));
+        // Session persistence is now owned by Supabase Auth (localStorage,
+        // auto-refreshed). No app-side mirror needed — the auth-restore
+        // effect rehydrates currentUser on page load from the session.
         setTimeout(() => window.scrollTo(0, 0), 100);
 
         // Clear previous dashboard chat session so user starts fresh
@@ -314,8 +402,17 @@ const App: React.FC = () => {
         activityLogger.flush();
         activityLogger.clearContext();
 
+        // Tear down the Supabase Auth session. The onAuthStateChange
+        // listener in services/edgeAuth.ts will null out the cached
+        // access token; downstream Edge Function calls will then 401
+        // until the user signs back in. We don't await — sign-out is
+        // local-first in supabase-js, the network revocation happens in
+        // the background.
+        try {
+            getSupabaseClient().auth.signOut().catch(() => { /* best-effort */ });
+        } catch { /* client unavailable — nothing to sign out of */ }
+
         setCurrentUser(null);
-        sessionStorage.removeItem('xs_current_user');
         setActiveModule('DASHBOARD');
         setSubModule('');
     }, []);
@@ -431,6 +528,13 @@ const App: React.FC = () => {
     const mCustomersScoped = useMemo(() => filterCustomersBySales(mCustomers), [mCustomers, currentUser]);
     const mProductsFiltered = useMemo(() => filterByProductCategory(mProducts), [mProducts, currentUser?.allowed_product_categories]);
     const mCalcsFiltered = useMemo(() => filterCalcsByProductCategory(mCostCalculations), [mCostCalculations, currentUser?.allowed_product_categories, products.data]);
+
+    // While Supabase Auth restores the session and the users table loads,
+    // keep showing the loading shell instead of bouncing to Login — a
+    // logged-in user refreshing the page should not flash the login form.
+    if (authRestoring) {
+        return <PageLoader />;
+    }
 
     if (!currentUser) {
         return (

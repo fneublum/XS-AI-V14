@@ -15,6 +15,10 @@ export interface BillOfLading {
   shippedDate: string | null;
   container: string | null;
   status: string;
+  /** Data URL of the original B/L PDF/image, populated by the AI Upload
+   *  flow (stored inline on bill_landings.originalDocument). Powers the
+   *  "View" action in the list — see BillOfLadingsV2. */
+  originalDocument: string | null;
   createdAt: string;
 }
 
@@ -29,6 +33,7 @@ interface Raw {
   shippedDate: string | null;
   container: string | null;
   status: string | null;
+  originalDocument: string | null;
   createdAt: string | null;
 }
 
@@ -46,7 +51,7 @@ export function useBillOfLadings(search?: string) {
       const supabase = getSupabaseClient();
       let q = scopeByCompany(
         supabase.from('bill_landings')
-          .select('id, blNumber, shipper, consignee, vesselVoyage, portLoading, portDischarge, shippedDate, container, status, createdAt')
+          .select('id, blNumber, shipper, consignee, vesselVoyage, portLoading, portDischarge, shippedDate, container, status, "originalDocument", createdAt')
           .order('shippedDate', { ascending: false, nullsFirst: false })
           .limit(200),
         currentCompanyId,
@@ -57,7 +62,7 @@ export function useBillOfLadings(search?: string) {
       const { data, error } = await q;
       if (error) throw new Error(error.message);
 
-      return ((data as Raw[] | null) ?? []).map(r => ({
+      return ((data as unknown as Raw[] | null) ?? []).map(r => ({
         id: r.id,
         blNumber: r.blNumber ?? r.id,
         shipper: r.shipper,
@@ -68,6 +73,7 @@ export function useBillOfLadings(search?: string) {
         shippedDate: r.shippedDate,
         container: r.container,
         status: r.status ?? 'ISSUED',
+        originalDocument: r.originalDocument,
         createdAt: r.createdAt ?? '',
       }));
     },

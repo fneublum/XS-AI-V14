@@ -8,7 +8,7 @@
 // reflects live without a refresh.
 
 import React from 'react';
-import { X as XIcon, FileText, Eye, AlertCircle, Loader2, FileSearch } from 'lucide-react';
+import { X as XIcon, FileText, Eye, AlertCircle, Loader2, FileSearch, Pencil } from 'lucide-react';
 import { useTransactionsForTarget } from '../queries/useTransactions';
 
 interface Props {
@@ -34,6 +34,12 @@ interface Props {
    *  invoice/bill. Wired from PayablesV2 / ReceivablesV2 once the
    *  row carries an originalDocument data URL. */
   onViewOriginal?: () => void;
+  /** Optional — when supplied, renders an "Edit payments" link in
+   *  the header that opens the InvoiceTransactionsEditModal so the
+   *  user can edit/delete individual payments. Wired from PayablesV2
+   *  to give the pencil icon back its "edit record fields" role
+   *  while keeping payment-level editing one click away. */
+  onEditPayments?: () => void;
 }
 
 function fmtMoney(n: number, c: string = 'USD'): string {
@@ -44,7 +50,7 @@ export const InvoiceStatementModal: React.FC<Props> = ({
   open, onOpenChange,
   invoiceId, supplierInvoiceId, purchaseOrderId,
   documentLabel, counterpartyName, invoiceTotal, paid, currency,
-  onViewReceipt, onViewOriginal,
+  onViewReceipt, onViewOriginal, onEditPayments,
 }) => {
   const history = useTransactionsForTarget({ invoiceId, supplierInvoiceId, purchaseOrderId });
   const targetId = invoiceId ?? supplierInvoiceId ?? purchaseOrderId;
@@ -109,6 +115,16 @@ export const InvoiceStatementModal: React.FC<Props> = ({
                 className="text-[11px] text-slate-400 hover:text-emerald-300 inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-700/40"
               >
                 <FileSearch size={11} /> Invoice
+              </button>
+            )}
+            {onEditPayments && (
+              <button
+                type="button"
+                onClick={onEditPayments}
+                title="Edit or delete individual payments allocated to this record"
+                className="text-[11px] text-slate-400 hover:text-indigo-300 inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-700/40"
+              >
+                <Pencil size={11} /> Edit payments
               </button>
             )}
             <span className={

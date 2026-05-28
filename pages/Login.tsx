@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { User, Role } from '../types';
 import { Loader2, ArrowRight, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { getSupabaseClient } from '../services/supabase';
-import { issueEdgeToken } from '../services/edgeAuth';
+import { SYNTHETIC_EMAIL_DOMAIN } from '../services/edgeAuth';
 import pkg from '../package.json';
 
 interface LoginProps {
@@ -94,36 +94,58 @@ const Login: React.FC<LoginProps> = ({ onLogin, users, isLoading = false, dbErro
             return;
         }
 
-        // SECURITY: hardcoded ADMIN/JCKING bypass removed in Phase 1b.
-        // Admin access must now come from a real user row with role = ADMIN.
-        //
-        // TODO (Phase 1e): This function still compares dbUser.password in
-        // plaintext, which means passwords are stored unhashed in the DB.
-        // Migrate to Supabase Auth (supabase.auth.signInWithPassword) and
-        // hash any existing passwords via a backfill script. Until then,
-        // any DB read exposes every user's credentials.
+        // Phase 1e: real Supabase Auth. The users table is keyed by
+        // username, but supabase.auth needs an email — every user has a
+        // synthetic `<username>@xs-internal.local` identity created by
+        // scripts/backfill-supabase-auth.mjs. The plaintext-compare path
+        // is gone; Supabase verifies the password server-side against the
+        // hash it stored at backfill time. Session persists to
+        // localStorage automatically (see services/supabase.ts), so the
+        // lazy-chunk-retry reload no longer logs users out.
 
         const normalizedUsername = cleanUsername.toLowerCase();
-        const dbUser = users.find(u => u.username.trim().toLowerCase() === normalizedUsername);
+        const syntheticEmail = `${normalizedUsername}@${SYNTHETIC_EMAIL_DOMAIN}`;
 
-        if (dbUser && dbUser.password === cleanPassword) {
-            // Phase 1c: fetch a server-signed JWT so subsequent Edge
-            // Function calls (Gemini proxy, QB sync, Twilio/WhatsApp
-            // send, etc.) are authenticated. Soft-fail if the auth-issue
-            // function is unreachable — the rest of the app still works
-            // against Supabase directly; edge-function features will
-            // surface their own "please sign in again" error.
-            try {
-                await issueEdgeToken(cleanUsername, cleanPassword);
-            } catch (err) {
-                console.warn('[Login] auth-issue failed — AI/Edge features may be unavailable', err);
+        try {
+            const client = getSupabaseClient();
+            const { data, error: authError } = await client.auth.signInWithPassword({
+                email: syntheticEmail,
+                password: cleanPassword,
+            });
+
+            if (authError || !data.session || !data.user) {
+                // Constant-error message to prevent user enumeration —
+                // "invalid email/password" vs "no such user" must look
+                // identical to the client.
+                setError('Invalid username or password.');
+                return;
             }
-            onLogin(dbUser);
-            return;
-        }
 
-        // Constant-error message to prevent user enumeration
-        setError('Invalid username or password.');
+            // Resolve the auth user back to the application's User row.
+            // Primary path: backfill wrote auth.users.id into users.auth_id,
+            // so a direct UUID match is the canonical lookup. Fallback to
+            // username covers the transition window where a row hasn't
+            // been backfilled yet (will be auto-linked by the next
+            // run of scripts/backfill-supabase-auth.mjs).
+            const dbUser =
+                users.find(u => u.auth_id && u.auth_id === data.user!.id) ??
+                users.find(u => u.username.trim().toLowerCase() === normalizedUsername);
+
+            if (!dbUser) {
+                // Auth succeeded but no matching users row — this only
+                // happens if the users table row was deleted while the
+                // auth identity lingered. Surface clearly and sign out so
+                // we don't leave a half-authenticated session behind.
+                await client.auth.signOut();
+                setError('Account is not provisioned in the application. Contact an administrator.');
+                return;
+            }
+
+            onLogin(dbUser);
+        } catch (err) {
+            console.error('[Login] signInWithPassword failed', err);
+            setError('Sign-in failed. Please try again.');
+        }
     };
 
     const bgStyle = bgSrc ? {

@@ -45,6 +45,20 @@ const fmtMoney = (n: number, currency: string) => {
   } catch { return `${currency} ${n.toFixed(2)}`; }
 };
 
+// Currency-less "99,999.99" formatter for the local-freight input —
+// matches the Opening Balance input in Cash Flow. type="number" would
+// strip the comma and force a raw "12345" display, which is easy to
+// misread; this stays a plain string so commas can persist on blur.
+const fmtAmount = (n: number): string =>
+  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const parseAmount = (s: string): number => {
+  // Strip everything that isn't a digit, dot, or minus.
+  const cleaned = s.replace(/[^0-9.\-]/g, '');
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : 0;
+};
+
 interface Props {
   po: PurchaseOrder | null;
   mode: EditorMode;
@@ -65,6 +79,14 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
   const [expectedDate, setExpectedDate]         = useState('');
   const [paymentTerms, setPaymentTerms]         = useState('Net 30 Days');
   const [items, setItems]                       = useState<LineItem[]>([]);
+  // Local freight the buyer owes the supplier (inland freight to port,
+  // etc.). Stored separately from line items so reports can tell
+  // freight apart from goods. Final PO total = subtotal + freight.
+  const [freightAmount, setFreightAmount]       = useState<number>(0);
+  // Text draft for the freight input so mid-edit values like "1234.5"
+  // can render without commas snapping the caret around. Synced from
+  // freightAmount when the PO reloads (see effect below) and on blur.
+  const [freightDraft, setFreightDraft]         = useState<string>('');
   const [currency, setCurrency]                 = useState('USD');
   const [notes, setNotes]                       = useState('');
 
@@ -98,6 +120,11 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     setExpectedDate(po.expectedDeliveryDate ?? '');
     setPaymentTerms(po.paymentTerms ?? 'Net 30 Days');
     setItems(po.items ?? []);
+    const freight = Number(po.freightAmount) || 0;
+    setFreightAmount(freight);
+    // Seed the draft with the formatted value when loading an existing
+    // PO; empty string when freight is zero so the placeholder shows.
+    setFreightDraft(freight === 0 ? '' : fmtAmount(freight));
     setCurrency(po.currency ?? 'USD');
     setNotes(po.notes ?? '');
   }, [po?.id, mode]);
@@ -107,6 +134,10 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
   const isSystem = currentCompanyId === 'ALL';
 
   const subtotal = useMemo(() => computeSubtotal(items), [items]);
+  // Grand total is what the supplier will actually invoice — goods +
+  // local freight. Persisted as totalAmount so Cash Flow / Payables
+  // pick it up without further changes.
+  const total = useMemo(() => subtotal + (Number.isFinite(freightAmount) ? freightAmount : 0), [subtotal, freightAmount]);
 
   const canSave = supplierName.trim() !== '';
   const pending = update.isPending || insert.isPending || del.isPending;
@@ -129,7 +160,8 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     expectedDeliveryDate: expectedDate || null,
     paymentTerms: paymentTerms || null,
     items: sanitizeItems(items),
-    totalAmount: subtotal,
+    freightAmount: Number.isFinite(freightAmount) ? freightAmount : 0,
+    totalAmount: total,
     currency,
     notes: notes || null,
   });
@@ -147,7 +179,9 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
       // newId() so creation never blocks.
       let formattedId: string | null = null;
       try {
-        formattedId = await nextPONumber(payload.supplierName);
+        // Pass companyId so nextPONumber can pick PO-GEN-NNNN for GENRYO
+        // vs. PO-NNNNNXX for everything else.
+        formattedId = await nextPONumber(payload.supplierName, payload.companyId);
       } catch { /* ignore — fall back to random id */ }
       insert.mutate(formattedId ? { ...payload, id: formattedId } : payload, {
         onSuccess: () => {
@@ -200,7 +234,11 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     }
     setRegenerating(true);
     try {
-      const newId = await nextPONumber(supplierName);
+      // Regenerate respects the owning company's format too — a GENRYO PO
+      // re-rolls to the next PO-GEN-NNNN, not to the default supplier-prefix
+      // pattern.
+      const effectiveCompanyId = companyId || (currentCompanyId !== 'ALL' ? currentCompanyId : '');
+      const newId = await nextPONumber(supplierName, effectiveCompanyId);
       if (newId === currentId) {
         toast.push({ kind: 'info', title: 'PO # unchanged', description: newId });
         return;
@@ -243,7 +281,7 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
         `Status: ${status}`,
         `Payment terms: ${paymentTerms}`,
         `Items: ${items.length}`,
-        `Total: ${fmtMoney(subtotal, currency)}`,
+        `Total: ${fmtMoney(total, currency)}`,
         expectedDate ? `Expected delivery: ${expectedDate}` : '',
         '',
         'Best regards',
@@ -259,7 +297,7 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
       <Drawer
         open={!!po}
         onOpenChange={onOpenChange}
-        title={mode === 'create' ? 'New purchase order' : `PO ${(liveId ?? po.id).slice(0, 16)}`}
+        title={mode === 'create' ? 'New purchase order' : `PURCHASE ORDER: ${(liveId ?? po.id).slice(0, 16)}`}
         description={mode === 'edit' ? `${supplierName} · ${status}` : 'Create a purchase order.'}
         widthClass="w-[min(98vw,960px)]"
         footer={
@@ -317,6 +355,58 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
                 </select>
               </FormField>
             )}
+            {mode === 'edit' && po && (
+              // Editable PO #. Same field styling as Supplier / Status / dates
+              // so it's obviously interactive. Commits on blur or Enter — runs
+              // an UPDATE on purchase_orders.id (the row's primary key). The
+              // sibling "Regenerate" button in the footer remains for the
+              // "let the system pick a supplier-prefixed id" path.
+              <FormField>
+                <Label className={labelClass}>PO #</Label>
+                <Input
+                  type="text"
+                  value={liveId ?? po.id ?? ''}
+                  onChange={e => setLiveId(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+                    if (e.key === 'Escape') {
+                      setLiveId(po.id);
+                      (e.currentTarget as HTMLInputElement).blur();
+                    }
+                  }}
+                  onBlur={async e => {
+                    const next = e.target.value.trim();
+                    const current = po.id;
+                    // No-op: empty (revert), unchanged, or in-flight save.
+                    if (!next) { setLiveId(current); return; }
+                    if (next === current) { setLiveId(current); return; }
+                    if (regenerating || pending) { setLiveId(current); return; }
+                    try {
+                      const supabase = getSupabaseClient();
+                      const { error } = await supabase
+                        .from('purchase_orders')
+                        .update({ id: next })
+                        .eq('id', current);
+                      if (error) throw new Error(error.message);
+                      setLiveId(next);
+                      void qc.invalidateQueries({ queryKey: ['purchaseOrders'] });
+                      toast.push({ kind: 'success', title: 'PO # updated', description: next });
+                    } catch (err) {
+                      setLiveId(current);
+                      toast.push({
+                        kind: 'error',
+                        title: 'Rename failed',
+                        description: err instanceof Error ? err.message : String(err),
+                      });
+                    }
+                  }}
+                  spellCheck={false}
+                  disabled={regenerating || pending}
+                  placeholder="e.g. PO-00796KL"
+                  className={inputClass + ' font-mono'}
+                />
+              </FormField>
+            )}
             <div className="grid grid-cols-3 gap-2">
               <FormField>
                 <Label className={labelClass}>Supplier <span className="text-red-400 ml-1">*</span></Label>
@@ -364,6 +454,37 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
               showHsCode
               showGrade
             />
+            {/* Local freight — buyer-paid inland freight the supplier
+                will bill on top of the goods. Kept out of the line
+                items so future reports can tell freight apart from
+                goods cost. Mirrors invoices_suppliers.freightAmount. */}
+            <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 pt-1">
+              <Label className={labelClass}>Local freight</Label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={freightDraft}
+                placeholder="0.00"
+                onChange={e => {
+                  // Keep the raw draft so commas don't fight the caret
+                  // mid-typing. Commit the numeric value immediately so
+                  // the Subtotal + Freight = Total footer updates live.
+                  const raw = e.target.value;
+                  setFreightDraft(raw);
+                  setFreightAmount(parseAmount(raw));
+                }}
+                onBlur={() => {
+                  // Reformat to "99,999.99" on blur; empty input stays
+                  // empty so the placeholder reappears.
+                  setFreightDraft(freightAmount === 0 ? '' : fmtAmount(freightAmount));
+                }}
+                onFocus={e => e.target.select()}
+                className={inputClass + ' w-32 text-right font-mono tabular-nums'}
+              />
+              <span className="text-[11px] uppercase tracking-wider text-slate-500 w-10 text-right">
+                {currency}
+              </span>
+            </div>
           </div>
 
           <div className={sectionClass}>
@@ -404,6 +525,14 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
             <Badge variant="neutral">purchase_orders</Badge>
             <span className="text-slate-600">
               Subtotal <span className="font-mono tabular-nums text-slate-300">{fmtMoney(subtotal, currency)}</span>
+            </span>
+            {freightAmount > 0 && (
+              <span className="text-slate-600">
+                + Freight <span className="font-mono tabular-nums text-slate-300">{fmtMoney(freightAmount, currency)}</span>
+              </span>
+            )}
+            <span className="text-slate-500">
+              = Total <span className="font-mono tabular-nums text-slate-200 font-semibold">{fmtMoney(total, currency)}</span>
             </span>
             <span className="ml-auto flex items-center gap-2">
               <span className="font-mono tabular-nums text-slate-500">

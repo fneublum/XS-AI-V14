@@ -47,6 +47,18 @@ interface Props {
   linkBookingLabel?: string;
   /** When true, render the ship icon in active (linked) state. */
   bookingLinked?: boolean;
+  /** Override the View (eye) button's tint. Used by Expenses to flag
+   *  rows whose attachmentUrl is set — the eye renders green so the
+   *  user can see at a glance which receipts have a stored PDF. */
+  viewClassName?: string;
+  /** Override the View button's tooltip — e.g. "View receipt" when
+   *  the row has a stored OCR-source PDF. */
+  viewTitle?: string;
+  /** Override the View button's icon. Use when "view" semantically
+   *  means something other than "inspect raw record" — e.g. on
+   *  Payables it opens a payment statement (T-account), so we render
+   *  a Receipt icon instead of the default Eye. */
+  viewIcon?: React.ReactNode;
   disabled?: boolean;
 }
 
@@ -75,6 +87,7 @@ export const RowActions: React.FC<Props> = ({
   onApprove, approveLabel = 'Approve',
   onReject,  rejectLabel  = 'Reject',
   onLinkBooking, linkBookingLabel, bookingLinked = false,
+  viewClassName, viewTitle, viewIcon,
   disabled,
 }) => (
   <div className="flex items-center justify-end gap-0.5">
@@ -95,11 +108,11 @@ export const RowActions: React.FC<Props> = ({
         type="button"
         onClick={stop(onView)}
         disabled={disabled}
-        title="View"
-        aria-label="View"
-        className={iconBtn}
+        title={viewTitle ?? 'View'}
+        aria-label={viewTitle ?? 'View'}
+        className={viewClassName ?? iconBtn}
       >
-        <Eye size={14} />
+        {viewIcon ?? <Eye size={14} />}
       </button>
     )}
     {onEdit && (

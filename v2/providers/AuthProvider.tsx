@@ -52,61 +52,105 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Best-effort read of the v1 session (key: xs_current_user, see
-    // App.tsx:247). Replaced in Phase 3B with supabase.auth.getSession()
-    // once Phase 1e auth migration lands.
+    // Phase 1e — Supabase Auth as the source of truth.
+    //
+    // Boot path:
+    //   1. supabase.auth.getSession() — if a session exists, look up
+    //      the application users row by users.auth_id and populate
+    //      the AuthUser context. Supabase persists the session to
+    //      localStorage and auto-refreshes the token, so a hard page
+    //      reload (or a chunk-retry reload from lazyWithRetry) lands
+    //      back in the app without forcing the user to sign in again.
+    //   2. onAuthStateChange — SIGNED_OUT clears the context so a
+    //      sign-out in any tab propagates here too.
+    //
+    // No legacy fallback: the v1 sessionStorage hand-off was removed
+    // post-backfill (2026-05-28). A stale `xs_current_user` blob from
+    // an old tab would otherwise be treated as a valid session here,
+    // which is exactly the "logout doesn't stick" bug that v14.96 fixes.
+    // sessionStorage stays in sync via applyAuthUser, but it's a mirror,
+    // not an auth source.
     let cancelled = false;
+    const supabase = getSupabaseClient();
+
+    const applyAuthUser = (row: Record<string, any> | null) => {
+      if (!row) return;
+      const linkedIds = splitLinkedIds(row.linked_entity_id ?? row.linkedEntityId);
+      const next: AuthUser = {
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        role: row.role,
+        allowedCompanies: row.allowed_company_ids ?? row.allowedCompanyIds,
+        linkedEntityId: linkedIds[0],
+        linkedEntityIds: linkedIds,
+      };
+      if (!cancelled) setUser(next);
+      // Mirror to sessionStorage for back-compat with any v2 code still
+      // reading xs_current_user (inboxProcessor, SessionExpiredBanner,
+      // CompanySwitcher, etc.). Cleaned up once those callers migrate
+      // to useAuth().
+      try {
+        sessionStorage.setItem('xs_current_user', JSON.stringify(row));
+      } catch { /* noop */ }
+    };
+
+    const resolveSessionUser = async (authUserId: string) => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, name, email, role, allowed_company_ids, linked_entity_id, auth_id')
+        .eq('auth_id', authUserId)
+        .maybeSingle();
+      if (error || !data) return null;
+      return data as Record<string, any>;
+    };
+
     (async () => {
       try {
-        const raw = sessionStorage.getItem('xs_current_user');
-        if (!raw) { setLoading(false); return; }
-        const v1User = JSON.parse(raw);
-        const storedLinked = v1User.linked_entity_id ?? v1User.linkedEntityId;
-        const linkedIds = splitLinkedIds(storedLinked);
-        const initial: AuthUser = {
-          id: v1User.id,
-          name: v1User.name,
-          email: v1User.email,
-          role: v1User.role,
-          allowedCompanies: v1User.allowed_company_ids ?? v1User.allowedCompanyIds,
-          linkedEntityId: linkedIds[0],
-          linkedEntityIds: linkedIds,
-        };
-        if (!cancelled) setUser(initial);
-
-        // `linked_entity_id` isn't in the `auth-issue` response, so a
-        // freshly-logged-in Cargo Agent lands here with it missing.
-        // Hydrate it from the `users` row so the Agent Portal gate
-        // passes without forcing another sign-out/sign-in cycle.
-        if (linkedIds.length === 0 && initial.id) {
-          try {
-            const supabase = getSupabaseClient();
-            const { data } = await supabase
-              .from('users')
-              .select('linked_entity_id')
-              .eq('id', initial.id)
-              .maybeSingle();
-            const linked = (data as { linked_entity_id?: string | null } | null)?.linked_entity_id;
-            const hydratedIds = splitLinkedIds(linked);
-            if (hydratedIds.length > 0 && !cancelled) {
-              setUser(prev => prev ? {
-                ...prev,
-                linkedEntityId: hydratedIds[0],
-                linkedEntityIds: hydratedIds,
-              } : prev);
-              // Also update sessionStorage so the next reload skips the
-              // fetch + the user object shows linked on other consumers.
-              try {
-                const merged = { ...v1User, linked_entity_id: linked };
-                sessionStorage.setItem('xs_current_user', JSON.stringify(merged));
-              } catch { /* noop */ }
-            }
-          } catch { /* ignore — user still usable for everything else */ }
+        const { data } = await supabase.auth.getSession();
+        const session = data.session;
+        if (session) {
+          const row = await resolveSessionUser(session.user.id);
+          if (row) {
+            applyAuthUser(row);
+          } else if (!cancelled) {
+            // Orphan auth session — no matching users row. Sign out so
+            // the user lands on Login fresh instead of in a half-authed
+            // state.
+            await supabase.auth.signOut().catch(() => { /* best effort */ });
+          }
+          if (!cancelled) setLoading(false);
+          return;
         }
-      } catch { /* noop */ }
-      if (!cancelled) setLoading(false);
+
+        // No Supabase session → genuinely logged out. Belt-and-suspenders:
+        // wipe any leftover legacy sessionStorage so downstream readers
+        // (inboxProcessor, etc.) don't see stale identity data.
+        try {
+          sessionStorage.removeItem('xs_current_user');
+          sessionStorage.removeItem('xs_edge_auth_token');
+          sessionStorage.removeItem('xs_edge_auth_exp');
+        } catch { /* noop */ }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
-    return () => { cancelled = true; };
+
+    // React to sign-out from other tabs / token refresh failures / etc.
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (cancelled) return;
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        try { sessionStorage.removeItem('xs_current_user'); } catch { /* noop */ }
+      }
+      // SIGNED_IN / TOKEN_REFRESHED are handled by the LoginV2 flow,
+      // which sets the user explicitly after resolving the users row.
+    });
+
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   return (

@@ -28,6 +28,11 @@ interface Props {
   /** The row being inspected. Keys must match field definitions. */
   row: Record<string, unknown> | null;
   fields: FieldDef[];
+  /** Optional content rendered after the fields list (both view and
+   *  edit modes). Used by Payables to surface an "Edit payments"
+   *  link that drills into InvoiceTransactionsEditModal — keeps a
+   *  single Edit icon for "edit anything about this row". */
+  extraSection?: React.ReactNode;
 }
 
 const fmtValue = (v: unknown): string => {
@@ -42,7 +47,7 @@ const inputClass = 'h-8 text-[12.5px] bg-[#111111] border-[#1f1f1f] text-slate-2
 
 export const InspectDrawer: React.FC<Props> = ({
   open, onOpenChange, mode, onModeChange, title, description,
-  table, listQueryKeys, row, fields,
+  table, listQueryKeys, row, fields, extraSection,
 }) => {
   const toast = useToast();
   const update = useEntityUpdate<{ id: string } & Record<string, unknown>>({
@@ -304,6 +309,12 @@ export const InspectDrawer: React.FC<Props> = ({
                 );
               })}
             </dl>
+          )}
+
+          {extraSection && (
+            <div className="pt-3 border-t border-[#1f1f1f]">
+              {extraSection}
+            </div>
           )}
 
           <div className="pt-2 border-t border-[#1f1f1f] text-[11px] text-slate-500 flex items-center gap-2">

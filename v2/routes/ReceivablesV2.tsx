@@ -28,15 +28,11 @@ import { batchGetSyncStatuses, syncReceivableInvoice } from '../../services/quic
 import { getSupabaseClient } from '../../services/supabase';
 import type { Invoice, QBSyncStatus } from '../../types';
 
-// ─── Due-status helpers (parity with v1 FinanceReceivables) ──
-const calcDueDate = (baseDate: string | null, paymentTerms: string | null): Date | null => {
-  if (!baseDate) return null;
-  const base = new Date(baseDate);
-  if (isNaN(base.getTime())) return null;
-  const days = paymentTerms ? parseInt((paymentTerms.match(/\d+/) || ['0'])[0], 10) : 0;
-  if (days > 0) base.setDate(base.getDate() + days);
-  return base;
-};
+// ─── Due-status helpers ──
+// Use the shared parser so AR / AP / Cash Flow agree on dates.
+// Old in-line regex treated "30% Advance" as 30 days — see
+// v2/lib/paymentTerms.ts for the new rules.
+import { calcDueDate } from '../lib/paymentTerms';
 
 type DueLabel = 'Overdue' | 'Due Soon' | 'On Track' | 'No Date';
 const getDueStatus = (r: Receivable): { label: DueLabel; dueDate: Date | null } => {

@@ -26,7 +26,21 @@ const SettingsV2: React.FC = () => {
     });
   };
 
-  const signOut = () => {
+  const signOut = async () => {
+    // `scope: 'local'` clears the local tokens even if the server-side
+    // revocation call fails — see CompanySwitcher signOut for the
+    // rationale. Belt-and-suspenders: manually nuke sb-* localStorage
+    // entries too, so a silent signOut failure can't leave a
+    // "logged-in" Supabase session behind.
+    try {
+      const { getSupabaseClient } = await import('../../services/supabase');
+      await getSupabaseClient().auth.signOut({ scope: 'local' }).catch(() => { /* best effort */ });
+    } catch { /* noop */ }
+    try {
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('sb-'))
+        .forEach(k => localStorage.removeItem(k));
+    } catch { /* noop */ }
     try {
       sessionStorage.removeItem('xs_current_user');
       sessionStorage.removeItem('xs_edge_auth_token');

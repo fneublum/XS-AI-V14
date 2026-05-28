@@ -284,11 +284,57 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
         }
     };
 
+    // --- ORDER NUMBER GENERATION ---
+    //
+    // GERYO sales orders use a GEN-NNN sequence starting at 148 — distinct
+    // from the generic SO-<timestamp> default. Numbering rules:
+    //   - Match the company by name (case-insensitive trim).
+    //   - Scan only orders belonging to that company so other companies'
+    //     numeric runs never collide.
+    //   - Floor of 148: even if the highest existing GEN-N is below 148
+    //     (or there are no GEN-N orders yet), the next number is 148.
+    //   - Allowed to coexist with non-GEN-format historical orders for
+    //     the same company — the regex below ignores those.
+    //
+    // The number is only a DEFAULT — the form input is editable, so the
+    // user can override to GEN-200 or any other string (e.g., to backfill
+    // a paper order or skip a gap intentionally).
+    const GERYO_FLOOR = 147; // first generated number is 148
+    const GERYO_PAD = 4;     // 4-digit zero-pad → GEN-0148, GEN-0149, …
+    const nextSalesOrderNumber = (companyId: string | undefined): string => {
+        if (companyId) {
+            const company = companies.find(c => c.id === companyId);
+            // Use startsWith, not strict equality — the real company row
+            // is "GENRYO INTERNATIONAL". Also accept the legacy short-form
+            // "GERYO" prefix so older mis-keyed rows still flow through.
+            const nameUpper = (company?.name ?? '').trim().toUpperCase();
+            const isGeryo = nameUpper.startsWith('GENRYO') || nameUpper.startsWith('GERYO');
+            if (isGeryo) {
+                // Regex allows any number of digits so legacy unpadded
+                // orders (e.g. GEN-148) are still considered when scanning
+                // for the max — they just won't be regenerated as such.
+                const maxN = salesOrders
+                    .filter(o => o.companyId === companyId)
+                    .map(o => {
+                        const m = (o.orderNumber ?? '').trim().match(/^GEN-(\d+)$/i);
+                        return m ? parseInt(m[1], 10) : 0;
+                    })
+                    .reduce((a, b) => Math.max(a, b), 0);
+                const next = Math.max(GERYO_FLOOR, maxN) + 1;
+                return `GEN-${String(next).padStart(GERYO_PAD, '0')}`;
+            }
+        }
+        // Fallback: original timestamp-based scheme for every other company
+        // (and for the "ALL" view, where companyId isn't bound yet).
+        return `SO-${Date.now().toString().slice(-6)}`;
+    };
+
     // --- FORM HANDLERS ---
 
     const handleNewOrder = () => {
+        const initialCompanyId = currentCompanyId === 'ALL' ? '' : currentCompanyId;
         setFormData({
-            orderNumber: `SO-${Date.now().toString().slice(-6)}`,
+            orderNumber: nextSalesOrderNumber(initialCompanyId),
             orderDate: new Date().toISOString().split('T')[0],
             status: 'PENDING',
             orderType: 'SPOT',
@@ -300,7 +346,7 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
             deliveryDate: 'Prompt', // Default
             poa: '',
             pickupLocation: '',
-            companyId: currentCompanyId === 'ALL' ? '' : currentCompanyId
+            companyId: initialCompanyId,
         });
         setEditingId(null);
         setViewMode('FORM');
@@ -316,7 +362,9 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
         const { id: _id, createdAt: _createdAt, approvedBy: _approvedBy, ...rest } = order;
         setFormData({
             ...rest,
-            orderNumber: `SO-${Date.now().toString().slice(-6)}`,
+            // Duplicate inherits the source order's companyId, so the GERYO
+            // sequencing keeps running when an admin clones a GERYO order.
+            orderNumber: nextSalesOrderNumber(order.companyId),
             orderDate: new Date().toISOString().split('T')[0],
             status: 'PENDING',
             items: (order.items ?? []).map(it => ({ ...it })),
@@ -1296,6 +1344,16 @@ const SalesOrders: React.FC<SalesOrdersProps> = ({
 
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Order #</label>
+                            <input
+                                type="text"
+                                className="w-full border border-slate-300 rounded-lg p-2 text-sm font-mono"
+                                value={formData.orderNumber || ''}
+                                onChange={(e) => setFormData({ ...formData, orderNumber: e.target.value })}
+                                placeholder="e.g. GEN-0148"
+                            />
+                        </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Customer</label>
                             <select
