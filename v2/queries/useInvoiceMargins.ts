@@ -250,23 +250,31 @@ export function useInvoiceMargins() {
       const cp = normalize(si.customerPo); if (cp) (supplierByCustomerPo.get(cp) ?? supplierByCustomerPo.set(cp, []).get(cp)!).push(si);
       const tr = normalize(si.transportRef); if (tr) (supplierByTransportRef.get(tr) ?? supplierByTransportRef.set(tr, []).get(tr)!).push(si);
     }
-    // Diagnostic snapshot when there are costings to satisfy and
-    // the engine is about to merge. Helps trace the "saved but not
-    // applied" case end-to-end without poking the DB.
+    // Diagnostic — log as serialized JSON so the console doesn't
+    // collapse arrays into "Array(N)" placeholders. Inline string
+    // is copy-pasteable without expanding nodes.
     // eslint-disable-next-line no-console
-    console.log('[useInvoiceMargins] merge snapshot:', {
-      invoices: invoicesQ.data.length,
-      supplierBills: supplierInvoicesQ.data.length,
-      supplierBillIds: Array.from(supplierById.keys()).slice(0, 20),
-      freightQuotes: fqsQ.data.length,
-      freightQuoteIds: fqsQ.data.map(f => f.id).slice(0, 20),
-      costings: costingsQ.data.length,
-      costingsSample: costingsQ.data.slice(0, 3).map(c => ({
-        invoiceId: c.invoiceId,
-        supplierInvoiceIds: c.supplierInvoiceIds,
-        freightQuoteIds: c.freightQuoteIds,
-      })),
-    });
+    console.log(
+      '[useInvoiceMargins] merge snapshot:\n'
+      + JSON.stringify({
+          invoices: invoicesQ.data.length,
+          supplierBills: supplierInvoicesQ.data.length,
+          supplierBillIds: Array.from(supplierById.keys()),
+          freightQuotes: fqsQ.data.length,
+          freightQuoteIds: fqsQ.data.map(f => f.id),
+          costings: costingsQ.data.length,
+          costingsSample: costingsQ.data.slice(0, 5).map(c => ({
+            invoiceId: c.invoiceId,
+            supplierInvoiceIds: c.supplierInvoiceIds,
+            freightQuoteIds: c.freightQuoteIds,
+            supplierCostOverride: c.supplierCostOverride,
+            freightCostOverride: c.freightCostOverride,
+          })),
+          invoicesSample: invoicesQ.data.slice(0, 5).map(i => ({
+            id: i.id, invoiceNumber: i.invoiceNumber, bookingNumber: i.bookingNumber, soNumber: i.soNumber,
+          })),
+        }, null, 2),
+    );
 
     // POs aren't booking-linked at the row level; we surface PO totals
     // only when the user has manually linked them via the override CSV.
@@ -450,18 +458,22 @@ export function useInvoiceMargins() {
       // we can chase it without poking the DB.
       if (costing && supplierCost === 0 && freightCost === 0) {
         // eslint-disable-next-line no-console
-        console.warn('[useInvoiceMargins] costing saved but $0 attributed', {
-          invoiceId: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          costingInvoiceId: costing.invoiceId,
-          supplierInvoiceIds: costing.supplierInvoiceIds,
-          freightQuoteIds: costing.freightQuoteIds,
-          supplierCostOverride: costing.supplierCostOverride,
-          freightCostOverride: costing.freightCostOverride,
-          supplierBillIdsInScope: Array.from(supplierById.keys()),
-          freightQuoteIdsInScope: fqsQ.data.map(f => f.id),
-          supplierReason, freightReason,
-        });
+        console.warn(
+          '[useInvoiceMargins] costing saved but $0 attributed:\n'
+          + JSON.stringify({
+              invoiceId: inv.id,
+              invoiceNumber: inv.invoiceNumber,
+              costingInvoiceId: costing.invoiceId,
+              ids_match: costing.invoiceId === inv.id,
+              supplierInvoiceIds: costing.supplierInvoiceIds,
+              freightQuoteIds: costing.freightQuoteIds,
+              supplierCostOverride: costing.supplierCostOverride,
+              freightCostOverride: costing.freightCostOverride,
+              supplierBillIdsInScope: Array.from(supplierById.keys()),
+              freightQuoteIdsInScope: fqsQ.data.map(f => f.id),
+              supplierReason, freightReason,
+            }, null, 2),
+        );
       }
       return {
         invoiceId: inv.id,
