@@ -19,6 +19,8 @@ import { useUiStore, type Theme, resolveTheme } from '../state/uiStore';
 import { useReceivables } from '../queries/useReceivables';
 import { useBookings } from '../queries/useBookings';
 import { useSalesOrders } from '../queries/useSalesOrders';
+import { useCompany } from '../providers/CompanyProvider';
+import { useCompanies } from '../queries/useCompanies';
 
 // ─── Config ────────────────────────────────────────────────────────────
 
@@ -532,7 +534,21 @@ export default function DashboardV2() {
   // Matt and Sal removed — they were ORCHESTRATION.md personas with no
   // real launchd job on HERMES. Beth omitted from this Dashboard
   // (personal scope; she still has a real launchd job).
-  const agentOrder = ['max', 'lara', 'matt', 'logan', 'sal', 'gem', 'hermes'];
+  //
+  // Company-aware roster: when the user has GENRYO scoped in the
+  // company switcher, only Gem (the ERP-data agent) is available —
+  // the other personas live in EC4's HERMES workflow and don't apply
+  // to GENRYO yet. Other companies see the full roster.
+  const { currentCompanyId } = useCompany();
+  const companiesQ = useCompanies();
+  const currentCompanyName = useMemo(() => {
+    const c = (companiesQ.data ?? []).find(co => co.id === currentCompanyId);
+    return (c?.name ?? '').toUpperCase();
+  }, [companiesQ.data, currentCompanyId]);
+  const isGenryo = currentCompanyName.includes('GENRYO');
+  const agentOrder = isGenryo
+    ? ['gem']
+    : ['max', 'lara', 'matt', 'logan', 'sal', 'gem', 'hermes'];
 
   // ── KPI derivations ──────────────────────────────────────────────────
   // Each derived from a hooked-up V14 query; loading/empty states render
@@ -665,10 +681,10 @@ export default function DashboardV2() {
 
       {/* MODE-SWITCHED BODY */}
       {mode === 'overview' && (
-        <OverviewPanel data={overview} personas={personas} onBack={() => setMode('chat')} onSend={(t) => { setMode('chat'); sendText(t); }} />
+        <OverviewPanel data={overview} personas={personas} agentOrder={agentOrder} onBack={() => setMode('chat')} onSend={(t) => { setMode('chat'); sendText(t); }} />
       )}
       {mode === 'prompts' && (
-        <PromptsPanel data={suggestions} personas={personas} onBack={() => setMode('chat')} onSend={(t) => { setMode('chat'); sendText(t); }} />
+        <PromptsPanel data={suggestions} personas={personas} agentOrder={agentOrder} onBack={() => setMode('chat')} onSend={(t) => { setMode('chat'); sendText(t); }} />
       )}
       {mode === 'crons' && (
         <CronsPanel data={crons} personas={personas} onBack={() => setMode('chat')} />
@@ -1237,14 +1253,16 @@ function agentReport(a: OverviewAgent): {
 }
 
 function OverviewPanel({
-  data, personas, onBack, onSend,
+  data, personas, agentOrder, onBack, onSend,
 }: {
   data: Overview | null;
   personas: Personas;
+  /** Company-aware roster from the parent. GENRYO scope passes
+   *  ['gem']; other companies pass the full HERMES team. */
+  agentOrder: string[];
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  const agentOrder = ['max','lara','matt','logan','sal','gem','hermes'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
@@ -1343,16 +1361,16 @@ function OverviewPanel({
 // ─── Prompts panel — suggested prompts per agent ────────────────────────
 
 function PromptsPanel({
-  data, personas, onBack, onSend,
+  data, personas, agentOrder, onBack, onSend,
 }: {
   data: Suggestions | null;
   personas: Personas;
+  /** Company-aware roster from the parent — see OverviewPanel
+   *  for the same prop. */
+  agentOrder: string[];
   onBack: () => void;
   onSend: (text: string) => void;
 }) {
-  // Beth is intentionally omitted from Prompts too — same rationale as
-  // Overview: her domain isn't business operational.
-  const agentOrder = ['max','lara','matt','logan','sal','gem','hermes'];
   return (
     <Card className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f1f1f] px-4 py-3">
