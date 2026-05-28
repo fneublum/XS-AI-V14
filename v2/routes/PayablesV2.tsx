@@ -492,22 +492,31 @@ const PayablesV2: React.FC = () => {
     const paid = bal <= 0.001;
     return (
       <div className="flex items-center gap-1 justify-end">
-        {/* View OCR-source PDF/image. Only shown when the bill was
-            saved via AI Upload (originalDocument data URL present);
-            manually-entered bills hide this action. */}
-        {r.originalDocument && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setViewOriginalRow(r);
-            }}
-            title="View original document that was OCR'd to create this record"
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-slate-500/10 text-slate-300 border border-slate-500/20 hover:bg-slate-500/20 transition-colors"
-          >
-            <FileText size={10} /> Document
-          </button>
-        )}
+        {/* Document — always visible. When the bill has a stored
+            OCR-source PDF/image (originalDocument set on AI Upload),
+            the modal renders the PDF inline. When the bill was
+            created manually (or pre-dates the column), the modal
+            shows an empty state with a file picker so the user can
+            attach the original document retroactively; the picked
+            file's data URL is written back to the row. */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setViewOriginalRow(r);
+          }}
+          title={r.originalDocument
+            ? "View original document that was OCR'd to create this record"
+            : "No source document on file — click to attach one"}
+          className={
+            'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold border transition-colors ' +
+            (r.originalDocument
+              ? 'bg-slate-500/10 text-slate-300 border-slate-500/20 hover:bg-slate-500/20'
+              : 'bg-transparent text-slate-500 border-slate-700/40 hover:bg-slate-700/20 hover:text-slate-300')
+          }
+        >
+          <FileText size={10} /> Document
+        </button>
         {!paid && (
           <button
             type="button"
@@ -654,12 +663,33 @@ const PayablesV2: React.FC = () => {
       {/* OCR-source PDF viewer — opens the original supplier
           invoice document the AI Upload captured. PdfViewerModal
           handles data-URL → Blob conversion + iframe rendering,
-          plus a Download button. */}
+          plus a Download button. When the bill has no stored
+          document yet, the modal's empty-state file picker fires
+          onUpload — we persist the data URL back to the row so
+          subsequent clicks show the file inline. */}
       <PdfViewerModal
         open={!!viewOriginalRow}
         onOpenChange={(v) => { if (!v) setViewOriginalRow(null); }}
         dataUrl={viewOriginalRow?.originalDocument ?? null}
         title={viewOriginalRow ? `Supplier bill · ${viewOriginalRow.invoiceNumber}` : ''}
+        onUpload={async (dataUrl) => {
+          if (!viewOriginalRow) return;
+          const sb = getSupabaseClient();
+          const { error } = await sb
+            .from('invoices_suppliers')
+            .update({ originalDocument: dataUrl })
+            .eq('id', viewOriginalRow.id);
+          if (error) {
+            toast.push({ kind: 'error', title: 'Upload failed', description: error.message });
+            return;
+          }
+          toast.push({ kind: 'success', title: 'Document attached' });
+          // Update the local copy so the same modal can render the
+          // newly-uploaded file without reopening, and refetch the
+          // list so the row's Document chip flips style.
+          setViewOriginalRow({ ...viewOriginalRow, originalDocument: dataUrl });
+          pay.refetch();
+        }}
       />
 
       {aiUploadOpen && (
