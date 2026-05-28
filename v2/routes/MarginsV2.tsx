@@ -67,17 +67,19 @@ const MarginsV2: React.FC = () => {
   }, [margins.data, search, sortKey, sortDesc, hideZeroRevenue]);
 
   const totals = useMemo(() => {
-    let revenue = 0, supplier = 0, freight = 0, other = 0, landed = 0, margin = 0;
+    let revenue = 0, supplier = 0, freight = 0, localF = 0, oceanF = 0, other = 0, landed = 0, margin = 0;
     for (const r of rows) {
       revenue += r.revenue;
       supplier += r.supplierCost;
       freight  += r.freightCost;
+      localF   += r.localFreightCost;
+      oceanF   += r.oceanFreightCost;
       other    += r.otherCost;
       landed   += r.landedCost;
       margin   += r.marginUSD;
     }
     return {
-      revenue, supplier, freight, other, landed, margin,
+      revenue, supplier, freight, localF, oceanF, other, landed, margin,
       marginPct: revenue > 0 ? margin / revenue : 0,
     };
   }, [rows]);
@@ -119,11 +121,12 @@ const MarginsV2: React.FC = () => {
         </div>
       </div>
 
-      {/* KPI row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      {/* KPI row — Freight is now split into Local + Ocean. */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
         <KpiCard label="Revenue"           value={fmtMoney(totals.revenue)} />
         <KpiCard label="Supplier cost"     value={fmtMoney(totals.supplier)} />
-        <KpiCard label="Freight"           value={fmtMoney(totals.freight)} />
+        <KpiCard label="Local freight"     value={fmtMoney(totals.localF)} />
+        <KpiCard label="Ocean freight"     value={fmtMoney(totals.oceanF)} />
         <KpiCard label="Other"             value={fmtMoney(totals.other)} />
         <KpiCard
           label="Gross margin"
@@ -169,7 +172,7 @@ const MarginsV2: React.FC = () => {
           <div
             className="grid items-center gap-3 px-4 py-2 text-[10.5px] font-semibold uppercase tracking-[0.14em] border-b"
             style={{
-              gridTemplateColumns: '90px 100px 1fr 110px 110px 110px 90px 120px 110px',
+              gridTemplateColumns: '90px 100px 1fr 110px 110px 100px 100px 90px 120px 100px',
               borderColor: 'var(--b-line-soft)',
               color: 'var(--b-text-mute)',
             }}
@@ -179,7 +182,8 @@ const MarginsV2: React.FC = () => {
             <Th label="Customer"   onClick={() => toggleSort('customer')}  active={sortKey === 'customer'}  desc={sortDesc} />
             <Th label="Revenue"    onClick={() => toggleSort('revenue')}   active={sortKey === 'revenue'}   desc={sortDesc} align="right" />
             <Th label="Supplier"   align="right" />
-            <Th label="Freight"    align="right" />
+            <Th label="Local frt"  align="right" />
+            <Th label="Ocean frt"  align="right" />
             <Th label="Other"      align="right" />
             <Th label="Margin $"   onClick={() => toggleSort('marginUSD')} active={sortKey === 'marginUSD'} desc={sortDesc} align="right" />
             <Th label="Margin %"   onClick={() => toggleSort('marginPct')} active={sortKey === 'marginPct'} desc={sortDesc} align="right" />
@@ -196,7 +200,7 @@ const MarginsV2: React.FC = () => {
               title="Click to override the auto-attributed cost"
               className="grid items-center gap-3 px-4 py-2 text-[12.5px] border-b cursor-pointer hover:bg-[#0f0f0f]"
               style={{
-                gridTemplateColumns: '90px 100px 1fr 110px 110px 110px 90px 120px 110px',
+                gridTemplateColumns: '90px 100px 1fr 110px 110px 100px 100px 90px 120px 100px',
                 borderColor: 'var(--b-line-soft)',
                 color: 'var(--b-text)',
               }}
@@ -211,8 +215,11 @@ const MarginsV2: React.FC = () => {
               <span className="text-right b-mono tabular-nums" title={r.supplierCostSource}>
                 {r.supplierCost > 0 ? fmtMoney(r.supplierCost, r.currency) : <span style={{ color: 'var(--b-text-faint)' }}>—</span>}
               </span>
+              <span className="text-right b-mono tabular-nums" title={r.freightCostSource === 'override' ? 'override (combined, bucketed to ocean)' : r.freightCostSource}>
+                {r.localFreightCost > 0 ? fmtMoney(r.localFreightCost, r.currency) : <span style={{ color: 'var(--b-text-faint)' }}>—</span>}
+              </span>
               <span className="text-right b-mono tabular-nums" title={r.freightCostSource}>
-                {r.freightCost > 0 ? fmtMoney(r.freightCost, r.currency) : <span style={{ color: 'var(--b-text-faint)' }}>—</span>}
+                {r.oceanFreightCost > 0 ? fmtMoney(r.oceanFreightCost, r.currency) : <span style={{ color: 'var(--b-text-faint)' }}>—</span>}
               </span>
               <span className="text-right b-mono tabular-nums">
                 {r.otherCost > 0 ? fmtMoney(r.otherCost, r.currency) : <span style={{ color: 'var(--b-text-faint)' }}>—</span>}

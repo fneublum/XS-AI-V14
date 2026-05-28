@@ -16,6 +16,7 @@ import {
   type Action,
   fmtAgo, humanSummary, humanReason, humanDraft, refChips,
   AgentChip, TierBadge, ConnectionBanner,
+  useAllowedAgentIds,
 } from './_shared';
 
 export default function StreamView() {
@@ -23,6 +24,8 @@ export default function StreamView() {
   const [actions, setActions] = useState<Action[]>([]);
   const [filter, setFilter] = useState<'pending' | 'today' | 'all'>('pending');
   const [error, setError] = useState<string | undefined>();
+  // Company-scoped roster — GENRYO only sees Gem's actions.
+  const allowedAgent = useAllowedAgentIds();
 
   const refresh = useCallback(async () => {
     try {
@@ -42,8 +45,14 @@ export default function StreamView() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  const awaiting = useMemo(() => actions.filter(a => a.status === 'AWAITING_APPROVAL'), [actions]);
-  const recent = useMemo(() => actions.filter(a => a.status !== 'AWAITING_APPROVAL'), [actions]);
+  const awaiting = useMemo(
+    () => actions.filter(a => a.status === 'AWAITING_APPROVAL' && allowedAgent(a.agent_id)),
+    [actions, allowedAgent],
+  );
+  const recent = useMemo(
+    () => actions.filter(a => a.status !== 'AWAITING_APPROVAL' && allowedAgent(a.agent_id)),
+    [actions, allowedAgent],
+  );
 
   async function decide(id: string, decision: 'APPROVED' | 'DENIED') {
     try {

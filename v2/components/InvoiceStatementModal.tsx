@@ -105,10 +105,10 @@ export const InvoiceStatementModal: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={onViewOriginal}
-                title="View OCR source document"
+                title="View original document that was OCR'd to create this record"
                 className="text-[11px] text-slate-400 hover:text-emerald-300 inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-700/40"
               >
-                <FileSearch size={11} /> Original
+                <FileSearch size={11} /> Document
               </button>
             )}
             <span className={

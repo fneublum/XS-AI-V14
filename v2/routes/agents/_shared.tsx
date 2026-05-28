@@ -7,6 +7,23 @@ import React from 'react';
 import { Card, CardBody, Badge } from '../../primitives';
 import { useToast } from '../../primitives/Toast';
 import { cn } from '../../primitives/utils';
+import { useCompany } from '../../providers/CompanyProvider';
+import { useCompanies } from '../../queries/useCompanies';
+
+// ─── Company-scoped agent roster ───────────────────────────────────
+// GENRYO only uses Gem (the ERP-data agent) today; the rest of the
+// HERMES persona team is EC4-specific. Returns the predicate so each
+// sub-view can filter its own list. Other companies see everyone.
+export function useAllowedAgentIds(): (id: string) => boolean {
+  const { currentCompanyId } = useCompany();
+  const companies = useCompanies();
+  const name = (companies.data ?? []).find(c => c.id === currentCompanyId)?.name ?? '';
+  const isGenryo = name.toUpperCase().includes('GENRYO');
+  return React.useCallback(
+    (id: string) => (isGenryo ? id === 'gem' : true),
+    [isGenryo],
+  );
+}
 
 // ─── Notify ────────────────────────────────────────────────────────────
 

@@ -9,11 +9,13 @@
 //     customerPo == sales.soNumber), fall back to purchase_orders
 //     when the supplier bill hasn't arrived yet. Per-user choice
 //     in the design doc — "Both, prefer supplier invoice".
-//   • Freight cost: NO auto-attribution in v1. The freight_quotes
-//     table is snake_case end-to-end and carries no bookingNumber
-//     column, so there's no reliable join key from a sales invoice
-//     to its freight cost. Users enter freight via the override
-//     drawer (freightCostOverride) until we wire a real bridge.
+//   • Freight cost: auto-attributed via the new freight_quotes.
+//     booking_number column (added 20260527210000). Split into
+//     local freight (pickup + delivery costs) and ocean freight
+//     (ocean cost). When the per-leg breakdown is missing on a
+//     quote, the gross `rate` falls into ocean freight as a
+//     conservative default (the bulk of EC4/GENRYO freight is
+//     ocean).
 //   • Other (duty / brokerage / insurance / bank fees / misc):
 //     entered manually in invoice_costings.
 //
@@ -66,9 +68,16 @@ export interface InvoiceMarginRow {
   supplierCostSource: 'supplier_invoice' | 'purchase_order' | 'override' | 'none';
   supplierCostLinkIds: string[];   // ids feeding supplierCost (for the drawer)
 
+  /** Total freight = local + ocean (or override). The drawer's
+   *  freightCostOverride still drives this single combined figure. */
   freightCost: number;
   freightCostSource: 'freight_quote' | 'override' | 'none';
   freightCostLinkIds: string[];
+  /** Split of freightCost into the two legs. When the freight quote
+   *  doesn't itemise (only `rate` filled), the whole amount goes
+   *  into oceanFreightCost. Zero when freightCostSource = 'none'. */
+  localFreightCost: number;        // pickup + delivery
+  oceanFreightCost: number;        // ocean leg (or unitemised `rate`)
 
   otherCost: number;               // sum of duty + brokerage + insurance + bankFees + other
   landedCost: number;              // supplier + freight + other
@@ -103,10 +112,12 @@ interface RawPO {
   items: unknown; supplierName: string | null;
 }
 interface RawFQ {
-  id: string; companyId: string | null;
+  id: string;
   rate: string | number | null;
-  quote_number?: string | null;
-  bookingNumber: string | null;
+  pickup_cost: string | number | null;
+  ocean_cost: string | number | null;
+  delivery_cost: string | number | null;
+  booking_number: string | null;
 }
 interface RawCosting {
   invoiceId: string; companyId: string | null;
@@ -182,13 +193,24 @@ export function useInvoiceMargins() {
     },
   );
 
-  // Freight-quotes auto-fetch removed: the live freight_quotes
-  // table is snake_case and has no bookingNumber, so there's no
-  // viable join key right now. Keep a stub query that always
-  // resolves to [] so the rest of the engine doesn't have to
-  // change shape; the override drawer is the only way to set
-  // freight cost until we add a real link.
-  const fqsQ = { data: [] as RawFQ[], isLoading: false, error: null as Error | null, refetch: () => {} };
+  // Freight quotes — snake_case table; joins to sales invoices via
+  // freight_quotes.booking_number == invoices.bookingNumber
+  // (migration 20260527210000 added the column). No company scope on
+  // the SELECT because freight_quotes doesn't have a companyId
+  // column — booking_number is uniquish enough to keep results
+  // tight for our scale.
+  const fqsQ = useSupabaseQuery<RawFQ[]>(
+    ['margins_freight_quotes', currentCompanyId],
+    async () => {
+      const sb = getSupabaseClient();
+      const { data, error } = await sb
+        .from('freight_quotes')
+        .select('id, rate, pickup_cost, ocean_cost, delivery_cost, booking_number')
+        .limit(2000);
+      if (error) throw new Error(error.message);
+      return (data as RawFQ[] | null) ?? [];
+    },
+  );
 
   const costingsQ = useSupabaseQuery<RawCosting[]>(
     ['margins_costings', currentCompanyId],
@@ -228,10 +250,30 @@ export function useInvoiceMargins() {
     const poById = new Map<string, RawPO>();
     for (const po of posQ.data) poById.set(po.id, po);
 
-    // Freight-quote map (id-only). Booking-keyed lookup dropped —
-    // the live freight_quotes table doesn't carry bookingNumber.
+    // Freight-quote indexes: by id (for explicit-link path) and by
+    // booking_number (for the auto-link path).
     const fqById = new Map<string, RawFQ>();
-    for (const fq of fqsQ.data) fqById.set(fq.id, fq);
+    const fqByBooking = new Map<string, RawFQ[]>();
+    for (const fq of fqsQ.data) {
+      fqById.set(fq.id, fq);
+      const b = normalize(fq.booking_number);
+      if (b) (fqByBooking.get(b) ?? fqByBooking.set(b, []).get(b)!).push(fq);
+    }
+    // Pulls the local + ocean breakdown out of one freight quote.
+    // When the per-leg fields are all zero/null but the quote has a
+    // rate, attribute the whole thing to ocean (the bulk of EC4 /
+    // GENRYO freight is ocean — conservative default that surfaces
+    // SOMETHING rather than zero).
+    const fqLegs = (fq: RawFQ): { local: number; ocean: number } => {
+      const pickup   = num(fq.pickup_cost);
+      const delivery = num(fq.delivery_cost);
+      const ocean    = num(fq.ocean_cost);
+      const local    = pickup + delivery;
+      if (local === 0 && ocean === 0) {
+        return { local: 0, ocean: num(fq.rate) };
+      }
+      return { local, ocean };
+    };
 
     // Costings by invoiceId
     const costingByInvoice = new Map<string, RawCosting>();
@@ -286,24 +328,43 @@ export function useInvoiceMargins() {
       }
 
       // ── Freight cost ───────────────────────────────────────────
-      // No auto-attribution today (see fqsQ comment). Cost comes
-      // from the override, or from explicit freight_quote ids
-      // when the user has manually linked them via the drawer.
+      // Priority: override > explicit CSV link > auto-match by
+      // booking_number. The override is a single combined figure
+      // (legs unknown), so when an override is in play we credit
+      // the whole amount to ocean by convention. Otherwise both
+      // local and ocean are itemised from the matching freight
+      // quote(s).
       let freightCost = 0;
+      let localFreightCost = 0;
+      let oceanFreightCost = 0;
       let freightSource: InvoiceMarginRow['freightCostSource'] = 'none';
       let freightLinkIds: string[] = [];
 
       if (costing?.freightCostOverride != null) {
         freightCost = num(costing.freightCostOverride);
+        oceanFreightCost = freightCost;  // legs unknown — bucket to ocean
         freightSource = 'override';
       } else {
         const explicitFQ = csvToIds(costing?.freightQuoteIds ?? null);
+        const matches: RawFQ[] = [];
         if (explicitFQ.length > 0) {
           for (const fid of explicitFQ) {
             const fq = fqById.get(fid);
-            if (fq) { freightCost += num(fq.rate); freightLinkIds.push(fid); }
+            if (fq) matches.push(fq);
           }
-          if (freightLinkIds.length > 0) freightSource = 'freight_quote';
+        } else {
+          const bkKey = normalize(inv.bookingNumber);
+          if (bkKey) (fqByBooking.get(bkKey) ?? []).forEach(m => matches.push(m));
+        }
+        if (matches.length > 0) {
+          for (const fq of matches) {
+            const legs = fqLegs(fq);
+            localFreightCost += legs.local;
+            oceanFreightCost += legs.ocean;
+            freightLinkIds.push(fq.id);
+          }
+          freightCost = localFreightCost + oceanFreightCost;
+          freightSource = 'freight_quote';
         }
       }
 
@@ -335,6 +396,8 @@ export function useInvoiceMargins() {
         freightCost,
         freightCostSource: freightSource,
         freightCostLinkIds: freightLinkIds,
+        localFreightCost,
+        oceanFreightCost,
         otherCost,
         landedCost,
         marginUSD,

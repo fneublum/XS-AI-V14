@@ -6,11 +6,14 @@ import {
   api,
   type AuditRow,
   AgentChip, ConnectionBanner,
+  useAllowedAgentIds,
 } from './_shared';
 
 export default function AuditView() {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [actor, setActor] = useState('');
+  // Company-scoped roster — GENRYO sees Gem only.
+  const allowedAgent = useAllowedAgentIds();
   const [action, setAction] = useState('');
   const [error, setError] = useState<string | undefined>();
 
@@ -45,8 +48,9 @@ export default function AuditView() {
               className="rounded-[10px] px-3 py-2 text-[13px] focus:outline-none focus:ring-2"
               style={{ background: 'var(--b-surface-2)', border: '1px solid var(--b-line)', color: 'var(--b-text)' }}>
               <option value="">(any)</option>
-              {['felipe','system','max','lara','matt','logan','sal','beth'].map(x =>
-                <option key={x} value={x}>{x}</option>)}
+              {['felipe','system','max','lara','matt','logan','sal','gem','beth']
+                .filter(x => x === 'felipe' || x === 'system' || allowedAgent(x))
+                .map(x => <option key={x} value={x}>{x}</option>)}
             </select>
           </label>
           <label className="flex flex-col gap-1.5">
@@ -80,7 +84,11 @@ export default function AuditView() {
       ) : (
         <div className="rounded-[14px] border overflow-hidden"
              style={{ background: 'var(--b-surface)', borderColor: 'var(--b-line)' }}>
-          {rows.map((r, i) => {
+          {rows
+            // Hide rows from agents the current company doesn't see
+            // (GENRYO only shows Gem; non-agent actors stay visible).
+            .filter(r => r.actor === 'felipe' || r.actor === 'system' || allowedAgent(r.actor))
+            .map((r, i) => {
             const color = `var(--b-c-${r.actor}, var(--b-text-soft))`;
             return (
               <div

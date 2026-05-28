@@ -13,6 +13,7 @@ import {
   type Tier, type Agent, type Capability, type Threshold,
   fmtMoney,
   AgentChip, ConnectionBanner,
+  useAllowedAgentIds,
 } from './_shared';
 
 // ─── Human-friendly tier model ─────────────────────────────────────────
@@ -72,6 +73,8 @@ export default function AutonomyView() {
   const [thresholds, setThresholds] = useState<Threshold[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [caps, setCaps] = useState<Capability[]>([]);
+  // Company-scoped roster — GENRYO sees Gem only.
+  const allowedAgent = useAllowedAgentIds();
   const [error, setError] = useState<string | undefined>();
 
   const refresh = useCallback(async () => {
@@ -139,7 +142,10 @@ export default function AutonomyView() {
       {/* Beth is Ana Paula's personal assistant (gmail/gcal scope) and
         * doesn't propose business actions through the queue — omit her
         * here so the Autonomy view stays focused on operational agents. */}
-      {agents.filter(a => a.id !== 'beth').map(a => {
+      {agents
+        .filter(a => a.id !== 'beth')
+        .filter(a => allowedAgent(a.id))
+        .map(a => {
         const rows = byAgent.get(a.id) ?? [];
         const color = `var(--b-c-${a.id}, var(--b-text-soft))`;
         return (

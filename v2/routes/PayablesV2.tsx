@@ -502,10 +502,10 @@ const PayablesV2: React.FC = () => {
               e.stopPropagation();
               setViewOriginalRow(r);
             }}
-            title="View OCR source document"
+            title="View original document that was OCR'd to create this record"
             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-slate-500/10 text-slate-300 border border-slate-500/20 hover:bg-slate-500/20 transition-colors"
           >
-            <FileText size={10} /> Original
+            <FileText size={10} /> Document
           </button>
         )}
         {!paid && (
