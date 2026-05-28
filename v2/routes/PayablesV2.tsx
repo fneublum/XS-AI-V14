@@ -223,6 +223,10 @@ const fields: FieldDef[] = [
   { key: 'swiftCode',      label: 'SWIFT',           mono: true },
   { key: 'routingNumber',  label: 'Routing #',       mono: true },
   { key: 'accountNumber',  label: 'Account #',       mono: true },
+  // ── Notes ─────────────────────────────────────────────────────
+  // Column added via 20260527190000 migration; surface here so edits
+  // round-trip and the QuickCreate notes stay visible after save.
+  { key: 'notes',          label: 'Notes', type: 'textarea', fullWidth: true },
 ];
 
 interface PayableDraft {

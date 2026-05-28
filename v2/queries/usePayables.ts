@@ -44,6 +44,7 @@ export interface Payable {
    *  flow constrains it to Pending / Approved / Paid / Cancelled. */
   status: string | null;
   qbStatus: string | null;
+  notes: string | null;
   createdAt: string;
 }
 
@@ -76,6 +77,7 @@ interface Raw {
   accountNumber: string | null;
   status: string | null;
   qb_status: string | null;
+  notes: string | null;
   createdAt: string | null;
 }
 
@@ -108,7 +110,7 @@ export function usePayables(search?: string) {
             'grossWeight, netWeight, tareWeight, totalQuantity, ' +
             'subtotal, totalAmount, currency, ' +
             'remitTo, bankName, swiftCode, routingNumber, accountNumber, ' +
-            'status, qb_status, createdAt',
+            'status, qb_status, createdAt, notes',
           )
           .order('invoiceDate', { ascending: false, nullsFirst: false })
           .limit(200),
@@ -150,6 +152,7 @@ export function usePayables(search?: string) {
         accountNumber: r.accountNumber,
         status: r.status,
         qbStatus: r.qb_status ?? null,
+        notes: r.notes,
         createdAt: r.createdAt ?? '',
       }));
     },
