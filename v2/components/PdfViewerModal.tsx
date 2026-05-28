@@ -60,6 +60,9 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   const toast = useToast();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [base64, setBase64] = useState<string | null>(null);
+  // MIME detected from the data URL — drives whether the viewer
+  // renders an <iframe> (PDF) or an <img> (image scan).
+  const [mime, setMime] = useState<string>('application/pdf');
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [emailTo, setEmailTo] = useState('');
   const [emailSubject, setEmailSubject] = useState('');
@@ -87,6 +90,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     const url = URL.createObjectURL(blob);
     setBlobUrl(url);
     setBase64(parts.base64);
+    setMime(parts.mime);
     return () => { URL.revokeObjectURL(url); };
   }, [open, dataUrl]);
 
@@ -135,12 +139,28 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
 
   /** Read + persist a chosen / dropped file. Shared by the hidden
    *  file input AND the drag-and-drop handler so the two entry
-   *  points have identical behaviour. */
+   *  points have identical behaviour.
+   *
+   *  Accepts PDFs AND images — supplier invoices often arrive as
+   *  scanned PNG / JPG / HEIC files, not just PDFs. Previously
+   *  rejected anything but application/pdf, which looked like the
+   *  drop had silently failed when the user tried an image. */
   const ingestFile = async (file: File | null | undefined) => {
+    // eslint-disable-next-line no-console
+    console.log('[PdfViewerModal] ingestFile', file?.name, file?.type, file?.size);
     if (!file) return;
-    if (!onUpload) return;
-    if (file.type !== 'application/pdf') {
-      toast.push({ kind: 'warning', title: 'PDF only', description: `Got ${file.type || 'unknown type'}.` });
+    if (!onUpload) {
+      toast.push({ kind: 'warning', title: 'Upload disabled', description: 'This viewer is read-only — no save handler is wired.' });
+      return;
+    }
+    const isPdf   = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|heic|gif|tiff?)$/i.test(file.name);
+    if (!isPdf && !isImage) {
+      toast.push({
+        kind: 'error',
+        title: 'Unsupported file type',
+        description: `Got ${file.type || 'unknown'} (${file.name}). Drop a PDF or an image.`,
+      });
       return;
     }
     setUploadBusy(true);
@@ -152,8 +172,10 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
         reader.readAsDataURL(file);
       });
       await onUpload(url);
-      toast.push({ kind: 'success', title: 'PDF attached', description: file.name });
+      toast.push({ kind: 'success', title: 'Document attached', description: file.name });
     } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[PdfViewerModal] upload failed', err);
       toast.push({
         kind: 'error',
         title: 'Upload failed',
@@ -231,7 +253,25 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
         className="absolute inset-0 h-full w-full cursor-default bg-slate-900/60"
         onClick={() => onOpenChange(false)}
       />
-      <div className="relative z-10 flex h-[90vh] w-[min(96vw,1100px)] flex-col overflow-hidden rounded-lg bg-[#0f0f0f] border border-[#1f1f1f] shadow-[0_24px_80px_rgba(0,0,0,0.6)]">
+      <div
+        // Drop handlers at the modal-card level so users can drag a
+        // file anywhere onto the modal (header, footer, side gutter)
+        // — not only into the small empty-state pane. The inner
+        // empty-state div still has its own handlers for visual
+        // feedback (ring + tint).
+        onDragOver={onUpload ? (e) => { e.preventDefault(); setDragOver(true); } : undefined}
+        onDragLeave={onUpload ? (e) => {
+          // Only clear when the drag truly leaves the card — without
+          // this guard child elements trigger onDragLeave constantly.
+          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+          setDragOver(false);
+        } : undefined}
+        onDrop={onUpload ? onDropFile : undefined}
+        className={
+          'relative z-10 flex h-[90vh] w-[min(96vw,1100px)] flex-col overflow-hidden rounded-lg bg-[#0f0f0f] border shadow-[0_24px_80px_rgba(0,0,0,0.6)] transition-colors ' +
+          (dragOver ? 'border-indigo-400' : 'border-[#1f1f1f]')
+        }
+      >
         {/* Header */}
         <div className="flex items-center justify-between gap-2 border-b border-[#1f1f1f] bg-[#0a0a0a] px-3 py-2">
           <h2 id="pdf-modal-title" className="truncate text-[13px] font-medium text-slate-100">
@@ -321,12 +361,14 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
           </div>
         )}
 
-        {/* Hidden file input for the empty-state Upload button */}
+        {/* Hidden file input for the empty-state Upload button.
+            Accepts both PDFs and images — supplier invoices arrive
+            as scans too, not just PDFs. */}
         {onUpload && (
           <input
             ref={fileInputRef}
             type="file"
-            accept="application/pdf"
+            accept="application/pdf,image/*"
             onChange={onFileChosen}
             className="hidden"
           />
@@ -335,12 +377,27 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
         {/* Viewer */}
         <div className="flex-1 min-h-0 bg-[#0a0a0a]">
           {blobUrl ? (
-            <iframe
-              key={blobUrl}
-              src={blobUrl}
-              title={`${title} preview`}
-              className="h-full w-full"
-            />
+            mime.startsWith('image/') ? (
+              // Image scan — render with <img> centered, contain
+              // sizing so it doesn't overflow. iframes also work
+              // for images but ship with browser scrollbars +
+              // gray gutter that look ugly.
+              <div className="h-full w-full overflow-auto flex items-center justify-center bg-[#050505] p-3">
+                <img
+                  key={blobUrl}
+                  src={blobUrl}
+                  alt={title}
+                  className="max-w-full max-h-full object-contain"
+                />
+              </div>
+            ) : (
+              <iframe
+                key={blobUrl}
+                src={blobUrl}
+                title={`${title} preview`}
+                className="h-full w-full"
+              />
+            )
           ) : dataUrl ? (
             <div className="flex h-full items-center justify-center text-[12.5px] text-slate-500">
               Loading PDF…
@@ -362,13 +419,14 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
               <div className="text-[13px] text-slate-300">
                 {dragOver
                   ? 'Drop to attach…'
-                  : 'No PDF attached to this record yet.'}
+                  : 'No document attached to this record yet.'}
               </div>
               {onUpload && !dragOver && (
                 <>
                   <div className="text-[11.5px] text-slate-500 max-w-[360px]">
-                    Drag a PDF here, or click below to pick a file. Saved on
-                    the record so the next click opens it directly.
+                    Drag a PDF or image (scanned bill) here, or click below
+                    to pick a file. Saved on the record so the next click
+                    opens it directly.
                   </div>
                   <button
                     type="button"
@@ -377,7 +435,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
                     className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
                   >
                     {uploadBusy ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-                    {uploadBusy ? 'Uploading…' : 'Upload PDF'}
+                    {uploadBusy ? 'Uploading…' : 'Pick file'}
                   </button>
                 </>
               )}
