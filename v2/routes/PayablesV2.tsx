@@ -12,6 +12,8 @@ import { useRowCrud } from '../components/useRowCrud';
 import { useApSupplierBalances } from '../queries/useTransactions';
 import { RecordPaymentDrawer, type PrefillSupplierInvoice, type OcrPrefill } from '../components/RecordPaymentDrawer';
 import { ReceiptUploadModal, type ReceiptExtracted } from '../components/ReceiptUploadModal';
+import { InvoiceStatementModal } from '../components/InvoiceStatementModal';
+import { InvoiceTransactionsEditModal } from '../components/InvoiceTransactionsEditModal';
 import { Wallet, CheckCircle as CheckCircleIcon } from 'lucide-react';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useCompany } from '../providers/CompanyProvider';
@@ -229,44 +231,85 @@ const fields: FieldDef[] = [
   { key: 'notes',          label: 'Notes', type: 'textarea', fullWidth: true },
 ];
 
+// Per 2026-05-27 spec: supplier invoice OCR must capture the goods
+// subtotal, freight charges, AND any payments already reported on
+// the invoice itself (advance, partial). Each payment becomes an
+// auto-created PAYMENT_OUT transaction allocated to the supplier
+// invoice on save.
+interface PaymentOnInvoice {
+  date: string;       // YYYY-MM-DD
+  amount: string;     // string while editing
+  method: string;     // WIRE / ACH / CHECK / CARD / CASH / OTHER
+  reference: string;  // bank ref / check #
+  memo: string;
+}
+
 interface PayableDraft {
   invoiceNumber: string;
   shipperName: string;
   invoiceDate: string;
   paymentTerms: string;
-  totalAmount: string;
+  goodsAmount: string;     // subtotal (goods only)
+  freightAmount: string;   // freight charges line, if present
+  totalAmount: string;     // grand total of the bill
   currency: string;
   notes: string;
+  paymentsOnInvoice: PaymentOnInvoice[];
 }
 
 const emptyPayableDraft = (): PayableDraft => ({
   invoiceNumber: '', shipperName: '', invoiceDate: '',
-  paymentTerms: '', totalAmount: '', currency: 'USD', notes: '',
+  paymentTerms: '', goodsAmount: '', freightAmount: '', totalAmount: '',
+  currency: 'USD', notes: '', paymentsOnInvoice: [],
 });
 
 const PAYABLE_PROMPT = `You are extracting fields from a SUPPLIER INVOICE (an incoming bill
 the buyer received and needs to pay). Return JSON with exactly these
-keys; missing values must be null.
+keys; missing values must be null. Numbers must be plain decimals
+(no currency symbol, no thousands separators).
 
 {
   "invoiceNumber":  string | null,
   "shipperName":    string | null,   // supplier legal name that issued the invoice
   "invoiceDate":    string | null,   // YYYY-MM-DD
   "paymentTerms":   string | null,   // e.g. "Net 30 Days"
-  "totalAmount":    number | null,   // numeric, no currency symbol
+  "goodsAmount":    number | null,   // subtotal for goods/products only (no freight, no taxes)
+  "freightAmount":  number | null,   // freight charges line on the invoice, if present (null when goods-only)
+  "totalAmount":    number | null,   // grand total of the bill (goods + freight + any other charges)
   "currency":       string | null,   // ISO 4217
-  "notes":          string | null
+  "notes":          string | null,
+  // Any payments already reported on the invoice itself — advance
+  // payments, partial payments, deposits, prepayments. NOT future
+  // payment terms. Each entry describes ONE prior payment receipt.
+  // Empty array when the invoice is "amount due in full".
+  "paymentsOnInvoice": [
+    {
+      "date":      string | null,   // YYYY-MM-DD when the payment occurred
+      "amount":    number | null,   // positive, USD-equivalent in the invoice's currency
+      "method":    string | null,   // WIRE | ACH | CHECK | CARD | CASH | OTHER
+      "reference": string | null,   // wire ref / check # / contract # / etc.
+      "memo":      string | null    // short description e.g. "30% advance per PO terms"
+    }
+  ]
 }
+
+Rules:
+- Brazilian "1.399.775,00" → 1399775.00 (dot=thousands, comma=decimal).
+- Dates "21/05/2026" → "2026-05-21" (DD/MM/YYYY assumed for non-US sources).
+- method must be normalised to one of the six enum values; default OTHER
+  when unclear.
+- Only put REAL prior payments in paymentsOnInvoice. "Net 30" or
+  payment-terms text belongs in paymentTerms, not paymentsOnInvoice.
 
 Return ONLY valid JSON — no markdown fences, no commentary.`;
 
 function normalizePayableJson(parsed: Record<string, unknown>): PayableDraft {
-  const str = (k: string): string => {
-    const v = parsed[k];
+  const str = (k: string, src: Record<string, unknown> = parsed): string => {
+    const v = src[k];
     return typeof v === 'string' ? v.trim() : '';
   };
-  const num = (k: string): string => {
-    const v = parsed[k];
+  const num = (k: string, src: Record<string, unknown> = parsed): string => {
+    const v = src[k];
     if (typeof v === 'number' && Number.isFinite(v)) return String(v);
     if (typeof v === 'string') {
       const n = Number(v.replace(/[^0-9.\-]/g, ''));
@@ -274,14 +317,32 @@ function normalizePayableJson(parsed: Record<string, unknown>): PayableDraft {
     }
     return '';
   };
+  const allowedMethods = new Set(['WIRE', 'ACH', 'CHECK', 'CARD', 'CASH', 'OTHER']);
+  const paymentsRaw = Array.isArray(parsed['paymentsOnInvoice']) ? parsed['paymentsOnInvoice'] as Record<string, unknown>[] : [];
+  const paymentsOnInvoice: PaymentOnInvoice[] = paymentsRaw
+    .map(p => {
+      const m = (str('method', p) || '').toUpperCase();
+      return {
+        date: str('date', p),
+        amount: num('amount', p),
+        method: allowedMethods.has(m) ? m : 'OTHER',
+        reference: str('reference', p),
+        memo: str('memo', p),
+      };
+    })
+    .filter(p => Number(p.amount) > 0);    // drop empty/zero rows
+
   return {
     invoiceNumber: str('invoiceNumber'),
     shipperName:   str('shipperName'),
     invoiceDate:   str('invoiceDate'),
     paymentTerms:  str('paymentTerms'),
+    goodsAmount:   num('goodsAmount'),
+    freightAmount: num('freightAmount'),
     totalAmount:   num('totalAmount'),
     currency:      str('currency').toUpperCase() || 'USD',
     notes:         str('notes'),
+    paymentsOnInvoice,
   };
 }
 
@@ -397,11 +458,19 @@ const PayablesV2: React.FC = () => {
     });
   }, []);
 
+  // View action → statement modal (mirror Receivables — invoice
+  // total · payments · balance in a T-account). Edit action → the
+  // transactions editor for any AP payments allocated to this bill.
+  const [statementRow, setStatementRow] = useState<Payable | null>(null);
+  const [editTxnsRow,  setEditTxnsRow]  = useState<Payable | null>(null);
+
   const { rowActions: crudActions, drawers, openView } = useRowCrud<Payable>({
     table: 'invoices_suppliers',
     listQueryKeys: ['payables'],
     rowLabel: r => r.invoiceNumber,
     fields,
+    onView: (row) => setStatementRow(row),
+    onEdit: (row) => setEditTxnsRow(row),
   });
 
   // Compose: prepend a Pay button on unpaid rows, then existing actions.
@@ -516,6 +585,40 @@ const PayablesV2: React.FC = () => {
         ocrPrefill={ocrPrefill ?? undefined}
         onSuccess={() => { ap.refetch(); pay.refetch(); }}
       />
+
+      {/* View modal — supplier-bill statement (T-account: invoice
+          total · prior payments · balance). Reads the AP-view's
+          authoritative totals so figures match the row in the list
+          exactly. */}
+      {statementRow && (() => {
+        const b = balances[statementRow.id];
+        const paid = b ? b.paid : Math.max(0, statementRow.totalAmount - (b?.balance ?? statementRow.totalAmount));
+        return (
+          <InvoiceStatementModal
+            open={true}
+            onOpenChange={(v) => { if (!v) setStatementRow(null); }}
+            supplierInvoiceId={statementRow.id}
+            documentLabel={statementRow.invoiceNumber}
+            counterpartyName={statementRow.supplier}
+            invoiceTotal={statementRow.totalAmount}
+            paid={paid}
+            currency={statementRow.currency}
+          />
+        );
+      })()}
+
+      {/* Edit modal — AP payments allocated to this bill. */}
+      {editTxnsRow && (
+        <InvoiceTransactionsEditModal
+          open={true}
+          onOpenChange={(v) => { if (!v) setEditTxnsRow(null); }}
+          supplierInvoiceId={editTxnsRow.id}
+          documentLabel={editTxnsRow.invoiceNumber}
+          counterpartyName={editTxnsRow.supplier}
+          currency={editTxnsRow.currency}
+        />
+      )}
+
       {aiUploadOpen && (
         <AiUploadModal<PayableDraft>
           open={aiUploadOpen}
@@ -558,8 +661,22 @@ const PayablesV2: React.FC = () => {
                     onPick={v => setD({ ...d, shipperName: v })} />
                 </FormField>
                 <FormField>
-                  <FieldLabel>Amount</FieldLabel>
-                  <Input type="number" value={d.totalAmount}
+                  <FieldLabel>Goods amount</FieldLabel>
+                  <Input type="number" step="0.01" value={d.goodsAmount}
+                    onChange={e => setD({ ...d, goodsAmount: e.target.value })}
+                    placeholder="subtotal of products"
+                    className={inputCls + ' font-mono tabular-nums'} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Freight amount</FieldLabel>
+                  <Input type="number" step="0.01" value={d.freightAmount}
+                    onChange={e => setD({ ...d, freightAmount: e.target.value })}
+                    placeholder="freight line, if present"
+                    className={inputCls + ' font-mono tabular-nums'} />
+                </FormField>
+                <FormField>
+                  <FieldLabel>Total amount</FieldLabel>
+                  <Input type="number" step="0.01" value={d.totalAmount}
                     onChange={e => setD({ ...d, totalAmount: e.target.value })}
                     className={inputCls + ' font-mono tabular-nums'} />
                 </FormField>
@@ -586,22 +703,128 @@ const PayablesV2: React.FC = () => {
                     rows={2}
                     className="w-full bg-[#111111] border border-[#1f1f1f] rounded-md px-2 py-1.5 text-[12.5px] text-slate-200 resize-y" />
                 </FormField>
+
+                {/* Payments-on-invoice editor — OCR-extracted prior
+                    payments (advances, deposits) that this supplier
+                    invoice reports. Each row becomes a PAYMENT_OUT
+                    transaction (source=OCR) allocated to the bill
+                    after save. User can add/remove/edit before
+                    confirming the save. */}
+                <FormField className="col-span-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <FieldLabel>Payments reported on invoice ({d.paymentsOnInvoice.length})</FieldLabel>
+                    <button
+                      type="button"
+                      onClick={() => setD({ ...d, paymentsOnInvoice: [...d.paymentsOnInvoice, { date: '', amount: '', method: 'WIRE', reference: '', memo: '' }] })}
+                      className="text-[11px] text-emerald-300 hover:text-emerald-200"
+                    >
+                      + Add payment row
+                    </button>
+                  </div>
+                  {d.paymentsOnInvoice.length === 0 ? (
+                    <div className="text-[11.5px] text-slate-500 italic px-2 py-2 rounded border border-dashed border-[#1f1f1f] bg-[#0a0a0a]">
+                      No prior payments OCR'd on this invoice. Add one manually if needed; otherwise the bill saves with full balance due.
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {d.paymentsOnInvoice.map((p, i) => (
+                        <div key={i} className="grid gap-1 items-center" style={{ gridTemplateColumns: '100px 100px 80px 1fr 28px' }}>
+                          <Input type="date" value={p.date}
+                            onChange={e => { const next = [...d.paymentsOnInvoice]; next[i] = { ...p, date: e.target.value }; setD({ ...d, paymentsOnInvoice: next }); }}
+                            className={inputCls + ' text-[11.5px]'} />
+                          <Input type="number" step="0.01" value={p.amount} placeholder="amount"
+                            onChange={e => { const next = [...d.paymentsOnInvoice]; next[i] = { ...p, amount: e.target.value }; setD({ ...d, paymentsOnInvoice: next }); }}
+                            className={inputCls + ' text-[11.5px] font-mono tabular-nums text-right'} />
+                          <select value={p.method}
+                            onChange={e => { const next = [...d.paymentsOnInvoice]; next[i] = { ...p, method: e.target.value }; setD({ ...d, paymentsOnInvoice: next }); }}
+                            className="bg-[#111111] border border-[#1f1f1f] rounded text-[11.5px] text-slate-200 px-1.5 py-1.5">
+                            {['WIRE','ACH','CHECK','CARD','CASH','OTHER'].map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                          <Input value={p.reference} placeholder="reference (wire/check #)"
+                            onChange={e => { const next = [...d.paymentsOnInvoice]; next[i] = { ...p, reference: e.target.value }; setD({ ...d, paymentsOnInvoice: next }); }}
+                            className={inputCls + ' text-[11.5px]'} />
+                          <button type="button"
+                            onClick={() => setD({ ...d, paymentsOnInvoice: d.paymentsOnInvoice.filter((_, idx) => idx !== i) })}
+                            className="text-slate-500 hover:text-red-400 text-[14px] leading-none">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </FormField>
               </div>
             ),
             save: async (d) => {
+              const goods   = d.goodsAmount.trim()   === '' ? null : Number(d.goodsAmount);
+              const freight = d.freightAmount.trim() === '' ? null : Number(d.freightAmount);
+              const total   = d.totalAmount.trim()   === '' ? null : Number(d.totalAmount);
               const payload: Record<string, unknown> = {
                 invoiceNumber: d.invoiceNumber.trim(),
                 shipperName:   d.shipperName.trim(),
                 invoiceDate:   d.invoiceDate || null,
                 paymentTerms:  d.paymentTerms || null,
-                totalAmount:   d.totalAmount.trim() === '' ? null : Number(d.totalAmount),
+                subtotal:      goods,
+                freightAmount: freight,
+                totalAmount:   total,
                 currency:      d.currency || 'USD',
                 notes:         d.notes || null,
               };
               if (currentCompanyId && currentCompanyId !== 'ALL') {
                 payload.companyId = currentCompanyId;
               }
-              await insert.mutateAsync(payload);
+              // useEntityInsert returns the generated id string
+              // directly (not a row object).
+              const supplierInvoiceId = await insert.mutateAsync(payload);
+
+              // Auto-create PAYMENT_OUT transactions for any payments
+              // the OCR found (or the user added) on the bill itself.
+              // Each links back via transaction_allocations.supplierInvoiceId
+              // so the AP balance view + drawer Statement reflect them
+              // immediately. Best-effort: a failure here doesn't roll
+              // back the supplier-invoice save — surfaced as a warning
+              // toast so the user can re-record manually.
+              const validPayments = d.paymentsOnInvoice.filter(p => Number(p.amount) > 0);
+              if (supplierInvoiceId && validPayments.length > 0 && currentCompanyId && currentCompanyId !== 'ALL') {
+                try {
+                  const { getSupabaseClient: getSb } = await import('../../services/supabase');
+                  const sb = getSb();
+                  const today = new Date().toISOString().slice(0, 10);
+                  for (const p of validPayments) {
+                    const txnId = `TXN-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+                    const { error: txnErr } = await sb.from('transactions').insert({
+                      id: txnId,
+                      companyId: currentCompanyId,
+                      source: 'OCR',
+                      kind: 'PAYMENT_OUT',
+                      txnDate: p.date || today,
+                      amount: Number(p.amount),
+                      currency: d.currency || 'USD',
+                      method: p.method || null,
+                      counterpartyType: 'SUPPLIER',
+                      counterpartyName: d.shipperName.trim(),
+                      reference: p.reference || null,
+                      memo: p.memo || 'Payment reported on supplier invoice',
+                      status: 'MATCHED',
+                    });
+                    if (txnErr) throw new Error(txnErr.message);
+                    const { error: allocErr } = await sb.from('transaction_allocations').insert({
+                      id: `ALLOC-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
+                      transactionId: txnId,
+                      supplierInvoiceId,
+                      amount: Number(p.amount),
+                      memo: 'Auto-linked from supplier invoice OCR',
+                    });
+                    if (allocErr) throw new Error(allocErr.message);
+                  }
+                  toast.push({
+                    kind: 'success',
+                    title: `${validPayments.length} prior payment${validPayments.length === 1 ? '' : 's'} linked`,
+                    description: 'OCR\'d payments allocated to the new bill.',
+                  });
+                } catch (e: any) {
+                  toast.push({ kind: 'warning', title: 'Payments not linked', description: e?.message ?? 'Bill saved, but the OCR\'d payments need to be re-recorded manually.' });
+                }
+              }
+
               toast.push({
                 kind: 'success',
                 title: 'Supplier bill saved',
