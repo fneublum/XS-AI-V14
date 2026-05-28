@@ -506,8 +506,8 @@ const PayablesV2: React.FC = () => {
             setViewOriginalRow(r);
           }}
           title={r.originalDocument
-            ? "View original document that was OCR'd to create this record"
-            : "No source document on file — click to attach one"}
+            ? "View original invoice file that was OCR'd to create this record"
+            : "No invoice file on record — click to attach one"}
           className={
             'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold border transition-colors ' +
             (r.originalDocument
@@ -515,7 +515,7 @@ const PayablesV2: React.FC = () => {
               : 'bg-transparent text-slate-500 border-slate-700/40 hover:bg-slate-700/20 hover:text-slate-300')
           }
         >
-          <FileText size={10} /> Document
+          <FileText size={10} /> Invoice
         </button>
         {!paid && (
           <button
