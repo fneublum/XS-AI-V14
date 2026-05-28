@@ -45,6 +45,9 @@ export interface Payable {
   status: string | null;
   qbStatus: string | null;
   notes: string | null;
+  /** Data URL of the OCR-source PDF / image (when the bill was
+   *  created via AI Upload). Powers the "View original" action. */
+  originalDocument: string | null;
   createdAt: string;
 }
 
@@ -78,6 +81,7 @@ interface Raw {
   status: string | null;
   qb_status: string | null;
   notes: string | null;
+  originalDocument: string | null;
   createdAt: string | null;
 }
 
@@ -110,7 +114,7 @@ export function usePayables(search?: string) {
             'grossWeight, netWeight, tareWeight, totalQuantity, ' +
             'subtotal, totalAmount, currency, ' +
             'remitTo, bankName, swiftCode, routingNumber, accountNumber, ' +
-            'status, qb_status, createdAt, notes',
+            'status, qb_status, createdAt, notes, "originalDocument"',
           )
           .order('invoiceDate', { ascending: false, nullsFirst: false })
           .limit(200),
@@ -153,6 +157,7 @@ export function usePayables(search?: string) {
         status: r.status,
         qbStatus: r.qb_status ?? null,
         notes: r.notes,
+        originalDocument: r.originalDocument,
         createdAt: r.createdAt ?? '',
       }));
     },

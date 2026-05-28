@@ -14,7 +14,8 @@ import { RecordPaymentDrawer, type PrefillSupplierInvoice, type OcrPrefill } fro
 import { ReceiptUploadModal, type ReceiptExtracted } from '../components/ReceiptUploadModal';
 import { InvoiceStatementModal } from '../components/InvoiceStatementModal';
 import { InvoiceTransactionsEditModal } from '../components/InvoiceTransactionsEditModal';
-import { Wallet, CheckCircle as CheckCircleIcon } from 'lucide-react';
+import { Wallet, CheckCircle as CheckCircleIcon, FileText } from 'lucide-react';
+import { PdfViewerModal } from '../components/PdfViewerModal';
 import { useEntityInsert } from '../queries/useEntityMutations';
 import { useCompany } from '../providers/CompanyProvider';
 import { useToast } from '../primitives/Toast';
@@ -255,12 +256,19 @@ interface PayableDraft {
   currency: string;
   notes: string;
   paymentsOnInvoice: PaymentOnInvoice[];
+  /** Data URL of the OCR-source PDF/image. Persisted to
+   *  invoices_suppliers.originalDocument so the user can re-open
+   *  the source document later from the Payables row. Carried
+   *  through fromExtracted → save (AiUploadModal passes the URL
+   *  as the 2nd arg to fromExtracted). */
+  originalDocument: string | null;
 }
 
 const emptyPayableDraft = (): PayableDraft => ({
   invoiceNumber: '', shipperName: '', invoiceDate: '',
   paymentTerms: '', goodsAmount: '', freightAmount: '', totalAmount: '',
   currency: 'USD', notes: '', paymentsOnInvoice: [],
+  originalDocument: null,
 });
 
 const PAYABLE_PROMPT = `You are extracting fields from a SUPPLIER INVOICE (an incoming bill
@@ -461,8 +469,12 @@ const PayablesV2: React.FC = () => {
   // View action → statement modal (mirror Receivables — invoice
   // total · payments · balance in a T-account). Edit action → the
   // transactions editor for any AP payments allocated to this bill.
+  // "Original" action → opens the OCR-source PDF/image in the
+  // existing PdfViewerModal (when the bill was created via AI
+  // Upload and originalDocument was persisted).
   const [statementRow, setStatementRow] = useState<Payable | null>(null);
   const [editTxnsRow,  setEditTxnsRow]  = useState<Payable | null>(null);
+  const [viewOriginalRow, setViewOriginalRow] = useState<Payable | null>(null);
 
   const { rowActions: crudActions, drawers, openView } = useRowCrud<Payable>({
     table: 'invoices_suppliers',
@@ -480,6 +492,22 @@ const PayablesV2: React.FC = () => {
     const paid = bal <= 0.001;
     return (
       <div className="flex items-center gap-1 justify-end">
+        {/* View OCR-source PDF/image. Only shown when the bill was
+            saved via AI Upload (originalDocument data URL present);
+            manually-entered bills hide this action. */}
+        {r.originalDocument && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setViewOriginalRow(r);
+            }}
+            title="View OCR source document"
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-slate-500/10 text-slate-300 border border-slate-500/20 hover:bg-slate-500/20 transition-colors"
+          >
+            <FileText size={10} /> Original
+          </button>
+        )}
         {!paid && (
           <button
             type="button"
@@ -589,7 +617,8 @@ const PayablesV2: React.FC = () => {
       {/* View modal — supplier-bill statement (T-account: invoice
           total · prior payments · balance). Reads the AP-view's
           authoritative totals so figures match the row in the list
-          exactly. */}
+          exactly. `onViewOriginal` opens the OCR-source PDF when
+          the bill was created via AI Upload. */}
       {statementRow && (() => {
         const b = balances[statementRow.id];
         const paid = b ? b.paid : Math.max(0, statementRow.totalAmount - (b?.balance ?? statementRow.totalAmount));
@@ -603,6 +632,9 @@ const PayablesV2: React.FC = () => {
             invoiceTotal={statementRow.totalAmount}
             paid={paid}
             currency={statementRow.currency}
+            onViewOriginal={statementRow.originalDocument
+              ? () => setViewOriginalRow(statementRow)
+              : undefined}
           />
         );
       })()}
@@ -619,6 +651,17 @@ const PayablesV2: React.FC = () => {
         />
       )}
 
+      {/* OCR-source PDF viewer — opens the original supplier
+          invoice document the AI Upload captured. PdfViewerModal
+          handles data-URL → Blob conversion + iframe rendering,
+          plus a Download button. */}
+      <PdfViewerModal
+        open={!!viewOriginalRow}
+        onOpenChange={(v) => { if (!v) setViewOriginalRow(null); }}
+        dataUrl={viewOriginalRow?.originalDocument ?? null}
+        title={viewOriginalRow ? `Supplier bill · ${viewOriginalRow.invoiceNumber}` : ''}
+      />
+
       {aiUploadOpen && (
         <AiUploadModal<PayableDraft>
           open={aiUploadOpen}
@@ -627,7 +670,11 @@ const PayablesV2: React.FC = () => {
             title: 'AI upload — supplier bill',
             description: 'Drop a supplier invoice PDF, pick a file, or paste text or a screenshot.',
             emptyDraft: emptyPayableDraft,
-            fromExtracted: (d) => d,
+            // Stash the OCR-source data URL on the draft so save()
+            // can persist it. AiUploadModal passes it as the 2nd
+            // arg whenever the extract was driven by a file (drag-
+            // drop or picker); text-paste paths get null.
+            fromExtracted: (d, originalDocument) => ({ ...d, originalDocument: originalDocument ?? d.originalDocument ?? null }),
             extractSpec: { prompt: PAYABLE_PROMPT, normalize: normalizePayableJson },
             extractSummary: (d) =>
               [d.invoiceNumber, d.shipperName].filter(Boolean).join(' · '),
@@ -767,6 +814,10 @@ const PayablesV2: React.FC = () => {
                 totalAmount:   total,
                 currency:      d.currency || 'USD',
                 notes:         d.notes || null,
+                // Persist the OCR'd source document so the user can
+                // re-open the original PDF/image from the Payables
+                // row action later.
+                originalDocument: d.originalDocument || null,
               };
               if (currentCompanyId && currentCompanyId !== 'ALL') {
                 payload.companyId = currentCompanyId;

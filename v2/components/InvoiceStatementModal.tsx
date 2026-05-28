@@ -8,7 +8,7 @@
 // reflects live without a refresh.
 
 import React from 'react';
-import { X as XIcon, FileText, Eye, AlertCircle, Loader2 } from 'lucide-react';
+import { X as XIcon, FileText, Eye, AlertCircle, Loader2, FileSearch } from 'lucide-react';
 import { useTransactionsForTarget } from '../queries/useTransactions';
 
 interface Props {
@@ -29,6 +29,11 @@ interface Props {
   /** Optional — viewer for receipt files. When omitted, the View
    *  button on each row is hidden (caller mounts no PDF viewer). */
   onViewReceipt?: (url: string) => void;
+  /** Optional — when supplied, renders a "View original" link in
+   *  the header that opens the OCR-source PDF / image for the
+   *  invoice/bill. Wired from PayablesV2 / ReceivablesV2 once the
+   *  row carries an originalDocument data URL. */
+  onViewOriginal?: () => void;
 }
 
 function fmtMoney(n: number, c: string = 'USD'): string {
@@ -39,7 +44,7 @@ export const InvoiceStatementModal: React.FC<Props> = ({
   open, onOpenChange,
   invoiceId, supplierInvoiceId, purchaseOrderId,
   documentLabel, counterpartyName, invoiceTotal, paid, currency,
-  onViewReceipt,
+  onViewReceipt, onViewOriginal,
 }) => {
   const history = useTransactionsForTarget({ invoiceId, supplierInvoiceId, purchaseOrderId });
   const targetId = invoiceId ?? supplierInvoiceId ?? purchaseOrderId;
@@ -96,6 +101,16 @@ export const InvoiceStatementModal: React.FC<Props> = ({
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {onViewOriginal && (
+              <button
+                type="button"
+                onClick={onViewOriginal}
+                title="View OCR source document"
+                className="text-[11px] text-slate-400 hover:text-emerald-300 inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-700/40"
+              >
+                <FileSearch size={11} /> Original
+              </button>
+            )}
             <span className={
               'text-[10px] uppercase tracking-wider font-semibold ' +
               (fullySettled ? 'text-emerald-400' : 'text-amber-400')
