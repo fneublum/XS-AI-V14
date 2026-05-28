@@ -7,7 +7,12 @@
 // auto-matched links so the user can correct attribution.
 
 import React, { useMemo, useState } from 'react';
-import { Filter, RefreshCw, Save, Loader2, AlertCircle, X as XIcon, Info, Sparkles, Link2, Unlink, Wand2, Eye, Pencil } from 'lucide-react';
+import { Filter, RefreshCw, Save, Loader2, AlertCircle, X as XIcon, Info, Sparkles, Link2, Unlink, Wand2, Eye, Pencil, Download, Mail, Send } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { useCompany } from '../providers/CompanyProvider';
+import { useCompanies } from '../queries/useCompanies';
+import { sendEmail } from '../../services/emailService';
 import { useInvoiceMargins, upsertInvoiceCosting, type InvoiceMarginRow } from '../queries/useInvoiceMargins';
 import { useToast } from '../primitives/Toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -318,9 +323,153 @@ const Th: React.FC<ThProps> = ({ label, onClick, active, desc, align = 'left' })
   </button>
 );
 
-// ── View modal — read-only cost breakdown ─────────────────────────
+// ── View modal — P&L of one invoice ───────────────────────────────
+// Read-only summary with Download PDF + Email actions. PDF reuses
+// the jsPDF + autoTable pattern from Statements / Delivery Docs;
+// email routes through the standard MSAL/Gmail sendEmail flow with
+// the PDF attached.
 const MarginViewModal: React.FC<{ row: InvoiceMarginRow; onClose: () => void }> = ({ row, onClose }) => {
   const c = row.currency;
+  const toast = useToast();
+  const { currentCompanyId } = useCompany();
+  const companiesQ = useCompanies();
+  const currentCompany = useMemo(
+    () => (companiesQ.data ?? []).find(co => co.id === currentCompanyId),
+    [companiesQ.data, currentCompanyId],
+  );
+
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailCc, setEmailCc] = useState('');
+  const [emailSubject, setEmailSubject] = useState(
+    `P&L — ${row.invoiceNumber} (${row.customerName ?? ''})`,
+  );
+  const [emailBody, setEmailBody] = useState(
+    `Hi,\n\nAttached is the per-invoice P&L for ${row.invoiceNumber}` +
+    `${row.customerName ? ` · ${row.customerName}` : ''}.\n\n` +
+    `Revenue: ${fmtMoney(row.revenue, c)}\n` +
+    `Landed cost: ${fmtMoney(row.landedCost, c)}\n` +
+    `Gross margin: ${fmtMoney(row.marginUSD, c)} (${fmtPct(row.marginPct)})\n\n` +
+    `Regards`,
+  );
+  const [emailSending, setEmailSending] = useState(false);
+
+  function buildPdf(): { doc: jsPDF; filename: string } {
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+    const pageW = doc.internal.pageSize.getWidth();
+    // Header
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Invoice P&L', 40, 50);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`From ${currentCompany?.name ?? currentCompanyId}`, 40, 68);
+
+    // Row meta
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${row.invoiceNumber} · ${row.customerName ?? ''}`, 40, 100);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    const meta: string[] = [];
+    if (row.invoiceDate) meta.push(`Invoice date: ${fmtDate(row.invoiceDate)}`);
+    if (row.soNumber)     meta.push(`SO #: ${row.soNumber}`);
+    if (row.bookingNumber) meta.push(`Booking #: ${row.bookingNumber}`);
+    doc.text(meta.join('   ·   '), 40, 116);
+
+    // P&L body
+    autoTable(doc, {
+      startY: 140,
+      head: [['Component', 'Amount']],
+      body: [
+        ['Revenue',              fmtMoney(row.revenue, c)],
+        ['Purchase (goods)',     row.supplierCost     > 0 ? fmtMoney(row.supplierCost, c)     : '—'],
+        ['Local freight',        row.localFreightCost > 0 ? fmtMoney(row.localFreightCost, c) : '—'],
+        ['Ocean freight',        row.oceanFreightCost > 0 ? fmtMoney(row.oceanFreightCost, c) : '—'],
+        ['Other costs',          row.otherCost        > 0 ? fmtMoney(row.otherCost, c)        : '—'],
+        ['Landed cost',          fmtMoney(row.landedCost, c)],
+      ],
+      foot: [['Gross margin', `${fmtMoney(row.marginUSD, c)}   ·   ${fmtPct(row.marginPct)}`]],
+      theme: 'striped',
+      headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontSize: 10 },
+      bodyStyles:  { fontSize: 10 },
+      footStyles:  {
+        fillColor:  row.marginUSD >= 0 ? [220, 252, 231] : [254, 226, 226],
+        textColor:  row.marginUSD >= 0 ? [22, 101, 52]   : [153, 27, 27],
+        fontStyle: 'bold',
+      },
+      columnStyles: { 1: { halign: 'right', cellWidth: 160 } },
+    });
+
+    // Linked bills (if any)
+    if (row.linkedSupplierBills.length > 0) {
+      const last = (doc as any).lastAutoTable?.finalY ?? 200;
+      autoTable(doc, {
+        startY: last + 20,
+        head: [['Linked supplier bill', 'Supplier', 'Total']],
+        body: row.linkedSupplierBills.map(b => [
+          b.invoiceNumber ?? b.id,
+          b.shipperName ?? '—',
+          fmtMoney(b.totalAmount, c),
+        ]),
+        theme: 'grid',
+        headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontSize: 9 },
+        bodyStyles:  { fontSize: 9 },
+        columnStyles: { 2: { halign: 'right', cellWidth: 120 } },
+      });
+    }
+
+    // Footer
+    const pageH = doc.internal.pageSize.getHeight();
+    doc.setFontSize(8);
+    doc.setTextColor(120);
+    doc.text(`Generated ${new Date().toLocaleString()} · ${currentCompany?.name ?? ''}`, 40, pageH - 30);
+
+    const safe = (row.customerName ?? 'invoice').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    const filename = `PL_${row.invoiceNumber}_${safe}.pdf`;
+    return { doc, filename };
+  }
+
+  function downloadPdf() {
+    const built = buildPdf();
+    built.doc.save(built.filename);
+  }
+
+  async function sendEmailNow() {
+    if (!emailTo.trim()) {
+      toast.push({ kind: 'error', title: 'Recipient required' });
+      return;
+    }
+    setEmailSending(true);
+    try {
+      const built = buildPdf();
+      const base64 = built.doc.output('datauristring').split(',')[1];
+      const escaped = emailBody.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const result = await sendEmail({
+        to: emailTo.split(/[;,]/).map(s => s.trim()).filter(Boolean),
+        cc: emailCc.split(/[;,]/).map(s => s.trim()).filter(Boolean),
+        subject: emailSubject,
+        htmlBody: `<div style="font-family:Arial,sans-serif;max-width:640px;"><h2 style="color:#14b8a6;">${emailSubject}</h2><div style="white-space:pre-wrap;line-height:1.6;color:#0f172a;">${escaped}</div></div>`,
+        attachments: [{
+          name: built.filename,
+          contentBytes: base64,
+          contentType: 'application/pdf',
+        }],
+      });
+      if (result.success) {
+        toast.push({ kind: 'success', title: 'P&L emailed', description: `Sent via ${result.provider}` });
+        setEmailOpen(false);
+        setTimeout(onClose, 600);
+      } else {
+        toast.push({ kind: 'error', title: 'Email failed', description: result.message });
+      }
+    } catch (e: any) {
+      toast.push({ kind: 'error', title: 'Email failed', description: e?.message });
+    } finally {
+      setEmailSending(false);
+    }
+  }
+
   return (
     <div
       role="dialog"
@@ -329,15 +478,15 @@ const MarginViewModal: React.FC<{ row: InvoiceMarginRow; onClose: () => void }> 
       onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
     >
-      <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg shadow-2xl flex flex-col w-full" style={{ maxWidth: '560px' }}>
+      <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg shadow-2xl flex flex-col w-full" style={{ maxWidth: '640px', maxHeight: '90vh' }}>
         <div className="px-5 py-3 border-b border-[#1f1f1f] flex items-center justify-between">
           <div>
-            <div className="text-[13px] font-semibold text-slate-100">Margin · {row.invoiceNumber}</div>
+            <div className="text-[13px] font-semibold text-slate-100">P&amp;L · {row.invoiceNumber}</div>
             <div className="text-[11.5px] text-slate-500">{row.customerName ?? '—'}</div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-100 w-7 h-7 rounded inline-flex items-center justify-center hover:bg-slate-700/40 text-xl leading-none">×</button>
         </div>
-        <div className="px-5 py-4 text-[12.5px] space-y-1.5">
+        <div className="px-5 py-4 text-[12.5px] space-y-1.5 overflow-y-auto">
           <Row label="Revenue" value={fmtMoney(row.revenue, c)} bold />
           <div className="border-t border-[#1f1f1f] my-2" />
           <Row label="Purchase (goods)" value={row.supplierCost > 0 ? fmtMoney(row.supplierCost, c) : '—'} muted={row.supplierCost === 0} />
@@ -363,9 +512,60 @@ const MarginViewModal: React.FC<{ row: InvoiceMarginRow; onClose: () => void }> 
               ))}
             </>
           )}
+
+          {/* Inline email form, revealed when the user clicks Email. */}
+          {emailOpen && (
+            <div className="mt-4 pt-3 border-t border-[#1f1f1f] space-y-2">
+              <div className="text-[10.5px] uppercase tracking-wider text-slate-500 mb-1">Email P&L (PDF attached)</div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">To</div>
+                <input value={emailTo} onChange={e => setEmailTo(e.target.value)} placeholder="recipient@example.com" className="w-full px-2 py-1 text-[12px] bg-[#0f0f0f] border border-[#1f1f1f] rounded text-slate-200 focus:outline-none focus:border-teal-500" />
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">CC</div>
+                <input value={emailCc} onChange={e => setEmailCc(e.target.value)} placeholder="optional" className="w-full px-2 py-1 text-[12px] bg-[#0f0f0f] border border-[#1f1f1f] rounded text-slate-200 focus:outline-none focus:border-teal-500" />
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">Subject</div>
+                <input value={emailSubject} onChange={e => setEmailSubject(e.target.value)} className="w-full px-2 py-1 text-[12px] bg-[#0f0f0f] border border-[#1f1f1f] rounded text-slate-200 focus:outline-none focus:border-teal-500" />
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">Body</div>
+                <textarea value={emailBody} onChange={e => setEmailBody(e.target.value)} rows={5} className="w-full px-2 py-1 text-[12px] bg-[#0f0f0f] border border-[#1f1f1f] rounded text-slate-200 focus:outline-none focus:border-teal-500 resize-y" />
+              </div>
+            </div>
+          )}
         </div>
-        <div className="px-5 py-3 border-t border-[#1f1f1f] flex justify-end">
-          <button onClick={onClose} className="px-3 py-1.5 text-[12px] text-slate-300 hover:text-slate-100 rounded hover:bg-[#141414]">Close</button>
+        <div className="px-5 py-3 border-t border-[#1f1f1f] flex items-center justify-end gap-2">
+          {!emailOpen ? (
+            <>
+              <button onClick={onClose} className="px-3 py-1.5 text-[12px] text-slate-300 hover:text-slate-100 rounded hover:bg-[#141414]">Close</button>
+              <button
+                onClick={downloadPdf}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-medium border border-[#1f1f1f] text-slate-200 hover:bg-[#141414]"
+              >
+                <Download size={12} /> Download PDF
+              </button>
+              <button
+                onClick={() => setEmailOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-medium bg-teal-600 text-white hover:bg-teal-500"
+              >
+                <Mail size={12} /> Email
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => setEmailOpen(false)} className="px-3 py-1.5 text-[12px] text-slate-300 hover:text-slate-100 rounded hover:bg-[#141414]">Back</button>
+              <button
+                onClick={sendEmailNow}
+                disabled={emailSending}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-medium bg-teal-600 text-white hover:bg-teal-500 disabled:opacity-60"
+              >
+                {emailSending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                {emailSending ? 'Sending…' : 'Send'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -777,8 +977,14 @@ const SupplierInvoicePicker: React.FC<{
       });
       // Force the margin engine to re-fetch supplier_invoices so
       // the breakdown lands in the linked chip + the row totals.
-      qc.invalidateQueries({ queryKey: ['margins_supplier_invoices'] });
-      qc.invalidateQueries({ queryKey: ['payables'] });
+      // refetchQueries (not just invalidate) — the engine isn't
+      // re-rendering for free; we need to pull the new data right
+      // now so the user sees the Local frt column light up before
+      // closing the drawer.
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ['margins_supplier_invoices'] }),
+        qc.refetchQueries({ queryKey: ['payables'] }),
+      ]);
     } catch (e: any) {
       toast.push({ kind: 'error', title: 'OCR failed', description: e?.message });
     } finally {
