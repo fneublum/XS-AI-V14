@@ -482,11 +482,24 @@ export function useInvoiceMargins() {
       let freightLinkIds: string[] = [];
       let freightReason = '';
 
+      // Supplier-bill freight (OCR'd from the bill's freightAmount
+      // column) ALWAYS counts as local freight, independent of any
+      // freight-quote override the user might have set. The override
+      // only replaces the freight-quote contribution — it doesn't
+      // erase the standalone bill component. Earlier logic had the
+      // override branch returning early which silently zeroed this
+      // out (see KP052726-1 case 2026-05-28).
+      localFreightCost += supplierBillLocalFreight;
+
       if (costing?.freightCostOverride != null) {
-        freightCost = num(costing.freightCostOverride);
-        oceanFreightCost = freightCost;  // legs unknown — bucket to ocean
+        // Override REPLACES the freight-quote ocean leg only —
+        // local-from-bill stays above. Bucket the override to
+        // ocean since legs are unknown.
+        const ov = num(costing.freightCostOverride);
+        oceanFreightCost = ov;
+        freightCost = localFreightCost + ov;
         freightSource = 'override';
-        if (freightCost === 0) freightReason = 'Override set to $0.';
+        if (ov === 0 && localFreightCost === 0) freightReason = 'Override set to $0.';
       } else {
         const explicitFQ = csvToIds(costing?.freightQuoteIds ?? null);
         const matches: RawFQ[] = [];
@@ -508,15 +521,11 @@ export function useInvoiceMargins() {
             oceanFreightCost += legs.ocean;
             freightLinkIds.push(fq.id);
           }
-          // Also count any local freight extracted from linked
-          // supplier bills (the OCR'd "freightAmount" column).
-          localFreightCost += supplierBillLocalFreight;
           freightCost = localFreightCost + oceanFreightCost;
           freightSource = 'freight_quote';
         } else if (supplierBillLocalFreight > 0) {
           // No freight quote but the supplier bill itemised local
-          // freight — still surface it so the column isn't empty.
-          localFreightCost = supplierBillLocalFreight;
+          // freight — already added above; just close out the source.
           freightCost = localFreightCost;
           freightSource = 'freight_quote';
         } else if (unresolvedFQ.length > 0) {
