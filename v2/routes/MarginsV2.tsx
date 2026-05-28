@@ -359,7 +359,10 @@ const MarginEditModal: React.FC<EditProps> = ({ row, onClose, onSaved }) => {
     try {
       await upsertInvoiceCosting({
         invoiceId: row.invoiceId,
-        companyId: null,
+        // Was hardcoded null which made the scoped-by-companyId
+        // costings fetch return zero rows after save. Inherit from
+        // the invoice row so the column is populated correctly.
+        companyId: row.companyId ?? null,
         supplierCostOverride: numOrNull(supOverride),
         freightCostOverride:  numOrNull(frOverride),
         dutyUSD: num(duty),

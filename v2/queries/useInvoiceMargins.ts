@@ -55,6 +55,10 @@ export interface InvoiceCosting {
 
 export interface InvoiceMarginRow {
   invoiceId: string;
+  /** Carried through so MarginEditModal.save can populate the
+   *  costing row's companyId (was hardcoded null, which made the
+   *  scoped-by-companyId costings fetch return zero rows). */
+  companyId: string | null;
   invoiceNumber: string;
   invoiceDate: string | null;
   customerName: string | null;
@@ -218,16 +222,24 @@ export function useInvoiceMargins() {
     },
   );
 
+  // No company scope on the costings query — every existing row was
+  // saved with companyId=NULL (MarginEditModal.save passed null), so
+  // a scoped fetch returns zero rows and the merge silently shows $0
+  // for every linked bill / quote. Costings are FK'd 1:1 to invoices
+  // and invoices ARE company-scoped above, so dropping the scope here
+  // doesn't leak cross-tenant data — the only costings that can
+  // possibly match the merge are those whose invoiceId is in the
+  // company-scoped invoicesQ.data. Going forward, save() also
+  // populates companyId properly; this read just tolerates the old
+  // null rows.
   const costingsQ = useSupabaseQuery<RawCosting[]>(
     ['margins_costings', currentCompanyId],
     async () => {
       const sb = getSupabaseClient();
-      const { data, error } = await scopeByCompany(
-        sb.from('invoice_costings')
-          .select('*')
-          .limit(2000),
-        currentCompanyId,
-      );
+      const { data, error } = await sb
+        .from('invoice_costings')
+        .select('*')
+        .limit(2000);
       if (error) throw new Error(error.message);
       return (data as RawCosting[] | null) ?? [];
     },
@@ -477,6 +489,7 @@ export function useInvoiceMargins() {
       }
       return {
         invoiceId: inv.id,
+        companyId: inv.companyId,
         invoiceNumber: inv.invoiceNumber || inv.id,
         invoiceDate: inv.invoiceDate,
         customerName: inv.soldTo,
