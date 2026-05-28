@@ -76,6 +76,19 @@ export interface InvoiceMarginRow {
    *  ("invoice has no SO#", "no supplier bill carries this SO#",
    *  "override set to 0", etc.). Empty string when cost > 0. */
   supplierCostReason: string;
+  /** Breakdown per linked supplier bill so the costing drawer can
+   *  display goods + freight side-by-side under each bill chip.
+   *  Empty array when no bills are linked. */
+  linkedSupplierBills: Array<{
+    id: string;
+    invoiceNumber: string | null;
+    shipperName: string | null;
+    totalAmount: number;
+    goods: number;
+    freight: number;
+    hasBreakdown: boolean;        // false when subtotal+freightAmount were both null/0
+    originalDocument: string | null;  // for the OCR-breakdown button
+  }>;
 
   /** Total freight = local + ocean (or override). The drawer's
    *  freightCostOverride still drives this single combined figure. */
@@ -115,6 +128,12 @@ interface RawSupplierInvoice {
   customerPo: string | null; transportRef: string | null;
   totalAmount: string | number | null; currency: string | null;
   invoiceNumber: string | null; shipperName: string | null;
+  // Breakdown captured at AI Upload time. NULL on bills that
+  // pre-date the OCR fields or were entered manually — the
+  // drawer offers an "OCR breakdown" button in that case.
+  subtotal: string | number | null;       // goods only
+  freightAmount: string | number | null;  // local freight line on the bill
+  originalDocument: string | null;         // data URL for OCR-breakdown button
 }
 interface RawPO {
   id: string; companyId: string | null;
@@ -179,7 +198,7 @@ export function useInvoiceMargins() {
       const sb = getSupabaseClient();
       const { data, error } = await scopeByCompany(
         sb.from('invoices_suppliers')
-          .select('id, "companyId", "customerPo", "transportRef", "totalAmount", currency, "invoiceNumber", "shipperName"')
+          .select('id, "companyId", "customerPo", "transportRef", "totalAmount", currency, "invoiceNumber", "shipperName", subtotal, "freightAmount", "originalDocument"')
           .limit(2000),
         currentCompanyId,
       );
@@ -327,6 +346,47 @@ export function useInvoiceMargins() {
       const currency = inv.currency || 'USD';
       const costing  = costingByInvoice.get(inv.id);
 
+      // Split a supplier bill into goods + freight using the OCR'd
+      // subtotal / freightAmount columns. When the breakdown is
+      // missing (older bills, manually entered), the entire
+      // totalAmount lands in goods — conservative, doesn't double-
+      // count by guessing a freight component. The drawer offers
+      // an "OCR breakdown" button so users can fill the breakdown
+      // post-hoc from the bill's originalDocument.
+      const splitBill = (m: RawSupplierInvoice): { goods: number; freight: number } => {
+        const total = num(m.totalAmount);
+        const goods = num(m.subtotal);
+        const freight = num(m.freightAmount);
+        if (goods > 0 || freight > 0) {
+          // At least one component captured. Use what we have; bill
+          // any unattributed delta to goods so totals reconcile.
+          const captured = goods + freight;
+          const remainder = total - captured;
+          return { goods: goods + Math.max(0, remainder), freight };
+        }
+        return { goods: total, freight: 0 };
+      };
+
+      // Extra local-freight pulled out of linked supplier bills
+      // (freightAmount column). Added to whatever the matching
+      // freight_quote contributes below.
+      let supplierBillLocalFreight = 0;
+      // Captured per-bill breakdown so the drawer can render the
+      // goods/freight split under each linked bill chip.
+      const linkedSupplierBills: InvoiceMarginRow['linkedSupplierBills'] = [];
+      const captureBill = (m: RawSupplierInvoice, split: { goods: number; freight: number }) => {
+        linkedSupplierBills.push({
+          id: m.id,
+          invoiceNumber: m.invoiceNumber,
+          shipperName: m.shipperName,
+          totalAmount: num(m.totalAmount),
+          goods: split.goods,
+          freight: split.freight,
+          hasBreakdown: num(m.subtotal) > 0 || num(m.freightAmount) > 0,
+          originalDocument: m.originalDocument,
+        });
+      };
+
       // ── Supplier cost ──────────────────────────────────────────
       let supplierCost = 0;
       let supplierSource: InvoiceMarginRow['supplierCostSource'] = 'none';
@@ -345,7 +405,13 @@ export function useInvoiceMargins() {
           const unresolved: string[] = [];
           for (const sid of explicitSI) {
             const si = supplierById.get(sid);
-            if (si) { supplierCost += num(si.totalAmount); supplierLinkIds.push(sid); }
+            if (si) {
+              const split = splitBill(si);
+              supplierCost += split.goods;
+              supplierBillLocalFreight += split.freight;
+              supplierLinkIds.push(sid);
+              captureBill(si, split);
+            }
             else unresolved.push(sid);
           }
           supplierSource = 'supplier_invoice';
@@ -378,7 +444,13 @@ export function useInvoiceMargins() {
           const seen = new Set<string>();
           const unique = matches.filter(m => seen.has(m.id) ? false : (seen.add(m.id), true));
           if (unique.length > 0) {
-            for (const m of unique) { supplierCost += num(m.totalAmount); supplierLinkIds.push(m.id); }
+            for (const m of unique) {
+              const split = splitBill(m);
+              supplierCost += split.goods;
+              supplierBillLocalFreight += split.freight;
+              supplierLinkIds.push(m.id);
+              captureBill(m, split);
+            }
             supplierSource = 'supplier_invoice';
           } else {
             // Diagnose: tell the user WHY no auto-match landed so
@@ -436,7 +508,16 @@ export function useInvoiceMargins() {
             oceanFreightCost += legs.ocean;
             freightLinkIds.push(fq.id);
           }
+          // Also count any local freight extracted from linked
+          // supplier bills (the OCR'd "freightAmount" column).
+          localFreightCost += supplierBillLocalFreight;
           freightCost = localFreightCost + oceanFreightCost;
+          freightSource = 'freight_quote';
+        } else if (supplierBillLocalFreight > 0) {
+          // No freight quote but the supplier bill itemised local
+          // freight — still surface it so the column isn't empty.
+          localFreightCost = supplierBillLocalFreight;
+          freightCost = localFreightCost;
           freightSource = 'freight_quote';
         } else if (unresolvedFQ.length > 0) {
           // eslint-disable-next-line no-console
@@ -501,6 +582,7 @@ export function useInvoiceMargins() {
         supplierCostSource: supplierSource,
         supplierCostLinkIds: supplierLinkIds,
         supplierCostReason: supplierReason,
+        linkedSupplierBills,
         freightCost,
         freightCostSource: freightSource,
         freightCostLinkIds: freightLinkIds,

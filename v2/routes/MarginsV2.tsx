@@ -7,12 +7,14 @@
 // auto-matched links so the user can correct attribution.
 
 import React, { useMemo, useState } from 'react';
-import { Filter, RefreshCw, Save, Loader2, AlertCircle, X as XIcon, Info, Sparkles, Link2, Unlink } from 'lucide-react';
+import { Filter, RefreshCw, Save, Loader2, AlertCircle, X as XIcon, Info, Sparkles, Link2, Unlink, Wand2 } from 'lucide-react';
 import { useInvoiceMargins, upsertInvoiceCosting, type InvoiceMarginRow } from '../queries/useInvoiceMargins';
 import { useToast } from '../primitives/Toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePayables, type Payable } from '../queries/usePayables';
 import { useFreightQuotes, type FreightQuote } from '../queries/useFreightQuotes';
+import { useGeminiExtractTyped } from '../queries/useGeminiExtractTyped';
+import { getSupabaseClient } from '../../services/supabase';
 
 function fmtMoney(n: number, c: string = 'USD'): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 2 }).format(n);
@@ -425,6 +427,7 @@ const MarginEditModal: React.FC<EditProps> = ({ row, onClose, onSaved }) => {
               value={supLinks}
               onChange={setSupLinks}
               currency={row.currency}
+              linkedBills={row.linkedSupplierBills}
             />
             <FieldRow>
               <Field
@@ -553,15 +556,78 @@ const SupplierInvoicePicker: React.FC<{
   value: string;                           // CSV of supplier_invoice ids
   onChange: (csv: string) => void;
   currency: string;
-}> = ({ value, onChange, currency }) => {
+  /** Per-bill breakdown computed by the engine — goods / freight /
+   *  has-breakdown / originalDocument for OCR. Drives the inline
+   *  display + the "OCR breakdown" button on each linked chip. */
+  linkedBills: InvoiceMarginRow['linkedSupplierBills'];
+}> = ({ value, onChange, currency, linkedBills }) => {
   const payables = usePayables();
+  const toast = useToast();
+  const qc = useQueryClient();
   const [search, setSearch] = useState('');
+  const [ocrBusyId, setOcrBusyId] = useState<string | null>(null);
+
+  // Gemini spec — short, focused on goods + freight only.
+  const breakdownSpec = useMemo(() => ({
+    prompt: [
+      'You are extracting cost breakdown from a SUPPLIER INVOICE PDF',
+      'or image. Return ONLY a single JSON object with these keys:',
+      '{',
+      '  "goodsAmount":   number | null,   // subtotal for goods/products only',
+      '  "freightAmount": number | null    // local freight charge line, null when goods-only',
+      '}',
+      'Rules: strip currency symbols, handle Brazilian "1.399.775,00"',
+      'formatting (dot=thousands, comma=decimal). Missing values null.',
+      'Return ONLY valid JSON.',
+    ].join('\n'),
+    normalize: (parsed: Record<string, unknown>) => ({
+      goodsAmount: typeof parsed['goodsAmount'] === 'number' ? parsed['goodsAmount']
+        : parsed['goodsAmount'] != null ? Number(String(parsed['goodsAmount']).replace(/[^\d.-]/g, '')) : null,
+      freightAmount: typeof parsed['freightAmount'] === 'number' ? parsed['freightAmount']
+        : parsed['freightAmount'] != null ? Number(String(parsed['freightAmount']).replace(/[^\d.-]/g, '')) : null,
+    }),
+  }), []);
+  const ocrExtract = useGeminiExtractTyped<{ goodsAmount: number | null; freightAmount: number | null }>(breakdownSpec);
+
   const linkedIds = useMemo(
     () => value.split(',').map(s => s.trim()).filter(Boolean),
     [value],
   );
   const all = payables.data ?? [];
-  const linked = all.filter(p => linkedIds.includes(p.id));
+  // Merge picker's linked-id resolution with the engine's per-bill
+  // breakdown. Fall back to usePayables totals when the engine
+  // breakdown for a given id isn't there yet (race with refetch).
+  const linked = linkedIds.map(id => {
+    const bd = linkedBills.find(b => b.id === id);
+    const p  = all.find(x => x.id === id);
+    if (bd) return {
+      id: bd.id,
+      invoiceNumber: bd.invoiceNumber ?? p?.invoiceNumber ?? id,
+      shipperName: bd.shipperName ?? p?.supplier ?? null,
+      currency: p?.currency ?? currency,
+      totalAmount: bd.totalAmount,
+      goods: bd.goods,
+      freight: bd.freight,
+      hasBreakdown: bd.hasBreakdown,
+      originalDocument: bd.originalDocument,
+    };
+    if (p) return {
+      id: p.id,
+      invoiceNumber: p.invoiceNumber,
+      shipperName: p.supplier ?? null,
+      currency: p.currency,
+      totalAmount: p.totalAmount,
+      goods: p.totalAmount,
+      freight: 0,
+      hasBreakdown: false,
+      originalDocument: null,
+    };
+    return null;
+  }).filter(Boolean) as Array<{
+    id: string; invoiceNumber: string | null; shipperName: string | null;
+    currency: string; totalAmount: number; goods: number; freight: number;
+    hasBreakdown: boolean; originalDocument: string | null;
+  }>;
   // Filter the picker dropdown by search needle on invoice # or
   // supplier name. Already-linked rows are hidden from the
   // dropdown so the user can't double-add.
@@ -585,6 +651,56 @@ const SupplierInvoicePicker: React.FC<{
   }
   const totalLinked = linked.reduce((s, p) => s + p.totalAmount, 0);
 
+  /** Run Gemini against a linked bill's originalDocument to extract
+   *  goods + freight, then persist to invoices_suppliers and force a
+   *  refetch so the breakdown + Margins row update in place. */
+  async function runOcrBreakdown(billId: string) {
+    const bill = linked.find(b => b.id === billId);
+    if (!bill || !bill.originalDocument) return;
+    setOcrBusyId(billId);
+    try {
+      // Convert the stored data URL into a File so the extractor
+      // pipeline (which already handles file inputs) works without
+      // a custom branch.
+      const m = /^data:([^;]+);base64,(.+)$/.exec(bill.originalDocument);
+      if (!m) throw new Error('Stored document is not a data URL.');
+      const mime = m[1];
+      const bin = atob(m[2]);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const ext = mime.startsWith('image/')
+        ? mime.split('/')[1]
+        : mime === 'application/pdf' ? 'pdf' : 'bin';
+      const file = new File([arr], `bill-${billId}.${ext}`, { type: mime });
+      const result = await ocrExtract.mutateAsync({ kind: 'file', file });
+      const goods = result.goodsAmount ?? 0;
+      const freight = result.freightAmount ?? 0;
+      if (goods === 0 && freight === 0) {
+        toast.push({ kind: 'warning', title: 'OCR found nothing', description: 'Gemini returned 0 for both goods and freight. Enter manually on the Payables drawer.' });
+        return;
+      }
+      const sb = getSupabaseClient();
+      const { error } = await sb.from('invoices_suppliers').update({
+        subtotal: goods || null,
+        freightAmount: freight || null,
+      }).eq('id', billId);
+      if (error) throw new Error(error.message);
+      toast.push({
+        kind: 'success',
+        title: 'Breakdown extracted',
+        description: `Goods ${goods.toLocaleString('en-US', { style: 'currency', currency })} · Freight ${freight.toLocaleString('en-US', { style: 'currency', currency })}`,
+      });
+      // Force the margin engine to re-fetch supplier_invoices so
+      // the breakdown lands in the linked chip + the row totals.
+      qc.invalidateQueries({ queryKey: ['margins_supplier_invoices'] });
+      qc.invalidateQueries({ queryKey: ['payables'] });
+    } catch (e: any) {
+      toast.push({ kind: 'error', title: 'OCR failed', description: e?.message });
+    } finally {
+      setOcrBusyId(null);
+    }
+  }
+
   return (
     <div className="space-y-2">
       <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">Linked supplier bills</div>
@@ -596,21 +712,55 @@ const SupplierInvoicePicker: React.FC<{
       ) : (
         <div className="space-y-1">
           {linked.map(p => (
-            <div key={p.id} className="flex items-center gap-2 rounded border border-[#1f1f1f] bg-[#0f0f0f] px-2.5 py-1.5">
-              <Link2 size={11} className="text-emerald-400 shrink-0" />
-              <span className="text-[11.5px] text-slate-200 font-mono shrink-0">{p.invoiceNumber}</span>
-              <span className="text-[11.5px] text-slate-400 truncate flex-1">{p.supplier ?? '—'}</span>
-              <span className="text-[11.5px] text-slate-300 font-mono tabular-nums">
-                {new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency, maximumFractionDigits: 2 }).format(p.totalAmount)}
-              </span>
-              <button
-                type="button"
-                onClick={() => removeId(p.id)}
-                title="Unlink"
-                className="text-slate-500 hover:text-red-400"
-              >
-                <Unlink size={11} />
-              </button>
+            <div key={p.id} className="rounded border border-[#1f1f1f] bg-[#0f0f0f] px-2.5 py-1.5 space-y-1">
+              <div className="flex items-center gap-2">
+                <Link2 size={11} className="text-emerald-400 shrink-0" />
+                <span className="text-[11.5px] text-slate-200 font-mono shrink-0">{p.invoiceNumber}</span>
+                <span className="text-[11.5px] text-slate-400 truncate flex-1">{p.shipperName ?? '—'}</span>
+                <span className="text-[11.5px] text-slate-300 font-mono tabular-nums">
+                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency, maximumFractionDigits: 2 }).format(p.totalAmount)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeId(p.id)}
+                  title="Unlink"
+                  className="text-slate-500 hover:text-red-400"
+                >
+                  <Unlink size={11} />
+                </button>
+              </div>
+              {/* Breakdown row — goods + freight pulled from the
+                  bill's OCR'd fields (subtotal + freightAmount).
+                  When the bill doesn't have them yet, offer an
+                  "OCR breakdown" button that runs Gemini against
+                  the bill's originalDocument. */}
+              {p.hasBreakdown ? (
+                <div className="flex items-center gap-3 text-[10.5px] pl-4 text-slate-500 tabular-nums">
+                  <span>Goods: <span className="text-emerald-300 font-mono">{new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency, maximumFractionDigits: 2 }).format(p.goods)}</span></span>
+                  <span>·</span>
+                  <span>Local freight: <span className="text-emerald-300 font-mono">{new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency, maximumFractionDigits: 2 }).format(p.freight)}</span></span>
+                </div>
+              ) : p.originalDocument ? (
+                <div className="flex items-center justify-between gap-2 pl-4">
+                  <span className="text-[10.5px] text-slate-500 italic">
+                    No goods / freight breakdown on this bill yet.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => runOcrBreakdown(p.id)}
+                    disabled={ocrBusyId === p.id}
+                    className="text-[10.5px] inline-flex items-center gap-1 px-2 py-0.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50"
+                    title="Run Gemini against the bill's original PDF to extract goods + freight"
+                  >
+                    {ocrBusyId === p.id ? <Loader2 size={10} className="animate-spin" /> : <Wand2 size={10} />}
+                    {ocrBusyId === p.id ? 'OCR…' : 'OCR breakdown'}
+                  </button>
+                </div>
+              ) : (
+                <div className="text-[10.5px] text-slate-600 italic pl-4">
+                  No source document on file — open the bill in Payables and attach one to enable OCR.
+                </div>
+              )}
             </div>
           ))}
           {linked.length > 1 && (
