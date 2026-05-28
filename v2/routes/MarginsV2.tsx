@@ -7,10 +7,12 @@
 // auto-matched links so the user can correct attribution.
 
 import React, { useMemo, useState } from 'react';
-import { Filter, RefreshCw, Save, Loader2, AlertCircle, X as XIcon, Info, Sparkles } from 'lucide-react';
+import { Filter, RefreshCw, Save, Loader2, AlertCircle, X as XIcon, Info, Sparkles, Link2, Unlink } from 'lucide-react';
 import { useInvoiceMargins, upsertInvoiceCosting, type InvoiceMarginRow } from '../queries/useInvoiceMargins';
 import { useToast } from '../primitives/Toast';
 import { useQueryClient } from '@tanstack/react-query';
+import { usePayables, type Payable } from '../queries/usePayables';
+import { useFreightQuotes, type FreightQuote } from '../queries/useFreightQuotes';
 
 function fmtMoney(n: number, c: string = 'USD'): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 2 }).format(n);
@@ -397,33 +399,47 @@ const MarginEditModal: React.FC<EditProps> = ({ row, onClose, onSaved }) => {
         </div>
 
         <div className="px-5 py-4 overflow-y-auto space-y-4 text-[12.5px]">
-          {/* Supplier override */}
+          {/* Supplier override + picker */}
           <Section
             title="Supplier cost"
             hint={row.supplierCost > 0
               ? `Auto: ${fmtMoney(row.supplierCost, row.currency)} (${row.supplierCostSource})`
-              : (row.supplierCostReason || 'No auto-match. Set an override below.')}
+              : (row.supplierCostReason || 'No auto-match. Pick a supplier bill below or set an override.')}
           >
+            <SupplierInvoicePicker
+              value={supLinks}
+              onChange={setSupLinks}
+              currency={row.currency}
+            />
             <FieldRow>
-              <Field label="Override $" value={supOverride} onChange={setSupOverride} placeholder={`leave blank to use ${fmtMoney(row.supplierCost, row.currency)}`} />
-            </FieldRow>
-            <FieldRow>
-              <Field label="Linked supplier-invoice IDs (CSV)" value={supLinks} onChange={setSupLinks} placeholder="auto-matched IDs prefilled" wide />
+              <Field
+                label="Override $ (skips the link above)"
+                value={supOverride}
+                onChange={setSupOverride}
+                placeholder={`leave blank to use ${fmtMoney(row.supplierCost, row.currency)}`}
+              />
             </FieldRow>
           </Section>
 
-          {/* Freight override */}
+          {/* Freight override + picker */}
           <Section
             title="Freight cost"
             hint={row.freightCost > 0
               ? `Auto: ${fmtMoney(row.freightCost, row.currency)} (${row.freightCostSource})`
-              : (row.freightCostReason || 'No auto-match. Set an override below.')}
+              : (row.freightCostReason || 'No auto-match. Pick a freight quote below or set an override.')}
           >
+            <FreightQuotePicker
+              value={frLinks}
+              onChange={setFrLinks}
+              currency={row.currency}
+            />
             <FieldRow>
-              <Field label="Override $" value={frOverride} onChange={setFrOverride} placeholder={`leave blank to use ${fmtMoney(row.freightCost, row.currency)}`} />
-            </FieldRow>
-            <FieldRow>
-              <Field label="Linked freight-quote IDs (CSV)" value={frLinks} onChange={setFrLinks} placeholder="auto-matched IDs prefilled" wide />
+              <Field
+                label="Override $ (skips the link above)"
+                value={frOverride}
+                onChange={setFrOverride}
+                placeholder={`leave blank to use ${fmtMoney(row.freightCost, row.currency)}`}
+              />
             </FieldRow>
           </Section>
 
@@ -509,5 +525,222 @@ const Field: React.FC<{ label: string; value: string; onChange: (v: string) => v
     />
   </div>
 );
+
+// ── Pickers ──────────────────────────────────────────────────────
+//
+// Both pickers convert between a CSV-of-ids (the format the
+// invoice_costings table stores) and a multi-select UX. For v1 the
+// "select" is a single-row picker — adding additional rows updates
+// the CSV to comma-join the ids. Each row shows the picked
+// document's totals + a remove button.
+
+const SupplierInvoicePicker: React.FC<{
+  value: string;                           // CSV of supplier_invoice ids
+  onChange: (csv: string) => void;
+  currency: string;
+}> = ({ value, onChange, currency }) => {
+  const payables = usePayables();
+  const [search, setSearch] = useState('');
+  const linkedIds = useMemo(
+    () => value.split(',').map(s => s.trim()).filter(Boolean),
+    [value],
+  );
+  const all = payables.data ?? [];
+  const linked = all.filter(p => linkedIds.includes(p.id));
+  // Filter the picker dropdown by search needle on invoice # or
+  // supplier name. Already-linked rows are hidden from the
+  // dropdown so the user can't double-add.
+  const linkedSet = new Set(linkedIds);
+  const available = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return all
+      .filter(p => !linkedSet.has(p.id))
+      .filter(p => !needle
+        || p.invoiceNumber.toLowerCase().includes(needle)
+        || (p.supplier ?? '').toLowerCase().includes(needle));
+  }, [all, linkedSet, search]);
+
+  function addId(id: string) {
+    if (linkedIds.includes(id)) return;
+    onChange([...linkedIds, id].join(','));
+    setSearch('');
+  }
+  function removeId(id: string) {
+    onChange(linkedIds.filter(x => x !== id).join(','));
+  }
+  const totalLinked = linked.reduce((s, p) => s + p.totalAmount, 0);
+
+  return (
+    <div className="space-y-2">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">Linked supplier bills</div>
+      {/* Linked rows */}
+      {linked.length === 0 ? (
+        <div className="rounded border border-dashed border-[#1f1f1f] bg-[#0a0a0a] px-3 py-2 text-[11.5px] text-slate-500 italic">
+          {payables.isLoading ? 'Loading payables…' : 'No bills linked. Pick one below to attribute its total as supplier cost.'}
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {linked.map(p => (
+            <div key={p.id} className="flex items-center gap-2 rounded border border-[#1f1f1f] bg-[#0f0f0f] px-2.5 py-1.5">
+              <Link2 size={11} className="text-emerald-400 shrink-0" />
+              <span className="text-[11.5px] text-slate-200 font-mono shrink-0">{p.invoiceNumber}</span>
+              <span className="text-[11.5px] text-slate-400 truncate flex-1">{p.supplier ?? '—'}</span>
+              <span className="text-[11.5px] text-slate-300 font-mono tabular-nums">
+                {new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency, maximumFractionDigits: 2 }).format(p.totalAmount)}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeId(p.id)}
+                title="Unlink"
+                className="text-slate-500 hover:text-red-400"
+              >
+                <Unlink size={11} />
+              </button>
+            </div>
+          ))}
+          {linked.length > 1 && (
+            <div className="text-[10.5px] text-slate-500 text-right font-mono tabular-nums px-2">
+              Total linked: {new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(totalLinked)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Search + dropdown picker */}
+      <div className="rounded border border-[#1f1f1f] bg-[#0a0a0a] p-1.5">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search bill # or supplier…"
+          className="w-full px-2 py-1 text-[11.5px] bg-transparent text-slate-200 placeholder:text-slate-600 focus:outline-none"
+        />
+        {search.trim() && (
+          <div className="max-h-40 overflow-y-auto mt-1 border-t border-[#1f1f1f] pt-1">
+            {available.length === 0 ? (
+              <div className="px-2 py-1.5 text-[11px] text-slate-600 italic">No bills match.</div>
+            ) : available.slice(0, 12).map(p => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => addId(p.id)}
+                className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#141414] text-[11.5px]"
+              >
+                <span className="text-slate-200 font-mono shrink-0">{p.invoiceNumber}</span>
+                <span className="text-slate-400 truncate flex-1">{p.supplier ?? '—'}</span>
+                <span className="text-slate-300 font-mono tabular-nums">
+                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency, maximumFractionDigits: 2 }).format(p.totalAmount)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const FreightQuotePicker: React.FC<{
+  value: string;
+  onChange: (csv: string) => void;
+  currency: string;
+}> = ({ value, onChange, currency }) => {
+  const quotes = useFreightQuotes();
+  const [search, setSearch] = useState('');
+  const linkedIds = useMemo(
+    () => value.split(',').map(s => s.trim()).filter(Boolean),
+    [value],
+  );
+  const all = quotes.data ?? [];
+  const linked = all.filter(q => linkedIds.includes(q.id));
+  const linkedSet = new Set(linkedIds);
+  const available = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return all
+      .filter(q => !linkedSet.has(q.id))
+      .filter(q => !needle
+        || (q.agentName ?? '').toLowerCase().includes(needle)
+        || (q.carrier ?? '').toLowerCase().includes(needle)
+        || (q.originPort ?? '').toLowerCase().includes(needle)
+        || (q.destinationPort ?? '').toLowerCase().includes(needle));
+  }, [all, linkedSet, search]);
+
+  function addId(id: string) {
+    if (linkedIds.includes(id)) return;
+    onChange([...linkedIds, id].join(','));
+    setSearch('');
+  }
+  function removeId(id: string) {
+    onChange(linkedIds.filter(x => x !== id).join(','));
+  }
+  const totalLinked = linked.reduce((s, q) => s + (q.rate ?? 0), 0);
+  const labelFor = (q: FreightQuote) =>
+    `${q.agentName ?? q.carrier ?? '—'} · ${q.originPortCode ?? q.originPort ?? '—'} → ${q.destinationPortCode ?? q.destinationPort ?? '—'}`;
+
+  return (
+    <div className="space-y-2">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">Linked freight quotes</div>
+      {linked.length === 0 ? (
+        <div className="rounded border border-dashed border-[#1f1f1f] bg-[#0a0a0a] px-3 py-2 text-[11.5px] text-slate-500 italic">
+          {quotes.isLoading ? 'Loading freight quotes…' : 'No quotes linked. Pick one below to attribute its rate as freight cost.'}
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {linked.map(q => (
+            <div key={q.id} className="flex items-center gap-2 rounded border border-[#1f1f1f] bg-[#0f0f0f] px-2.5 py-1.5">
+              <Link2 size={11} className="text-emerald-400 shrink-0" />
+              <span className="text-[11.5px] text-slate-200 truncate flex-1">{labelFor(q)}</span>
+              <span className="text-[11.5px] text-slate-300 font-mono tabular-nums shrink-0">
+                {new Intl.NumberFormat('en-US', { style: 'currency', currency: q.currency, maximumFractionDigits: 2 }).format(q.rate ?? 0)}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeId(q.id)}
+                title="Unlink"
+                className="text-slate-500 hover:text-red-400"
+              >
+                <Unlink size={11} />
+              </button>
+            </div>
+          ))}
+          {linked.length > 1 && (
+            <div className="text-[10.5px] text-slate-500 text-right font-mono tabular-nums px-2">
+              Total linked: {new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(totalLinked)}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="rounded border border-[#1f1f1f] bg-[#0a0a0a] p-1.5">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search agent / carrier / port…"
+          className="w-full px-2 py-1 text-[11.5px] bg-transparent text-slate-200 placeholder:text-slate-600 focus:outline-none"
+        />
+        {search.trim() && (
+          <div className="max-h-40 overflow-y-auto mt-1 border-t border-[#1f1f1f] pt-1">
+            {available.length === 0 ? (
+              <div className="px-2 py-1.5 text-[11px] text-slate-600 italic">No quotes match.</div>
+            ) : available.slice(0, 12).map(q => (
+              <button
+                key={q.id}
+                type="button"
+                onClick={() => addId(q.id)}
+                className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#141414] text-[11.5px]"
+              >
+                <span className="text-slate-200 truncate flex-1">{labelFor(q)}</span>
+                <span className="text-slate-300 font-mono tabular-nums shrink-0">
+                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: q.currency, maximumFractionDigits: 2 }).format(q.rate ?? 0)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export default MarginsV2;
