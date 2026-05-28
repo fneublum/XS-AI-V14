@@ -63,7 +63,8 @@ export function generateCooPdf(
 
   const company = ctx.company;
   const companyName    = company?.name    || 'EC4 ENTERPRISES LLC';
-  const companyTagline = (company as any)?.tagline || 'THREE STRANDS ARE STRONGER';
+  // Tagline removed (2026-05-27 user feedback) — the COO header reads
+  // cleaner without the marketing line under the company name.
   const companyAddress = company?.address || '112 Bartran Oaks Walk 600010';
   const companyCity    = `${company?.city || 'St Johns'}, ${company?.state || 'FL'} ${company?.zip || '32260'} ${company?.country || 'US'}`;
   const companyPhone   = company?.phone   || '';
@@ -90,9 +91,13 @@ export function generateCooPdf(
     ? [c.location, c.city, c.state, c.zip, c.country].filter(Boolean).join(', ')
     : '';
 
-  // ─── HEADER: logo + "CERTIFICATE OF ORIGIN" title ─────────────
-  // Logo box left; title right-aligned. Title sits two lines (visual
-  // match for the template: "CERTIFICATE" / "OF ORIGIN").
+  // ─── HEADER: logo top-left + centered single-line title ───────
+  // Logo box sized at 54×54mm (previously 32×32mm — bumped ~70% per
+  // 2026-05-27 user feedback). Title "CERTIFICATE OF ORIGIN" sits
+  // on a single line, horizontally centered on the page, vertically
+  // aligned with the logo's vertical midpoint.
+  const logoBoxMax = 54;
+  let logoH = 0;
   if (ctx.logoUrl) {
     try {
       let format = 'PNG';
@@ -101,31 +106,29 @@ export function generateCooPdf(
         if (m) { format = m[1].toUpperCase(); if (format === 'JPG') format = 'JPEG'; }
       }
       const props = doc.getImageProperties(ctx.logoUrl);
-      const maxW = 32, maxH = 32;
       let w = props.width, h = props.height;
-      const r = Math.min(maxW / w, maxH / h);
+      const r = Math.min(logoBoxMax / w, logoBoxMax / h);
       w *= r; h *= r;
       doc.addImage(ctx.logoUrl, format, marginX, 12, w, h);
+      logoH = h;
     } catch { /* fall through */ }
   }
 
   doc.setFontSize(22);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(DARK);
-  doc.text('CERTIFICATE', pageW - marginX, 22, { align: 'right' });
-  doc.text('OF ORIGIN',   pageW - marginX, 32, { align: 'right' });
+  // Vertical center of the logo block — keeps the title looking
+  // aligned with the artwork whatever the actual logo aspect ratio.
+  const titleY = 12 + (logoH || logoBoxMax) / 2 + 4;
+  doc.text('CERTIFICATE OF ORIGIN', pageW / 2, titleY, { align: 'center' });
 
   // ─── COMPANY BLOCK (below logo, top-left) ─────────────────────
-  let y = 52;
+  // Start below the (now larger) logo box, with a small gutter.
+  let y = 12 + (logoH || logoBoxMax) + 6;
   doc.setFontSize(13);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(DARK);
   doc.text(latin1Safe(companyName), marginX, y);
-  y += 5;
-  doc.setFontSize(7.5);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(SUB);
-  doc.text(latin1Safe(companyTagline), marginX, y);
   y += 5;
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
@@ -353,7 +356,9 @@ export function generateCooPdf(
   doc.setTextColor(DARK);
   doc.text(paraLines, marginX + 3, paraY);
 
-  // Signature line + stamp on the left
+  // Signature line + stamp on the left. The company-name caption that
+  // used to sit below the line was removed (2026-05-27 user feedback)
+  // — the signer's printed name on the right column already covers it.
   const sigY = y + boxDeclH - 18;
   doc.setLineWidth(0.4);
   doc.setDrawColor('#222222');
@@ -362,10 +367,6 @@ export function generateCooPdf(
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(DARK);
   doc.text('Authorized Signature:', marginX + 3, sigY - 3);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(SUB);
-  doc.text(companyName, marginX + 3, sigY + 4);
 
   // EC4 stamp graphic above the signature line when available.
   if (ctx.stampUrl) {
