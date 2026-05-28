@@ -9,8 +9,11 @@
 //     customerPo == sales.soNumber), fall back to purchase_orders
 //     when the supplier bill hasn't arrived yet. Per-user choice
 //     in the design doc — "Both, prefer supplier invoice".
-//   • Freight cost: sum of freight_quotes where bookingNumber ==
-//     sales.bookingNumber.
+//   • Freight cost: NO auto-attribution in v1. The freight_quotes
+//     table is snake_case end-to-end and carries no bookingNumber
+//     column, so there's no reliable join key from a sales invoice
+//     to its freight cost. Users enter freight via the override
+//     drawer (freightCostOverride) until we wire a real bridge.
 //   • Other (duty / brokerage / insurance / bank fees / misc):
 //     entered manually in invoice_costings.
 //
@@ -179,20 +182,13 @@ export function useInvoiceMargins() {
     },
   );
 
-  const fqsQ = useSupabaseQuery<RawFQ[]>(
-    ['margins_freight_quotes', currentCompanyId],
-    async () => {
-      const sb = getSupabaseClient();
-      const { data, error } = await scopeByCompany(
-        sb.from('freight_quotes')
-          .select('id, "companyId", rate, "bookingNumber"')
-          .limit(2000),
-        currentCompanyId,
-      );
-      if (error) throw new Error(error.message);
-      return (data as RawFQ[] | null) ?? [];
-    },
-  );
+  // Freight-quotes auto-fetch removed: the live freight_quotes
+  // table is snake_case and has no bookingNumber, so there's no
+  // viable join key right now. Keep a stub query that always
+  // resolves to [] so the rest of the engine doesn't have to
+  // change shape; the override drawer is the only way to set
+  // freight cost until we add a real link.
+  const fqsQ = { data: [] as RawFQ[], isLoading: false, error: null as Error | null, refetch: () => {} };
 
   const costingsQ = useSupabaseQuery<RawCosting[]>(
     ['margins_costings', currentCompanyId],
@@ -232,14 +228,10 @@ export function useInvoiceMargins() {
     const poById = new Map<string, RawPO>();
     for (const po of posQ.data) poById.set(po.id, po);
 
-    // Freight quotes by booking
-    const fqByBooking = new Map<string, RawFQ[]>();
+    // Freight-quote map (id-only). Booking-keyed lookup dropped —
+    // the live freight_quotes table doesn't carry bookingNumber.
     const fqById = new Map<string, RawFQ>();
-    for (const fq of fqsQ.data) {
-      fqById.set(fq.id, fq);
-      const b = normalize(fq.bookingNumber);
-      if (b) (fqByBooking.get(b) ?? fqByBooking.set(b, []).get(b)!).push(fq);
-    }
+    for (const fq of fqsQ.data) fqById.set(fq.id, fq);
 
     // Costings by invoiceId
     const costingByInvoice = new Map<string, RawCosting>();
@@ -294,6 +286,9 @@ export function useInvoiceMargins() {
       }
 
       // ── Freight cost ───────────────────────────────────────────
+      // No auto-attribution today (see fqsQ comment). Cost comes
+      // from the override, or from explicit freight_quote ids
+      // when the user has manually linked them via the drawer.
       let freightCost = 0;
       let freightSource: InvoiceMarginRow['freightCostSource'] = 'none';
       let freightLinkIds: string[] = [];
@@ -308,14 +303,7 @@ export function useInvoiceMargins() {
             const fq = fqById.get(fid);
             if (fq) { freightCost += num(fq.rate); freightLinkIds.push(fid); }
           }
-          freightSource = 'freight_quote';
-        } else {
-          const bkKey = normalize(inv.bookingNumber);
-          const matches = bkKey ? (fqByBooking.get(bkKey) ?? []) : [];
-          if (matches.length > 0) {
-            for (const fq of matches) { freightCost += num(fq.rate); freightLinkIds.push(fq.id); }
-            freightSource = 'freight_quote';
-          }
+          if (freightLinkIds.length > 0) freightSource = 'freight_quote';
         }
       }
 
