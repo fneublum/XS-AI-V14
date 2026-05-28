@@ -114,9 +114,15 @@ interface Raw {
 const num = (v: number | string | null | undefined): number | null =>
   v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 
-function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
-  return companyId === 'ALL' ? q : (q.eq('company_id', companyId) as Q);
-}
+// Freight quotes are deliberately NOT company-scoped — per user
+// directive (2026-05-28) all freight quotes are visible to every
+// company in the workspace. Reasoning: freight carriers/agents serve
+// every tenant and EC4 vs GENRYO may both want to book against the
+// same shipping line, so siloing the quote pool would force the ops
+// team to re-enter the same data per company. The currentCompanyId
+// is still passed into the query key so React Query keeps separate
+// caches per company (cheap), but the DB query no longer filters by
+// company_id.
 
 /**
  * agentName can be a single string or an array — when the logged-in
@@ -136,13 +142,10 @@ export function useFreightQuotes(search?: string, agentName?: string | string[])
     ['freightQuotes', currentCompanyId, needle, agents.join('|')],
     async () => {
       const supabase = getSupabaseClient();
-      let q = scopeByCompany(
-        supabase.from('freight_quotes')
-          .select('*')
-          .order('valid_until', { ascending: false, nullsFirst: false })
-          .limit(200),
-        currentCompanyId,
-      );
+      let q = supabase.from('freight_quotes')
+        .select('*')
+        .order('valid_until', { ascending: false, nullsFirst: false })
+        .limit(200);
       // Whitespace-tolerant agent matching. Real-world rows have
       // mismatched trailing spaces — `cargo_agents.name` is stored as
       // "KAPPALOG " while quotes inserted by the V2 RFQ modal trim the

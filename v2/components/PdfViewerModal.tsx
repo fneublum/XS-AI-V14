@@ -129,9 +129,14 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   };
 
   const onPickFile = () => fileInputRef.current?.click();
-  const onFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
+  // Drop-zone state for the empty-state drag target. Reset on
+  // drag-leave so the visual ring stays accurate.
+  const [dragOver, setDragOver] = useState(false);
+
+  /** Read + persist a chosen / dropped file. Shared by the hidden
+   *  file input AND the drag-and-drop handler so the two entry
+   *  points have identical behaviour. */
+  const ingestFile = async (file: File | null | undefined) => {
     if (!file) return;
     if (!onUpload) return;
     if (file.type !== 'application/pdf') {
@@ -157,6 +162,17 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     } finally {
       setUploadBusy(false);
     }
+  };
+  const onFileChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    ingestFile(file);
+  };
+  const onDropFile = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    ingestFile(file);
   };
 
   const onSendEmail = async () => {
@@ -330,17 +346,29 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
               Loading PDF…
             </div>
           ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-              <FileText size={36} className="text-slate-600" />
+            // Empty state — drop target when onUpload is provided.
+            // Both the click button AND a full drag-and-drop hit the
+            // same ingestFile() so the behaviour is identical.
+            <div
+              onDragOver={onUpload ? (e) => { e.preventDefault(); setDragOver(true); } : undefined}
+              onDragLeave={onUpload ? () => setDragOver(false) : undefined}
+              onDrop={onUpload ? onDropFile : undefined}
+              className={
+                'flex h-full flex-col items-center justify-center gap-3 px-6 text-center transition-colors ' +
+                (dragOver ? 'bg-indigo-500/10 ring-2 ring-inset ring-indigo-500/60' : '')
+              }
+            >
+              <FileText size={36} className={dragOver ? 'text-indigo-300' : 'text-slate-600'} />
               <div className="text-[13px] text-slate-300">
-                No PDF attached to this record yet.
+                {dragOver
+                  ? 'Drop to attach…'
+                  : 'No PDF attached to this record yet.'}
               </div>
-              {onUpload && (
+              {onUpload && !dragOver && (
                 <>
                   <div className="text-[11.5px] text-slate-500 max-w-[360px]">
-                    Attach the original document (carrier booking confirmation,
-                    signed PDF, etc). Saved on the record so the next click
-                    opens it directly.
+                    Drag a PDF here, or click below to pick a file. Saved on
+                    the record so the next click opens it directly.
                   </div>
                   <button
                     type="button"
