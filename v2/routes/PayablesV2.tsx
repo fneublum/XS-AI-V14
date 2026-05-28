@@ -506,13 +506,16 @@ const PayablesV2: React.FC = () => {
             setViewOriginalRow(r);
           }}
           title={r.originalDocument
-            ? "View original invoice file that was OCR'd to create this record"
+            ? "Invoice file on record — click to view"
             : "No invoice file on record — click to attach one"}
+          // Green chip when the original invoice file is on record;
+          // red chip when missing so the user can see at a glance
+          // which bills still need their source document uploaded.
           className={
             'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold border transition-colors ' +
             (r.originalDocument
-              ? 'bg-slate-500/10 text-slate-300 border-slate-500/20 hover:bg-slate-500/20'
-              : 'bg-transparent text-slate-500 border-slate-700/40 hover:bg-slate-700/20 hover:text-slate-300')
+              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+              : 'bg-red-500/10 text-red-300 border-red-500/30 hover:bg-red-500/20')
           }
         >
           <FileText size={10} /> Invoice
