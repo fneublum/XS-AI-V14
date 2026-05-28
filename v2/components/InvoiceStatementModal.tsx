@@ -57,9 +57,17 @@ export const InvoiceStatementModal: React.FC<Props> = ({
       )
       .map(a => ({ txn: t, alloc: a }))
   );
+  // `paid` is the AR/AP balance view's authoritative figure passed
+  // in by the caller. The live ledger sum (`fromLedger`) reads from
+  // transactions+allocations directly — when it's larger than the
+  // prop, the view is just stale (typical right after a save: new
+  // allocations exist but the view query hasn't refetched). Trust
+  // the larger of the two so TOTAL PAID and Balance match the
+  // receipts list the user is staring at.
   const fromLedger = rows.reduce((s, x) => s + x.alloc.amount, 0);
-  const unaccounted = Math.max(0, paid - fromLedger);
-  const balance = Math.max(0, invoiceTotal - paid);
+  const effectivePaid = Math.max(paid, fromLedger);
+  const unaccounted = Math.max(0, effectivePaid - fromLedger);
+  const balance = Math.max(0, invoiceTotal - effectivePaid);
   const fullySettled = balance < 0.005;
 
   return (
@@ -177,7 +185,7 @@ export const InvoiceStatementModal: React.FC<Props> = ({
                   )}
                   <div className="flex items-center justify-between py-1 mt-1 border-t border-dashed border-[#1a1a1a] text-slate-400">
                     <span className="text-[10.5px] uppercase tracking-wider">Total paid</span>
-                    <span className="font-mono tabular-nums">−{fmtMoney(paid, currency)}</span>
+                    <span className="font-mono tabular-nums">−{fmtMoney(effectivePaid, currency)}</span>
                   </div>
                 </>
               ) : (

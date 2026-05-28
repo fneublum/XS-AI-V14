@@ -820,6 +820,13 @@ const PayablesV2: React.FC = () => {
                     title: `${validPayments.length} prior payment${validPayments.length === 1 ? '' : 's'} linked`,
                     description: 'OCR\'d payments allocated to the new bill.',
                   });
+                  // Refresh both the bills list AND the AP balance
+                  // view so the row's Paid / Balance columns AND the
+                  // Statement modal reflect the auto-linked payments
+                  // immediately (rather than waiting for the next
+                  // background refetch).
+                  ap.refetch();
+                  pay.refetch();
                 } catch (e: any) {
                   toast.push({ kind: 'warning', title: 'Payments not linked', description: e?.message ?? 'Bill saved, but the OCR\'d payments need to be re-recorded manually.' });
                 }
