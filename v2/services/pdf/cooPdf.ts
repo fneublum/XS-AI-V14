@@ -92,11 +92,13 @@ export function generateCooPdf(
     : '';
 
   // ─── HEADER: logo top-left + centered single-line title ───────
-  // Logo box sized at 54×54mm (previously 32×32mm — bumped ~70% per
-  // 2026-05-27 user feedback). Title "CERTIFICATE OF ORIGIN" sits
-  // on a single line, horizontally centered on the page, vertically
-  // aligned with the logo's vertical midpoint.
-  const logoBoxMax = 54;
+  // Logo box sized at 38×38mm. Iteration history: 32mm (original) →
+  // 54mm (+70% per 2026-05-27 user request) → 38mm (-30% later same
+  // day because the wider logo was crashing into the centered title
+  // and the company-info block underneath). 38mm is the sweet spot
+  // where the wordmark stays readable but stops fighting the
+  // surrounding type.
+  const logoBoxMax = 38;
   let logoH = 0;
   if (ctx.logoUrl) {
     try {
