@@ -305,11 +305,23 @@ export function useInvoiceMargins() {
         const explicitSI = csvToIds(costing?.supplierInvoiceIds ?? null);
         const explicitPO = csvToIds(costing?.purchaseOrderIds ?? null);
         if (explicitSI.length > 0) {
+          const unresolved: string[] = [];
           for (const sid of explicitSI) {
             const si = supplierById.get(sid);
             if (si) { supplierCost += num(si.totalAmount); supplierLinkIds.push(sid); }
+            else unresolved.push(sid);
           }
           supplierSource = 'supplier_invoice';
+          if (unresolved.length > 0 && supplierCost === 0) {
+            // Linked id exists in the costing row but the bill
+            // isn't in our supplier_invoices fetch — usually a
+            // stale-cache case after a fresh save. The MarginEditModal
+            // now invalidates these queries on save, but log a
+            // breadcrumb here so any future regression is visible.
+            // eslint-disable-next-line no-console
+            console.warn('[useInvoiceMargins] linked supplier-invoice ids not in scope:', unresolved, 'for invoice', inv.id);
+            supplierReason = `Linked supplier bill ${unresolved.join(', ')} not in current scope. Reload the page or pick another bill.`;
+          }
         } else if (explicitPO.length > 0) {
           for (const pid of explicitPO) {
             const po = poById.get(pid);
@@ -369,10 +381,12 @@ export function useInvoiceMargins() {
       } else {
         const explicitFQ = csvToIds(costing?.freightQuoteIds ?? null);
         const matches: RawFQ[] = [];
+        const unresolvedFQ: string[] = [];
         if (explicitFQ.length > 0) {
           for (const fid of explicitFQ) {
             const fq = fqById.get(fid);
             if (fq) matches.push(fq);
+            else unresolvedFQ.push(fid);
           }
         } else {
           const bkKey = normalize(inv.bookingNumber);
@@ -387,6 +401,10 @@ export function useInvoiceMargins() {
           }
           freightCost = localFreightCost + oceanFreightCost;
           freightSource = 'freight_quote';
+        } else if (unresolvedFQ.length > 0) {
+          // eslint-disable-next-line no-console
+          console.warn('[useInvoiceMargins] linked freight-quote ids not in scope:', unresolvedFQ, 'for invoice', inv.id);
+          freightReason = `Linked freight quote ${unresolvedFQ.join(', ')} not in current scope. Reload the page or pick another quote.`;
         } else {
           if (!inv.bookingNumber) {
             freightReason = 'Invoice has no Booking# — auto-match needs it. Override manually via the row drawer.';

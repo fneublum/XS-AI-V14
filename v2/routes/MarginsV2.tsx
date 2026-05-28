@@ -372,7 +372,19 @@ const MarginEditModal: React.FC<EditProps> = ({ row, onClose, onSaved }) => {
         freightQuoteIds:    frLinks.trim() || null,
       });
       toast.push({ kind: 'success', title: 'Costing saved' });
-      qc.invalidateQueries({ queryKey: ['margins_costings'] });
+      // Invalidate ALL margin engine sub-queries — not just
+      // costings. Without refetching supplier_invoices /
+      // freight_quotes, a newly-created bill or quote stays out
+      // of the engine's id map, and the just-linked CSV id will
+      // resolve to "not found" → cost stays at 0 even though
+      // the save persisted correctly.
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['margins_costings'] }),
+        qc.invalidateQueries({ queryKey: ['margins_supplier_invoices'] }),
+        qc.invalidateQueries({ queryKey: ['margins_freight_quotes'] }),
+        qc.invalidateQueries({ queryKey: ['margins_invoices'] }),
+        qc.invalidateQueries({ queryKey: ['margins_purchase_orders'] }),
+      ]);
       onSaved();
     } catch (e: any) {
       toast.push({ kind: 'error', title: 'Save failed', description: e?.message });
