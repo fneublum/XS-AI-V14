@@ -67,12 +67,18 @@ export interface InvoiceMarginRow {
   supplierCost: number;
   supplierCostSource: 'supplier_invoice' | 'purchase_order' | 'override' | 'none';
   supplierCostLinkIds: string[];   // ids feeding supplierCost (for the drawer)
+  /** Human-readable reason when supplierCost = 0 — surfaced as the
+   *  "—" cell tooltip so the user understands WHY no match landed
+   *  ("invoice has no SO#", "no supplier bill carries this SO#",
+   *  "override set to 0", etc.). Empty string when cost > 0. */
+  supplierCostReason: string;
 
   /** Total freight = local + ocean (or override). The drawer's
    *  freightCostOverride still drives this single combined figure. */
   freightCost: number;
   freightCostSource: 'freight_quote' | 'override' | 'none';
   freightCostLinkIds: string[];
+  freightCostReason: string;
   /** Split of freightCost into the two legs. When the freight quote
    *  doesn't itemise (only `rate` filled), the whole amount goes
    *  into oceanFreightCost. Zero when freightCostSource = 'none'. */
@@ -288,10 +294,12 @@ export function useInvoiceMargins() {
       let supplierCost = 0;
       let supplierSource: InvoiceMarginRow['supplierCostSource'] = 'none';
       let supplierLinkIds: string[] = [];
+      let supplierReason = '';
 
       if (costing?.supplierCostOverride != null) {
         supplierCost = num(costing.supplierCostOverride);
         supplierSource = 'override';
+        if (supplierCost === 0) supplierReason = 'Override set to $0.';
       } else {
         // Manual link wins over auto-match.
         const explicitSI = csvToIds(costing?.supplierInvoiceIds ?? null);
@@ -323,6 +331,18 @@ export function useInvoiceMargins() {
           if (unique.length > 0) {
             for (const m of unique) { supplierCost += num(m.totalAmount); supplierLinkIds.push(m.id); }
             supplierSource = 'supplier_invoice';
+          } else {
+            // Diagnose: tell the user WHY no auto-match landed so
+            // the "—" cell tooltip is actionable instead of mysterious.
+            if (!soKey && !bkKey) {
+              supplierReason = 'Invoice has no SO# or Booking# — auto-match needs at least one. Override manually via the row drawer.';
+            } else if (!soKey) {
+              supplierReason = `No supplier bill carries this booking ref (${inv.bookingNumber}) and the invoice has no SO# to match either.`;
+            } else if (!bkKey) {
+              supplierReason = `No supplier bill carries this SO# (${inv.soNumber}) in its Customer PO field. Update the bill's Customer PO to "${inv.soNumber}" or override manually.`;
+            } else {
+              supplierReason = `No supplier bill carries this SO# (${inv.soNumber}) in customerPo or this Booking# (${inv.bookingNumber}) in transportRef.`;
+            }
           }
         }
       }
@@ -339,11 +359,13 @@ export function useInvoiceMargins() {
       let oceanFreightCost = 0;
       let freightSource: InvoiceMarginRow['freightCostSource'] = 'none';
       let freightLinkIds: string[] = [];
+      let freightReason = '';
 
       if (costing?.freightCostOverride != null) {
         freightCost = num(costing.freightCostOverride);
         oceanFreightCost = freightCost;  // legs unknown — bucket to ocean
         freightSource = 'override';
+        if (freightCost === 0) freightReason = 'Override set to $0.';
       } else {
         const explicitFQ = csvToIds(costing?.freightQuoteIds ?? null);
         const matches: RawFQ[] = [];
@@ -365,6 +387,12 @@ export function useInvoiceMargins() {
           }
           freightCost = localFreightCost + oceanFreightCost;
           freightSource = 'freight_quote';
+        } else {
+          if (!inv.bookingNumber) {
+            freightReason = 'Invoice has no Booking# — auto-match needs it. Override manually via the row drawer.';
+          } else {
+            freightReason = `No freight quote has booking_number="${inv.bookingNumber}". Backfill the quote's Booking# (snake_case column in freight_quotes) or override manually.`;
+          }
         }
       }
 
@@ -393,9 +421,11 @@ export function useInvoiceMargins() {
         supplierCost,
         supplierCostSource: supplierSource,
         supplierCostLinkIds: supplierLinkIds,
+        supplierCostReason: supplierReason,
         freightCost,
         freightCostSource: freightSource,
         freightCostLinkIds: freightLinkIds,
+        freightCostReason: freightReason,
         localFreightCost,
         oceanFreightCost,
         otherCost,

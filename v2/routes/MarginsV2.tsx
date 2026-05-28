@@ -212,14 +212,35 @@ const MarginsV2: React.FC = () => {
                 {r.hasOverrides && <span className="ml-1.5 text-[10px] text-amber-400" title="Has manual overrides">●</span>}
               </span>
               <span className="text-right b-mono tabular-nums">{fmtMoney(r.revenue, r.currency)}</span>
-              <span className="text-right b-mono tabular-nums" title={r.supplierCostSource}>
-                {r.supplierCost > 0 ? fmtMoney(r.supplierCost, r.currency) : <span style={{ color: 'var(--b-text-faint)' }}>—</span>}
+              <span
+                className="text-right b-mono tabular-nums"
+                title={r.supplierCost > 0
+                  ? `Source: ${r.supplierCostSource}`
+                  : (r.supplierCostReason || 'no supplier cost matched')}
+              >
+                {r.supplierCost > 0
+                  ? fmtMoney(r.supplierCost, r.currency)
+                  : <span style={{ color: 'var(--b-text-faint)' }} className="cursor-help">— ⓘ</span>}
               </span>
-              <span className="text-right b-mono tabular-nums" title={r.freightCostSource === 'override' ? 'override (combined, bucketed to ocean)' : r.freightCostSource}>
-                {r.localFreightCost > 0 ? fmtMoney(r.localFreightCost, r.currency) : <span style={{ color: 'var(--b-text-faint)' }}>—</span>}
+              <span
+                className="text-right b-mono tabular-nums"
+                title={r.localFreightCost > 0
+                  ? `Source: ${r.freightCostSource === 'override' ? 'override (combined, bucketed to ocean)' : r.freightCostSource}`
+                  : (r.freightCostReason || 'no freight cost matched')}
+              >
+                {r.localFreightCost > 0
+                  ? fmtMoney(r.localFreightCost, r.currency)
+                  : <span style={{ color: 'var(--b-text-faint)' }} className="cursor-help">— ⓘ</span>}
               </span>
-              <span className="text-right b-mono tabular-nums" title={r.freightCostSource}>
-                {r.oceanFreightCost > 0 ? fmtMoney(r.oceanFreightCost, r.currency) : <span style={{ color: 'var(--b-text-faint)' }}>—</span>}
+              <span
+                className="text-right b-mono tabular-nums"
+                title={r.oceanFreightCost > 0
+                  ? `Source: ${r.freightCostSource}`
+                  : (r.freightCostReason || 'no freight cost matched')}
+              >
+                {r.oceanFreightCost > 0
+                  ? fmtMoney(r.oceanFreightCost, r.currency)
+                  : <span style={{ color: 'var(--b-text-faint)' }} className="cursor-help">— ⓘ</span>}
               </span>
               <span className="text-right b-mono tabular-nums">
                 {r.otherCost > 0 ? fmtMoney(r.otherCost, r.currency) : <span style={{ color: 'var(--b-text-faint)' }}>—</span>}
@@ -377,7 +398,12 @@ const MarginEditModal: React.FC<EditProps> = ({ row, onClose, onSaved }) => {
 
         <div className="px-5 py-4 overflow-y-auto space-y-4 text-[12.5px]">
           {/* Supplier override */}
-          <Section title="Supplier cost" hint={`Auto: ${fmtMoney(row.supplierCost, row.currency)} (${row.supplierCostSource})`}>
+          <Section
+            title="Supplier cost"
+            hint={row.supplierCost > 0
+              ? `Auto: ${fmtMoney(row.supplierCost, row.currency)} (${row.supplierCostSource})`
+              : (row.supplierCostReason || 'No auto-match. Set an override below.')}
+          >
             <FieldRow>
               <Field label="Override $" value={supOverride} onChange={setSupOverride} placeholder={`leave blank to use ${fmtMoney(row.supplierCost, row.currency)}`} />
             </FieldRow>
@@ -387,7 +413,12 @@ const MarginEditModal: React.FC<EditProps> = ({ row, onClose, onSaved }) => {
           </Section>
 
           {/* Freight override */}
-          <Section title="Freight cost" hint={`Auto: ${fmtMoney(row.freightCost, row.currency)} (${row.freightCostSource})`}>
+          <Section
+            title="Freight cost"
+            hint={row.freightCost > 0
+              ? `Auto: ${fmtMoney(row.freightCost, row.currency)} (${row.freightCostSource})`
+              : (row.freightCostReason || 'No auto-match. Set an override below.')}
+          >
             <FieldRow>
               <Field label="Override $" value={frOverride} onChange={setFrOverride} placeholder={`leave blank to use ${fmtMoney(row.freightCost, row.currency)}`} />
             </FieldRow>
