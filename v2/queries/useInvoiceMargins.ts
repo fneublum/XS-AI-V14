@@ -250,6 +250,23 @@ export function useInvoiceMargins() {
       const cp = normalize(si.customerPo); if (cp) (supplierByCustomerPo.get(cp) ?? supplierByCustomerPo.set(cp, []).get(cp)!).push(si);
       const tr = normalize(si.transportRef); if (tr) (supplierByTransportRef.get(tr) ?? supplierByTransportRef.set(tr, []).get(tr)!).push(si);
     }
+    // Diagnostic snapshot when there are costings to satisfy and
+    // the engine is about to merge. Helps trace the "saved but not
+    // applied" case end-to-end without poking the DB.
+    // eslint-disable-next-line no-console
+    console.log('[useInvoiceMargins] merge snapshot:', {
+      invoices: invoicesQ.data.length,
+      supplierBills: supplierInvoicesQ.data.length,
+      supplierBillIds: Array.from(supplierById.keys()).slice(0, 20),
+      freightQuotes: fqsQ.data.length,
+      freightQuoteIds: fqsQ.data.map(f => f.id).slice(0, 20),
+      costings: costingsQ.data.length,
+      costingsSample: costingsQ.data.slice(0, 3).map(c => ({
+        invoiceId: c.invoiceId,
+        supplierInvoiceIds: c.supplierInvoiceIds,
+        freightQuoteIds: c.freightQuoteIds,
+      })),
+    });
 
     // POs aren't booking-linked at the row level; we surface PO totals
     // only when the user has manually linked them via the override CSV.
@@ -427,6 +444,25 @@ export function useInvoiceMargins() {
       const marginUSD  = revenue - landedCost;
       const marginPct  = revenue > 0 ? marginUSD / revenue : 0;
 
+      // Per-invoice diagnostic when a costing exists but ended up
+      // attributing $0 to BOTH supplier + freight — almost always
+      // a stale-cache or id-mismatch bug. Logs the full state so
+      // we can chase it without poking the DB.
+      if (costing && supplierCost === 0 && freightCost === 0) {
+        // eslint-disable-next-line no-console
+        console.warn('[useInvoiceMargins] costing saved but $0 attributed', {
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          costingInvoiceId: costing.invoiceId,
+          supplierInvoiceIds: costing.supplierInvoiceIds,
+          freightQuoteIds: costing.freightQuoteIds,
+          supplierCostOverride: costing.supplierCostOverride,
+          freightCostOverride: costing.freightCostOverride,
+          supplierBillIdsInScope: Array.from(supplierById.keys()),
+          freightQuoteIdsInScope: fqsQ.data.map(f => f.id),
+          supplierReason, freightReason,
+        });
+      }
       return {
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber || inv.id,
