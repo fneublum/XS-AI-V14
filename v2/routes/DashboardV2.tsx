@@ -335,7 +335,19 @@ const GEM_SYSTEM_INSTRUCTION =
   'You are GEM, the in-browser AI assistant for GENRYO INTERNATIONAL inside the XS ERP. ' +
   'You answer concisely, in plain language, and focused on what the user is trying to do. ' +
   'You do NOT have access to the HERMES batch agents (Max, Lara, Matt, Logan, Sal) — they ' +
-  'live in EC4 workflows and are out of your scope. Stick to what you can answer directly.';
+  'live in EC4 workflows and are out of your scope.\n\n' +
+  'You have READ access to GENRYO\'s live Supabase data via function tools. ' +
+  'When the user asks to list, show, total, sum, or query records (invoices, purchase orders, ' +
+  'sales orders, expenses, cash position), CALL the relevant tool — do not refuse and do not ' +
+  'tell the user to navigate menus. Format results as a short markdown table or bullet list ' +
+  'with totals. Use USD with thousands separators. Dates are ISO YYYY-MM-DD. ' +
+  'If a tool returns an error, surface it briefly; if it returns zero rows, say so plainly.';
+
+// Max round-trips before we force Gem to stop calling tools and answer
+// with whatever it has. Two is plenty for any single user question
+// (e.g. "list overdue invoices and sum them" → query_invoices →
+// final answer). Five caps a runaway loop.
+const GEM_MAX_TOOL_ROUNDS = 5;
 
 function loadGemHistory(): ChatMessage[] {
   try {
@@ -506,20 +518,59 @@ export default function DashboardV2() {
         // Lazy-load the wrapper so we don't pull Gemini code into the
         // bundle for users who never visit GENRYO.
         const { GoogleGenAI } = await import('../../services/geminiClient');
+        const { GEM_TOOLS, executeGemTool } = await import('../agent/gemTools');
         const ai = new GoogleGenAI({ apiKey: 'ignored' /* proxy handles the real key */ });
         // Map our chat history to Gemini's content shape. Gemini expects
         // alternating user/model turns, so we coerce author=gem messages
         // to role=model and everything else to role=user.
-        const geminiContents = nextHistory.map(m => ({
-          role: (m.role === 'agent' && (m.author ?? '').toLowerCase() === 'gem') ? 'model' : 'user',
-          parts: [{ text: m.content }],
-        }));
-        const resp = await ai.models.generateContent({
-          model: GEM_MODEL,
-          contents: geminiContents,
-          config: { systemInstruction: GEM_SYSTEM_INSTRUCTION },
-        });
-        const replyText = (resp.text || '').trim() || '(Gem returned no text.)';
+        const geminiContents: Array<{ role: string; parts: Array<Record<string, unknown>> }> =
+          nextHistory.map(m => ({
+            role: (m.role === 'agent' && (m.author ?? '').toLowerCase() === 'gem') ? 'model' : 'user',
+            parts: [{ text: m.content }],
+          }));
+
+        // Tool-call loop. Each round:
+        //   1. Ask Gemini with current contents.
+        //   2. If it returns functionCalls, execute each, append the
+        //      function-call + function-response turns, loop.
+        //   3. If it returns text (or we hit the round cap), stop.
+        let replyText = '';
+        for (let round = 0; round < GEM_MAX_TOOL_ROUNDS; round++) {
+          const resp = await ai.models.generateContent({
+            model: GEM_MODEL,
+            contents: geminiContents,
+            config: {
+              systemInstruction: GEM_SYSTEM_INSTRUCTION,
+              tools: [{ functionDeclarations: GEM_TOOLS }],
+            },
+          });
+          const calls = resp.functionCalls ?? [];
+          if (calls.length === 0) {
+            replyText = (resp.text || '').trim();
+            break;
+          }
+          // Append the model's function-call turn so the next round
+          // sees its own tool requests.
+          geminiContents.push({
+            role: 'model',
+            parts: calls.map(c => ({ functionCall: { name: c.name, args: c.args } })),
+          });
+          // Execute each tool and append its response. We scope every
+          // call to the current company so Gem only sees GENRYO data.
+          const responses = await Promise.all(
+            calls.map(c => executeGemTool(c.name, c.args, currentCompanyId)),
+          );
+          geminiContents.push({
+            role: 'user',
+            parts: calls.map((c, i) => ({
+              functionResponse: { name: c.name, response: responses[i] },
+            })),
+          });
+        }
+        if (!replyText) {
+          replyText = '(Gem reached the tool-call limit or returned no text. Try rephrasing.)';
+        }
+
         const replyMsg: ChatMessage = {
           id: 'gem-r-' + Date.now(),
           conversation_id: 'gem-local',

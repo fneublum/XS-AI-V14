@@ -23,6 +23,13 @@ interface Slot<T> {
 
 const emptySlot = <T,>(): Slot<T> => ({ entity: null, mode: 'edit' });
 
+// Standalone payload — the proforma viewer doesn't slot into a CRUD
+// editor like the others, just carries the URL + metadata it needs to
+// render. Lifted to the app level so it survives the PO drawer
+// closing (the source of clicks-being-lost bugs when both lived in
+// the same Radix portal stack).
+import type { ProformaViewerPayload } from '../components/ProformaViewerModal';
+
 interface EditorContextValue {
   salesOrder: Slot<SalesOrder>;
   openSalesOrder: (o: SalesOrder) => void;
@@ -57,6 +64,11 @@ interface EditorContextValue {
   openProduct: (p: Product) => void;
   openProductCreate: () => void;
   closeProduct: () => void;
+
+  // Proforma viewer — not a CRUD slot, just a free-standing modal.
+  proformaViewer: ProformaViewerPayload | null;
+  openProformaViewer: (p: ProformaViewerPayload) => void;
+  closeProformaViewer: () => void;
 
   // Legacy getters (kept so existing drawer components don't need to
   // change their destructure).
@@ -234,6 +246,7 @@ export const EMPTY_PURCHASE_ORDER: PurchaseOrder = {
   totalAmount: 0,
   currency: 'USD',
   notes: null,
+  proformaInvoiceUrl: null,
 };
 
 export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -244,6 +257,7 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [purchaseOrder, setPO]       = useState<Slot<PurchaseOrder>>(emptySlot);
   const [commission, setCommission]  = useState<Slot<CommissionRow>>(emptySlot);
   const [product, setProduct]        = useState<Slot<Product>>(emptySlot);
+  const [proformaViewer, setProformaViewer] = useState<ProformaViewerPayload | null>(null);
 
   const value = useMemo<EditorContextValue>(() => ({
     salesOrder,
@@ -280,6 +294,10 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     openProductCreate: ()  => setProduct({ entity: EMPTY_PRODUCT, mode: 'create' }),
     closeProduct:      ()  => setProduct(emptySlot),
 
+    proformaViewer,
+    openProformaViewer:  (p) => setProformaViewer(p),
+    closeProformaViewer: ()  => setProformaViewer(null),
+
     // Legacy getters.
     editingSalesOrder:    salesOrder.entity,
     editingCustomer:      customer.entity,
@@ -288,7 +306,7 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     editingPurchaseOrder: purchaseOrder.entity,
     editingCommission:    commission.entity,
     editingProduct:       product.entity,
-  }), [salesOrder, customer, supplier, invoice, purchaseOrder, commission, product]);
+  }), [salesOrder, customer, supplier, invoice, purchaseOrder, commission, product, proformaViewer]);
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
 };

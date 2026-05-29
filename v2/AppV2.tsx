@@ -31,6 +31,9 @@ import { InvoiceDrawer }       from './components/InvoiceDrawer';
 import { PurchaseOrderDrawer } from './components/PurchaseOrderDrawer';
 import { CommissionDrawer } from './components/CommissionDrawer';
 import { ProductDrawer }    from './components/ProductDrawer';
+import { ProformaViewerModal } from './components/ProformaViewerModal';
+import { EmailComposeDrawer } from './components/EmailComposeDrawer';
+import type { EmailDraft } from './components/EmailComposeDrawer';
 import { ShortcutsHelp, ShortcutGroup } from './layout/ShortcutsHelp';
 import { DataMenuModal } from './layout/DataMenuModal';
 import { SettingsMenuModal } from './layout/SettingsMenuModal';
@@ -444,7 +447,25 @@ const AppV2Inner: React.FC = () => {
     purchaseOrder, closePurchaseOrder,
     commission, closeCommission,
     product, closeProduct,
+    proformaViewer, closeProformaViewer,
   } = useEditor();
+
+  // Email handoff for the proforma viewer. When the user clicks "Email
+  // to supplier" in the modal we (1) trigger the file download so the
+  // user can drag it into the compose window, (2) close the modal,
+  // (3) open EmailComposeDrawer with the pre-built draft.
+  const [proformaEmailDraft, setProformaEmailDraft] = useState<EmailDraft | null>(null);
+  const handleProformaEmail = (draft: EmailDraft, downloadFilename: string, url: string) => {
+    // Download the file first — same UX as the in-drawer version.
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = downloadFilename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    closeProformaViewer();
+    setProformaEmailDraft(draft);
+  };
 
   // Autonomous background loop — scans inbox + flags stuck bookings.
   useBackgroundJobs();
@@ -831,6 +852,21 @@ const AppV2Inner: React.FC = () => {
         product={product.entity}
         mode={product.mode}
         onOpenChange={open => { if (!open) closeProduct(); }}
+      />
+
+      {/* App-level proforma viewer — lifted out of PurchaseOrderDrawer
+          so the PO drawer can close cleanly before this modal renders.
+          When the user clicks "Email to supplier" the modal closes and
+          the email drawer opens with the pre-built draft. */}
+      <ProformaViewerModal
+        payload={proformaViewer}
+        onClose={closeProformaViewer}
+        onEmail={handleProformaEmail}
+      />
+      <EmailComposeDrawer
+        open={!!proformaEmailDraft}
+        onOpenChange={open => { if (!open) setProformaEmailDraft(null); }}
+        draft={proformaEmailDraft}
       />
     </>
   );

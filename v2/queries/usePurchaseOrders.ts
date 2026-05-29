@@ -25,6 +25,11 @@ export interface PurchaseOrder {
   totalAmount: number;
   currency: string;
   notes: string | null;
+  /** Supplier-issued proforma invoice attached to the PO (data URL of
+   *  the uploaded PDF/image). Null when nothing has been uploaded yet.
+   *  Same storage convention as invoices."originalDocument" and
+   *  expenses."paymentReceiptUrl". */
+  proformaInvoiceUrl: string | null;
 }
 
 interface RawRow {
@@ -41,6 +46,7 @@ interface RawRow {
   totalAmount: number | string | null;
   currency: string | null;
   notes: string | null;
+  proformaInvoiceUrl: string | null;
 }
 
 function scopeByCompany<Q extends { eq: Function }>(q: Q, companyId: string): Q {
@@ -105,6 +111,7 @@ export function usePurchaseOrders(search?: string) {
         totalAmount: Number(r.totalAmount) || 0,
         currency: r.currency ?? 'USD',
         notes: r.notes,
+        proformaInvoiceUrl: r.proformaInvoiceUrl,
       }));
     },
   );

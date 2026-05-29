@@ -30,7 +30,12 @@ export const Modal: React.FC<ModalProps> = ({ open, onClose, title, children, cl
       role="dialog"
       aria-modal="true"
       aria-labelledby={labelledBy ?? (title ? 'modal-title' : undefined)}
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      // z-[60] so the modal sits ABOVE Drawer (z-50) — modals opened
+      // from inside a drawer (proforma viewer in PurchaseOrderDrawer,
+      // statement modal in PayablesV2, etc.) were stuck behind the
+      // drawer panel and unclickable. Plain z-50 collides with the
+      // drawer's Radix portal which renders later in the DOM.
+      className="fixed inset-0 z-[60] flex items-center justify-center"
     >
       <button
         aria-label="Close modal"

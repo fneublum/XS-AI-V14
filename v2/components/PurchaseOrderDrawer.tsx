@@ -1,7 +1,7 @@
 // Phase 3B — Purchase Order editor drawer. Full v1 parity.
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { Mail, RefreshCw } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Mail, RefreshCw, Upload, FileText, ExternalLink, X } from 'lucide-react';
 import {
   Drawer, Input, FormField, Label, Button, Badge, ConfirmDialog,
 } from '../primitives';
@@ -18,6 +18,7 @@ import { EmailComposeDrawer, EmailDraft } from './EmailComposeDrawer';
 import { resolveRecipientsSync } from '../services/recipients';
 import { SupabaseSelectField } from './SupabaseSelectField';
 import { nextPONumber } from '../lib/poNumber';
+import { useEditor } from '../providers/EditorProvider';
 import type { EditorMode } from '../providers/EditorProvider';
 
 const STATUS_OPTIONS = ['PENDING', 'APPROVED', 'OPEN', 'RECEIVED', 'COMPLETED', 'CANCELLED'];
@@ -59,6 +60,26 @@ const parseAmount = (s: string): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
+// Read a file (PDF/image) into a base64 data URL — same approach the
+// ExpensePaymentDrawer uses for payment receipts. Lets us persist the
+// proforma directly in a TEXT column without setting up Supabase
+// Storage buckets / RLS for a single field.
+const readAsDataUrl = (f: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.readAsDataURL(f);
+  });
+
+// Inspect a `data:<mime>;base64,…` URL and return the MIME slice. We
+// use this to pick the right viewer (iframe for PDFs, plain <img> for
+// images) and a sensible download filename extension.
+const inferDataUrlMime = (url: string): string => {
+  const m = url.match(/^data:([^;,]+)[;,]/i);
+  return m ? m[1].toLowerCase() : '';
+};
+
 interface Props {
   po: PurchaseOrder | null;
   mode: EditorMode;
@@ -68,6 +89,11 @@ interface Props {
 export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange }) => {
   const toast = useToast();
   const { currentCompanyId } = useCompany();
+  // App-level proforma viewer — we close THIS drawer and hand the
+  // modal to AppV2 instead of rendering it locally. That resolves the
+  // "Close button stuck behind drawer overlay" issue that no amount
+  // of z-index work fully fixed.
+  const { openProformaViewer } = useEditor();
   const companies = useCompanies();
   const suppliers = useSuppliers();
 
@@ -89,6 +115,14 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
   const [freightDraft, setFreightDraft]         = useState<string>('');
   const [currency, setCurrency]                 = useState('USD');
   const [notes, setNotes]                       = useState('');
+  // Supplier proforma invoice — attached as a base64 data URL so it
+  // travels in the row itself. Label is a short "filename · 23 KB"
+  // hint shown in the drop-zone after a successful upload.
+  const [proformaUrl, setProformaUrl]           = useState<string | null>(null);
+  const [proformaLabel, setProformaLabel]       = useState<string | null>(null);
+  const [proformaDragOver, setProformaDragOver] = useState(false);
+  const [proformaUploading, setProformaUploading] = useState(false);
+  const proformaInputRef = useRef<HTMLInputElement>(null);
 
   const [confirmDelete, setConfirmDelete]       = useState(false);
   const [emailDraft, setEmailDraft]             = useState<EmailDraft | null>(null);
@@ -127,6 +161,11 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     setFreightDraft(freight === 0 ? '' : fmtAmount(freight));
     setCurrency(po.currency ?? 'USD');
     setNotes(po.notes ?? '');
+    setProformaUrl(po.proformaInvoiceUrl ?? null);
+    // Existing PO with a saved proforma — we don't know the original
+    // filename, just that one is attached. The drop-zone shows
+    // "Proforma attached" instead of the file label in that case.
+    setProformaLabel(null);
   }, [po?.id, mode]);
 
   const availableCompanies = companies.data ?? [];
@@ -151,6 +190,44 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     }
   };
 
+  // Convert the picked/dropped file to a data URL and stage it for
+  // saving. We do NOT auto-save the PO here — the user still has to
+  // click Save (matches the rest of the drawer's behaviour: edits
+  // accumulate, then one Save commits everything). Soft cap at 5 MB
+  // so we don't blow the row size on a 50 MB scan; toast on overflow.
+  const PROFORMA_MAX_BYTES = 5 * 1024 * 1024;
+  const onProformaPick = async (files: FileList | null) => {
+    const f = files?.[0];
+    if (!f) return;
+    if (f.size > PROFORMA_MAX_BYTES) {
+      toast.push({
+        kind: 'warning',
+        title: 'File too large',
+        description: `${Math.round(f.size / 1024 / 1024)} MB — keep proformas under 5 MB.`,
+      });
+      return;
+    }
+    setProformaUploading(true);
+    try {
+      const dataUrl = await readAsDataUrl(f);
+      setProformaUrl(dataUrl);
+      setProformaLabel(`${f.name} · ${Math.round(f.size / 1024)} KB`);
+      toast.push({
+        kind: 'success',
+        title: 'Proforma attached',
+        description: 'Save the PO to persist the change.',
+      });
+    } catch (err) {
+      toast.push({
+        kind: 'error',
+        title: 'Could not read file',
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setProformaUploading(false);
+    }
+  };
+
   const buildPayload = () => ({
     companyId: companyId || currentCompanyId,
     supplierId: supplierId || null,
@@ -164,6 +241,7 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
     totalAmount: total,
     currency,
     notes: notes || null,
+    proformaInvoiceUrl: proformaUrl,
   });
 
   const save = async () => {
@@ -262,6 +340,21 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
       setRegenerating(false);
     }
   };
+
+  // Filename for the downloaded proforma — built from PO id + supplier
+  // so the user's downloads folder stays scannable. Extension matches
+  // the data URL's MIME ("pdf" for PDFs, fallback to "bin").
+  const proformaFilename = (): string => {
+    const ext = inferDataUrlMime(proformaUrl ?? '').split('/')[1] || 'bin';
+    const poRef = (liveId ?? po?.id ?? 'NEW').replace(/[^\w-]+/g, '_');
+    const sup = supplierName.trim().replace(/[^\w-]+/g, '_').slice(0, 40) || 'supplier';
+    return `proforma_${poRef}_${sup}.${ext}`;
+  };
+
+  // (downloadProforma / emailProforma were used by the in-drawer
+  // modal that has since moved to AppV2. The lifted ProformaViewerModal
+  // owns Download via its own helper, and Email is handled in AppV2
+  // through the existing EmailComposeDrawer.)
 
   const sendEmail = () => {
     const r = resolveRecipientsSync({
@@ -487,6 +580,147 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
             </div>
           </div>
 
+          {/* Supplier proforma invoice — drop a PDF/image to attach,
+              or click the zone to pick a file. When attached, the user
+              sees View / Replace / Remove actions. Saved as a data URL
+              alongside the rest of the PO fields on the next Save. */}
+          <div className={sectionClass}>
+            <Label className={labelClass}>Supplier proforma invoice</Label>
+
+            {proformaUrl ? (
+              <div
+                className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 flex items-center justify-between gap-3"
+              >
+                <div className="flex items-center gap-2 text-[12.5px] text-emerald-300 min-w-0">
+                  <FileText size={14} className="shrink-0" />
+                  <span className="truncate">
+                    {proformaLabel ?? 'Proforma attached'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!proformaUrl) return;
+                      // Build a self-contained payload using the
+                      // drawer's local supplier-resolution context
+                      // BEFORE we unmount. The lifted modal can then
+                      // render Download + Email without any further
+                      // access to drawer state.
+                      const r = resolveRecipientsSync({
+                        actors: [{ supplierId, supplierName }],
+                        customers: [],
+                        suppliers: availableSuppliers,
+                      });
+                      const poRefShort = po?.id ? po.id.slice(0, 12) : 'NEW';
+                      openProformaViewer({
+                        url: proformaUrl,
+                        poRef: (liveId ?? po?.id ?? 'NEW').slice(0, 16),
+                        supplierName,
+                        downloadFilename: proformaFilename(),
+                        emailDraft: {
+                          to: r.to.join('; '),
+                          cc: r.cc.length ? r.cc.join('; ') : undefined,
+                          subject: `Proforma invoice — PO ${poRefShort} (${supplierName})`,
+                          body: [
+                            `Hello ${supplierName},`,
+                            '',
+                            `Attached is the proforma invoice for PO ${poRefShort}.`,
+                            `Total: ${fmtMoney(total, currency)} · Payment terms: ${paymentTerms}`,
+                            '',
+                            `(The proforma file "${proformaFilename()}" has been downloaded`,
+                            `to your computer — please attach it to this email before sending.)`,
+                            '',
+                            'Best regards',
+                          ].filter(Boolean).join('\n'),
+                          contextLabel: `PO ${poRefShort} · proforma`,
+                        },
+                      });
+                      // Close the drawer so the modal renders cleanly
+                      // at the app level instead of layered on top.
+                      onOpenChange(false);
+                    }}
+                    title="Preview the proforma with download and email actions"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] uppercase tracking-wider text-emerald-200 border border-emerald-500/30 hover:bg-emerald-500/10"
+                  >
+                    <ExternalLink size={11} /> View
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => proformaInputRef.current?.click()}
+                    title="Replace the attached proforma"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] uppercase tracking-wider text-slate-300 border border-[#1f1f1f] hover:border-indigo-500/40 hover:text-indigo-200"
+                  >
+                    <Upload size={11} /> Replace
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Doesn't auto-save — user still has to click
+                      // Save on the drawer to commit the removal.
+                      setProformaUrl(null);
+                      setProformaLabel(null);
+                      if (proformaInputRef.current) proformaInputRef.current.value = '';
+                      toast.push({
+                        kind: 'info',
+                        title: 'Proforma cleared',
+                        description: 'Save the PO to persist the change.',
+                      });
+                    }}
+                    title="Remove the attached proforma"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] uppercase tracking-wider text-slate-400 border border-[#1f1f1f] hover:border-rose-500/40 hover:text-rose-300"
+                  >
+                    <X size={11} /> Remove
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onDragOver={e => { e.preventDefault(); setProformaDragOver(true); }}
+                onDragLeave={() => setProformaDragOver(false)}
+                onDrop={e => {
+                  e.preventDefault();
+                  setProformaDragOver(false);
+                  void onProformaPick(e.dataTransfer.files);
+                }}
+                onClick={() => proformaInputRef.current?.click()}
+                className={
+                  'rounded-md border-2 border-dashed p-4 text-center cursor-pointer transition-colors ' +
+                  (proformaDragOver
+                    ? 'border-indigo-400/70 bg-indigo-500/10'
+                    : 'border-indigo-500/30 bg-indigo-500/5 hover:bg-indigo-500/10')
+                }
+              >
+                {proformaUploading ? (
+                  <div className="text-[12.5px] text-indigo-200">Reading file…</div>
+                ) : (
+                  <div className="flex flex-col items-center gap-1 text-[12.5px] text-indigo-200">
+                    <div className="flex items-center gap-1.5">
+                      <Upload size={13} />
+                      <span className="font-medium">Drop the supplier proforma here</span>
+                    </div>
+                    <span className="text-[11px] text-slate-500">
+                      PDF or image — up to 5 MB. Stored on this PO for reference.
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <input
+              ref={proformaInputRef}
+              type="file"
+              accept="application/pdf,image/*"
+              className="hidden"
+              onChange={e => {
+                void onProformaPick(e.target.files);
+                // Reset so picking the same file twice in a row still
+                // triggers onChange (browsers skip the event otherwise).
+                if (proformaInputRef.current) proformaInputRef.current.value = '';
+              }}
+            />
+          </div>
+
           <div className={sectionClass}>
             <Label className={labelClass}>Commercial</Label>
             <div className="grid grid-cols-2 gap-2">
@@ -572,6 +806,13 @@ export const PurchaseOrderDrawer: React.FC<Props> = ({ po, mode, onOpenChange })
         onOpenChange={(o) => !o && setEmailDraft(null)}
         draft={emailDraft}
       />
+
+      {/* Proforma viewer has been lifted to AppV2 — the View button
+          on this drawer calls openProformaViewer(payload) and then
+          onOpenChange(false), so the modal renders at the app level
+          AFTER the drawer is unmounted. Avoids the click-eating
+          stacking-context interaction between Radix Dialog and the
+          inline modal that fought it for clicks. */}
     </>
   );
 };
